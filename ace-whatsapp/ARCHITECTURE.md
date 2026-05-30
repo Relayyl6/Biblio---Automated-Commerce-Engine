@@ -42,7 +42,7 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
                            ▼
 ╔══════════════════════════════════════════════════════════════════════╗
 ║                  LAYER 2: AUTONOMOUS STATE ENGINE                   ║
-║                        (10 Rust Microservices)                       ║
+║                   (11 Microservices: Rust + AI SDK)                  ║
 ║                                                                      ║
 ║  ┌──────────────────────────────────────────────────────────────┐   ║
 ║  │  1. INGESTION SERVICE (Rust + Actix-web)                     │   ║
@@ -60,12 +60,12 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
 ║             ▼                                     ▼                 ║
 ║  ┌──────────────────────┐       ┌─────────────────────────────┐    ║
 ║  │ 3. INTENT PARSER     │       │  4. STATE MACHINE           │    ║
-║  │    (Python/FastAPI)  │──────▶│     ORCHESTRATOR (Rust)     │    ║
-║  │                      │       │                             │    ║
-║  │  Whisper (STT)       │       │  Deterministic state chart  │    ║
-║  │  Dialect BERT        │       │  30-45s debounce window     │    ║
-║  │  GPT-4o intent       │       │  AI suggests → Rust approves│    ║
-║  │  → structured JSON   │       │  Hard rule enforcement      │    ║
+║  │  TypeScript/Vercel   │──────▶│     ORCHESTRATOR (Rust)     │    ║
+║  │  AI SDK + FastAPI    │       │                             │    ║
+║  │                      │       │  Deterministic state chart  │    ║
+║  │  Whisper → BERT      │       │  30-45s debounce window     │    ║
+║  │  generateObject()    │       │  AI suggests → Rust approves│    ║
+║  │  → typed Intent JSON │       │  Hard rule enforcement      │    ║
 ║  └──────────────────────┘       └──────────────┬──────────────┘    ║
 ║                                                │ Domain Events      ║
 ║         ┌────────────────────────┬─────────────┼──────────┐        ║
@@ -75,11 +75,18 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
 ║  │ VERIFICATION│  │ COORDINATION   │  │ INTEGRATION  │  │COMMS │  ║
 ║  │  (Rust)     │  │  (Rust)        │  │  (Rust)      │  │ROUTER│  ║
 ║  │             │  │                │  │              │  │(Rust)│  ║
-║  │ Virtual     │  │ Kwik/Gokada/   │  │ Auto-ping    │  │      │  ║
-║  │ accounts    │  │ MAX dispatch   │  │ supplier WA  │  │ SMS  │  ║
-║  │ Bank APIs   │  │ Rider tracking │  │ Pre-negotiate│  │Voice │  ║
-║  │ Escrow      │  │ Customer notif │  │ Draft PO     │  │Fallbk│  ║
+║  │ Virtual     │  │ Kwik/Gokada/   │  │ Auto-ping    │  │ SMS  │  ║
+║  │ accounts    │  │ MAX dispatch   │  │ supplier WA  │  │ Voice│  ║
+║  │ Bank APIs   │  │ Rider tracking │  │ Pre-negotiate│  │Vendor│  ║
+║  │ Escrow      │  │ Customer notif │  │ Draft PO     │  │Comms │  ║
 ║  └─────────────┘  └────────────────┘  └──────────────┘  └──────┘  ║
+║                                                                      ║
+║  ┌──────────────────────────────────────────────────────────────┐   ║
+║  │  11. AI NEGOTIATOR (Rust circuit breaker + Vercel AI SDK)    │   ║
+║  │  Full negotiation arc · 6 merchant-approved tactics          │   ║
+║  │  NegotiationTrace logging → goods & price intel              │   ║
+║  │  Below-floor → Vendor Communique SMS to merchant             │   ║
+║  └──────────────────────────────────────────────────────────────┘   ║
 ║                                                                      ║
 ║  ┌──────────────────────────────────────┐                           ║
 ║  │  9. VISUAL CONTEXT RESOLUTION        │                           ║
@@ -107,7 +114,7 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
 
 ---
 
-## The 10 Microservices — Detailed
+## The 11 Microservices — Detailed
 
 ### 1. Ingestion Service `core/ingestion-service/` — Rust + Actix-web
 The entry point for all WhatsApp traffic. Owns the connection to the WhatsApp Business Cloud API.
@@ -138,8 +145,8 @@ Maintains the **Global Buyer ID** — the cross-platform, cross-merchant custome
 
 ---
 
-### 3. Intent Parser Service `ai/intent-parser/` — Python + FastAPI
-The only Python service in the critical path. Interfaces with LLMs for semantic understanding of unstructured messages.
+### 3. Intent Parser Service `ai/intent-parser/` — TypeScript (Vercel AI SDK) + Python FastAPI
+The agent layer of ACE. Uses the **Vercel AI SDK** for orchestration, tool-calling into Rust services, and structured output. Python FastAPI handles heavy inference (Whisper, BERT). See [full README](./ai/intent-parser/README.md) for the complete agent architecture.
 
 **Multi-model pipeline:**
 1. **Local Whisper** — Voice note → text transcription (dialect-aware)
@@ -212,15 +219,22 @@ Detects demand spikes, autonomously pings suppliers, pre-negotiates pricing, and
 ---
 
 ### 8. Out-of-Band Communication Router `core/comms-router/` — Rust
-Message delivery watchdog for when WhatsApp is unavailable or for high-value escalations.
+Two roles: (1) customer-facing fallback when WhatsApp is unavailable; (2) **Vendor Communiqué engine** — the SMS reply-code system that keeps merchants in control of exceptions without needing the app open.
 
-**Priority routing:**
+**Customer priority routing:**
 | Order Value | Channel | Rationale |
 |-------------|---------|-----------|
 | > ₦50K | AI voice call | High-value = premium UX |
 | ₦20K–₦50K | Premium SMS | Important but not critical |
 | ₦5K–₦20K | Standard SMS | Cost-effective fallback |
 | < ₦5K | Wait for reconnection | Economics don't justify cost |
+
+**Vendor Communiqué (merchant-facing):**
+- SMS reply-code: `ACE: Amaka wants dress at ₦12K (floor: ₦14,250). Reply 1-approve, 2-hold, 3-bundle`
+- Merchant replies with a single digit from any phone — no app needed
+- Digest builder compiles morning briefings (WhatsApp or SMS)
+- Quiet hours respected; emergency override for fraud/dispute events
+- See [VENDOR_COMMUNIQUE.md](../docs/product/VENDOR_COMMUNIQUE.md) for full design
 
 ---
 
@@ -244,6 +258,22 @@ Transforms raw transactional data into the enterprise intelligence product.
 - Synthetic data generation for enterprise clients
 - Federated learning coordinator for AI lab partnerships (model weights only, not raw data)
 - Packages verified datasets for the enterprise data marketplace
+
+---
+
+### 11. AI Negotiator `core/ai-negotiator/` — Rust (rules) + TypeScript/Vercel AI SDK (agent)
+The autonomous price negotiation and deal-closing agent. Behaves like a skilled market trader operating within merchant-defined boundaries.
+
+**Key responsibilities:**
+- Full negotiation arc management (Anchor → Acknowledge → Counter → Close/Pivot/Escalate)
+- 6 configurable tactics: Relationship Anchor, Bundle Pivot, Scarcity Signal, Future Credit, Urgency Window, Soft Close
+- Rust circuit breaker: **AI physically cannot close a deal below the merchant's floor price**
+- On below-floor: attempts Bundle Pivot → Future Credit → triggers Vendor Communiqué (SMS to merchant)
+- `NegotiationTrace` logging: every negotiation arc becomes goods-level price elasticity data for FMCG enterprise product
+- Customer tier-based authority: New (5% max) → Returning (15%) → Loyal (22%) → VIP (30%)
+- Injection detection: adversarial inputs flagged, logged, escalated
+
+See [full README](./core/ai-negotiator/README.md) for the complete negotiation architecture.
 
 ---
 
@@ -316,10 +346,11 @@ LLM receives ONLY the authorized range
 
 See [`docs/flows/`](./docs/flows/) for detailed diagrams. Summary:
 
-1. **Order Flow** — Customer WhatsApp → Ingestion → Identity → Intent → State Machine → Payment → Logistics → Confirmation (merchant never types)
-2. **Restock Flow** — Inventory Oracle alert → Supplier Integration → supplier WhatsApp → margin check → PO draft → merchant 1-tap → payment
-3. **Retention Flow** — Nightly analyzer → at-risk customer detection → culturally-nuanced message draft → 4hr hold → auto-send
-4. **Visual Resolution Flow** — Deictic reference → Visual Context Service → CLIP embeddings → SKU → pricing negotiation
+1. **Lead-to-Close** — Full 10-stage pipeline: lead arrival → qualification → presentation → negotiation → payment → dispatch → delivery → retention. See [LEAD_TO_CLOSE.md](../docs/product/LEAD_TO_CLOSE.md)
+2. **Order Flow** — Customer WhatsApp → Ingestion → Identity → Intent → AI Negotiator → State Machine → Payment → Logistics → Confirmation
+3. **Restock Flow** — Inventory Oracle alert → Supplier Integration → supplier WhatsApp → margin check → PO draft → Vendor Communiqué (SMS) → merchant 1-tap → payment
+4. **Retention Flow** — Nightly analyzer → at-risk customer detection → culturally-nuanced message draft → Vendor Communiqué (4hr hold) → auto-send
+5. **Visual Resolution Flow** — Deictic reference → Visual Context Service → CLIP embeddings → SKU → AI Negotiator
 
 ---
 
@@ -338,4 +369,9 @@ See [`docs/flows/`](./docs/flows/) for detailed diagrams. Summary:
 - [API Contracts → docs/api/](./docs/api/)
 - [Data Flow Diagrams → docs/flows/](./docs/flows/)
 - [Architecture Decision Records → docs/decisions/](./docs/decisions/)
-- [Autonomous Workflows (detail) → /docs/product/WORKFLOWS.md](../docs/product/WORKFLOWS.md)
+- [Autonomous Workflows → /docs/product/WORKFLOWS.md](../docs/product/WORKFLOWS.md)
+- [Lead-to-Close Pipeline → /docs/product/LEAD_TO_CLOSE.md](../docs/product/LEAD_TO_CLOSE.md)
+- [Vendor Communiqué System → /docs/product/VENDOR_COMMUNIQUE.md](../docs/product/VENDOR_COMMUNIQUE.md)
+- [AI Negotiator → core/ai-negotiator/README.md](./core/ai-negotiator/README.md)
+- [Vercel AI SDK Config → /shared/ai-sdk/README.md](../shared/ai-sdk/README.md)
+- [Data Collection Architecture → /docs/engineering/DATA_COLLECTION.md](../docs/engineering/DATA_COLLECTION.md)
