@@ -428,6 +428,50 @@ async function escalateToHuman(
   );
 }
 
+// ─── Merchant Context (the seller's voice) ─────────────────────────────────────
+
+async function loadMerchantContext(merchantId: string): Promise<MerchantContext> {
+  const rows = await sql<{
+    id: string;
+    name: string;
+    tone_guide: string | null;
+    business_policies: string | null;
+    delivery_info: string | null;
+    dialect: string;
+  }[]>`
+    select id, name, tone_guide, business_policies, delivery_info, dialect
+    from merchants
+    where id = ${merchantId}
+    limit 1
+  `;
+  const row = rows[0];
+  if (!row) {
+    // Don't fail a live customer turn over missing seller copy — fall back to a
+    // neutral persona. The agent still negotiates correctly within the rules.
+    return {
+      id: merchantId,
+      name: "our shop",
+      toneGuide: null,
+      businessPolicies: null,
+      deliveryInfo: null,
+      dialect: "pidgin",
+    };
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    toneGuide: row.tone_guide,
+    businessPolicies: row.business_policies,
+    deliveryInfo: row.delivery_info,
+    dialect: normalizeDialect(row.dialect),
+  };
+}
+
+function normalizeDialect(value: string): Dialect {
+  const allowed: Dialect[] = ["pidgin", "yoruba", "igbo", "hausa", "english"];
+  return (allowed as string[]).includes(value) ? (value as Dialect) : "pidgin";
+}
+
 // ─── Merchant Pricing Rules ───────────────────────────────────────────────────
 
 async function loadMerchantPricingRules(merchantId: string): Promise<MerchantPricingRules> {

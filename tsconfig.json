@@ -18,5 +18,10 @@
     }
   },
   "include": ["shared/**/*.ts", "ace-whatsapp/**/*.ts"],
-  "exclude": ["node_modules", "ace-platform", "data-intelligence"]
+  "exclude": [
+    "node_modules",
+    "ace-platform",
+    "data-intelligence",
+    "ace-whatsapp/apps"
+  ]
 }

@@ -38,7 +38,7 @@ import {
   type NegotiationArc,
   type NegotiationTactic,
 } from "./negotiationArc";
-import type { OrderState, OrderItem } from "@ace/shared/types";
+import type { OrderState, OrderItem, Product } from "@ace/shared/types";
 
 // ─── Tool Schema Definitions ──────────────────────────────────────────────────
 
@@ -46,9 +46,11 @@ export const toolDefinitions = [
   {
     name: "check_inventory",
     description:
-      "Look up current stock and price for a product by name, description, or SKU. " +
-      "Call this FIRST before any price discussion. Also reveals stock level, which " +
-      "determines if scarcity_signal is available.",
+      "Look up products by name, description, or SKU. Returns full product context: " +
+      "price, stock, description, category, tags, and attributes (sizes, colour, " +
+      "material, etc.). Call this FIRST before any price discussion. Use the rich " +
+      "context to describe and sell on value, and to find genuine bundle items. " +
+      "Stock level also determines whether scarcity_signal is available.",
     input_schema: {
       type: "object",
       properties: {
@@ -250,21 +252,56 @@ export async function executeTool(
 
 // ─── Tool Implementations ─────────────────────────────────────────────────────
 
-async function checkInventory(merchantId: string, query: string) {
+async function checkInventory(merchantId: string, query: string): Promise<Product[]> {
   // NOTE: products has no per-product floor column in the Phase-1 schema — the
   // authorized floor is derived from merchant_pricing_rules (absolute_floor) and
-  // the tier discount ceiling in pricingService.computeAuthorizedRange(). Select
-  // only the columns that exist and that the range computation actually consumes.
-  const rows = await sql<
-    { sku: string; name: string; stock: number; price: number }[]
-  >`
-    select sku, name, stock, price from products
+  // the tier discount ceiling in pricingService.computeAuthorizedRange().
+  //
+  // We return the FULL product context (description/category/tags/attributes) so
+  // the agent can sell on value, not just quote a number. Matching widens to the
+  // description and category too, so "the flowy blue one" resolves to a SKU.
+  const like = "%" + query + "%";
+  const rows = await sql<{
+    sku: string;
+    name: string;
+    stock: number;
+    price: number;
+    description: string | null;
+    category: string | null;
+    tags: string[];
+    attributes: Record<string, unknown>;
+    image_url: string | null;
+    currency: string;
+  }[]>`
+    select sku, name, stock, price, description, category, tags, attributes,
+           image_url, currency
+    from products
     where merchant_id = ${merchantId}
-      and (name ilike ${"%" + query + "%"} or sku ilike ${"%" + query + "%"})
-    order by similarity(name, ${query}) desc
+      and active = true
+      and (
+        name ilike ${like}
+        or sku ilike ${like}
+        or description ilike ${like}
+        or category ilike ${like}
+      )
+    order by greatest(
+      similarity(name, ${query}),
+      similarity(coalesce(description, ''), ${query})
+    ) desc
     limit 5
   `;
-  return rows;
+  return rows.map((r) => ({
+    sku: r.sku,
+    name: r.name,
+    stock: r.stock,
+    price: r.price,
+    description: r.description,
+    category: r.category,
+    tags: r.tags ?? [],
+    attributes: r.attributes ?? {},
+    imageUrl: r.image_url,
+    currency: r.currency,
+  }));
 }
 
 async function getCustomerProfile(customerId: string, merchantId: string) {

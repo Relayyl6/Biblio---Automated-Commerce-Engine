@@ -7,7 +7,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "ingestion": "tsx ace-whatsapp/core/ingestion-service/src/index.ts",
-    "payment": "tsx ace-whatsapp/core/payment-verification/src/index.ts"
+    "payment": "tsx ace-whatsapp/core/payment-verification/src/index.ts",
+    "catalog-sync": "tsx ace-whatsapp/core/catalog-sync/src/index.ts",
+    "merchant-api": "tsx ace-whatsapp/core/merchant-api/src/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
