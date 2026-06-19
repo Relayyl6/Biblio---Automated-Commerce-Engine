@@ -1,0 +1,25 @@
+{
+  "name": "ace-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ACE — Autonomous Commerce Engine (Phase 1 WhatsApp MVP)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "ingestion": "tsx ace-whatsapp/core/ingestion-service/src/index.ts",
+    "payment": "tsx ace-whatsapp/core/payment-verification/src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "bullmq": "^5.34.0",
+    "fastify": "^4.28.1",
+    "fastify-raw-body": "^4.3.0",
+    "ioredis": "^5.4.1",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

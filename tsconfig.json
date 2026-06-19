@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": false,
+    "baseUrl": ".",
+    "paths": {
+      "@ace/shared/*": ["shared/src/*"]
+    }
+  },
+  "include": ["shared/**/*.ts", "ace-whatsapp/**/*.ts"],
+  "exclude": ["node_modules", "ace-platform", "data-intelligence"]
+}

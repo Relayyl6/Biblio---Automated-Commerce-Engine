@@ -225,3 +225,131 @@ A merchant considering leaving ACE must calculate:
 ### Shared Infrastructure
 - [Vercel AI SDK Config](./shared/ai-sdk/README.md) — Tools, schemas, training middleware
 - [Database Architecture](./infra/README.md) — All 5 databases with design rationale
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Now the payment-verification service. This is the integration that
+  closes the order lifecycle: awaiting_payment → payment_verified. Let
+  me set up the work.
+
+● Update(infra\schema.sql)
+ 
+───────────────────────────────────────────────────────────────────────
+ Edit file
+ infra\schema.sql
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 62  
+ 63  create index orders_customer_merchant_idx on orders (customer_id, 
+     merchant_id, updated_at desc);
+ 64  
+ 65 +-- Payment-verification looks up the awaiting-payment order by the
+    + virtual account                                                  
+ 66 +-- number the customer paid into. This expression index keeps that
+    + lookup cheap.                                                    
+ 67 +create index orders_virtual_account_idx on orders ((state->>'virtu
+    +alAccountNumber'));                                               
+ 68 +                                                                  
+ 69 +-- ─── Transactions (payment ledger) ─────────────────────────────
+    +────────────────                                                  
+❯ Module '"./negotiationArc"' has no exported member                   
+  'projectRangeOntoArc'. then add this payment‑verification webhook    
+  and any other thing for ace-whatsapp to work well                    
+
+● First let me settle the projectRangeOntoArc error — my tsc run passed
+  clean, so I suspect a stale TS server, but I won't hand-wave it. Let
+  me verify the actual on-disk state and read the payment-verification
+  spec.
+
+● Bash(grep -n "projectRangeOntoArc"
+      ace-whatsapp/core/ai-negotiator/src/negotiationArc.ts; echo
+      "---"; git -c core.fileMode=false status --short --
+      ace-whatsapp/core/…)
+  ⎿  219:export function projectRangeOntoArc(
+     ---
+     AM ace-whatsapp/core/ai-negotiator/src/negotiationArc.ts
+
+  Read 2 files (ctrl+o to expand)
+
+● Resolved: projectRangeOntoArc is exported (line 219) and tsc --noEmit
+  passes with exit 0. That error is a stale TS language-server cache
+  in your editor, not a real compile error — restart it (VS Code:
+  Ctrl+Shift+P → "TypeScript: Restart TS Server", or just reload the
+  window). The code on disk is correct.
+
+  Now the payment-verification service. This is the integration that
+  closes the order lifecycle: awaiting_payment → payment_verified. Let
+  me set up the work.
+
+● Update(infra\schema.sql)
+  ⎿  Added 24 lines
+      62  
+      63  create index orders_customer_merchant_idx on orders (c
+          ustomer_id, merchant_id, updated_at desc);
+      64  
+      65 +-- Payment-verification looks up the awaiting-payment 
+         +order by the virtual account                          
+      66 +-- number the customer paid into. This expression inde
+         +x keeps that lookup cheap.                            
+      67 +create index orders_virtual_account_idx on orders ((st
+         +ate->>'virtualAccountNumber'));                       
+      68 +                                                      
+      69 +-- ─── Transactions (payment ledger) ─────────────────
+         +────────────────────────────                          
+      70 +-- One row per inbound payment event from a bank/card 
+         +provider. `provider_ref` is                           
+      71 +-- UNIQUE — it is the idempotency key that makes webho
+         +ok redelivery a no-op (the                            
+      72 +-- payment provider, like Meta, retries until it gets 
+         +a 2xx). Mirrors the                                   
+      73 +-- `transactions` table in infra/README.md.           
+      74 +create table transactions (                           
+      75 +  id uuid primary key default uuid_generate_v4(),     
+      76 +  order_id uuid references orders(id),                
+      77 +  merchant_id uuid not null references merchants(id), 
+      78 +  customer_id text not null,                          
+      79 +  amount numeric not null,                 -- amount p
+         +aid, in NGN                                           
+      80 +  virtual_account text,                    -- the VAN 
+         +credited                                              
+      81 +  provider_ref text not null unique,       -- bank/car
+         +d reference — idempotency key                         
+      82 +  status text not null,                    -- 'confirm
+         +ed' | 'underpaid' | 'unmatched'                       
+      83 +  created_at timestamptz not null default now()       
+      84 +);                                                    
+      85 +                                                      
+      86 +create index transactions_order_idx on transactions (o
+         +rder_id, created_at desc);                            
+      87 +create index transactions_merchant_idx on transactions
+         + (merchant_id, created_at desc);                      
+      88 +                                                      
+      89  create table escalations (
+      90    id uuid primary key default uuid_generate_v4(),
+      91    merchant_id uuid not null references merchants(id),
+
+● API Error: 402 {"error":"Usage limit reached, will reset on 
+  tomorrow at 12:04 AM (UTC+8)"}
+
+✻ Worked for 2m 56s
+
+  3 tasks (0 done, 1 in progress, 2 open)
+  ◼ Add transactions table to schema
+  ◻ Build payment-verification service (pure logic + webhoo…
+  ◻ Wire up env, scripts, seed, gap tracker
