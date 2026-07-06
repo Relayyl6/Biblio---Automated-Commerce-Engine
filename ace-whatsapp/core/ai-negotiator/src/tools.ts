@@ -299,8 +299,10 @@ async function checkInventory(merchantId: string, query: string): Promise<Produc
     category: r.category,
     tags: r.tags ?? [],
     attributes: r.attributes ?? {},
-    imageUrl: r.image_url,
+    image_url: r.image_url,
     currency: r.currency,
+    active: true,
+    source: "db",
   }));
 }
 

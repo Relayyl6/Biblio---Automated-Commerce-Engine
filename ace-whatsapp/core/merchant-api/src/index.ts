@@ -17,20 +17,97 @@
 import Fastify from "fastify";
 import { sql, jsonb } from "@ace/shared/clients";
 import type { Dialect } from "@ace/shared/types";
-import { syncMerchantCatalog } from "../../catalog-sync/src/index";
+import { syncMerchantCatalog } from "../../catalog-sync/src/index.js";
+import { authEngine } from "@ace/shared/auth/index.js";
+import { identityEngine } from "@ace/shared/identity-resolution/index.js";
+import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
+import cors from "@fastify/cors";
 
 const app = Fastify({ logger: true });
 
-const API_KEY = process.env.ADMIN_API_KEY;
-const DIALECTS: Dialect[] = ["pidgin", "yoruba", "igbo", "hausa", "english"];
-
-// ─── Auth gate (no-op unless ADMIN_API_KEY is configured) ────────────────────
-app.addHook("onRequest", async (req, reply) => {
-  if (!API_KEY) return; // open in local dev when unset
-  if (req.headers["x-api-key"] !== API_KEY) {
-    return reply.code(401).send({ error: "invalid or missing x-api-key" });
-  }
+app.register(cors, {
+  origin: "*", // allow React dev server to communicate
 });
+
+// ─── Auth gate (SharedAuthEngine) ────────────────────────────────────────────
+app.addHook("onRequest", authEngine.getFastifyHook());
+
+// ─── Auth & Identity Routes (Open) ───────────────────────────────────────────
+
+// Dev/Test hook to generate a dummy JWT
+app.post("/auth/token", async (req, reply) => {
+  const { merchantId, role } = req.body as { merchantId: string, role?: 'merchant'|'admin' };
+  if (!merchantId) return reply.code(400).send({ error: "merchantId required" });
+  const token = await authEngine.issueToken(merchantId, role || 'merchant');
+  return reply.send({ token });
+});
+
+// Twilio SMS Verify integration for Merchant App login
+app.post("/auth/otp/send", async (req, reply) => {
+  const { phone } = req.body as { phone: string };
+  if (!phone) return reply.code(400).send({ error: "phone required" });
+  
+  const success = await identityEngine.sendOTP(phone);
+  if (!success) return reply.code(500).send({ error: "Failed to send OTP" });
+  return reply.send({ ok: true });
+});
+
+app.post("/auth/otp/verify", async (req, reply) => {
+  const { phone, code, merchantId } = req.body as { phone: string, code: string, merchantId: string };
+  if (!phone || !code || !merchantId) return reply.code(400).send({ error: "phone, code, merchantId required" });
+
+  const globalBuyerId = await identityEngine.verifyOTP(phone, code, merchantId);
+  if (!globalBuyerId) {
+    return reply.code(401).send({ error: "Invalid OTP" });
+  }
+
+  // Issue a JWT for the verified merchant
+  const token = await authEngine.issueToken(merchantId, 'merchant');
+  return reply.send({ ok: true, globalBuyerId, token });
+});
+
+// ─── Telemetry Bridge ────────────────────────────────────────────────────────
+app.post("/telemetry", async (req, reply) => {
+  const b = req.body as any;
+  if (!b.action) return reply.code(400).send({ error: "action required" });
+  
+  // @ts-ignore - Fastify hook injects merchantId
+  const merchantId = req.merchantId;
+
+  await dataIntelligence.auditLog({
+    service: b.service || 'frontend-app',
+    merchantId,
+    action: b.action,
+    metadata: b.metadata || {}
+  });
+
+  return reply.send({ ok: true });
+});
+
+app.get("/telemetry/dashboard", async (req, reply) => {
+  // Return aggregated metrics for the Admin Portal Recharts Dashboard
+  // This stubs the ClickHouse connection from Phase 3 Data Intelligence Engine
+  const data = {
+    elasticity: [
+      { name: "Mon", score: 0.82 },
+      { name: "Tue", score: 0.85 },
+      { name: "Wed", score: 0.79 },
+      { name: "Thu", score: 0.91 },
+      { name: "Fri", score: 0.88 },
+      { name: "Sat", score: 0.95 },
+      { name: "Sun", score: 0.89 },
+    ],
+    outcomes: [
+      { name: "Closed", value: 420 },
+      { name: "Bundle Pivot", value: 135 },
+      { name: "Escalated", value: 85 },
+      { name: "Abandoned", value: 210 },
+    ]
+  };
+  return reply.send(data);
+});
+
+const DIALECTS: Dialect[] = ["pidgin", "yoruba", "igbo", "hausa", "english"];
 
 app.get("/health", async () => ({ ok: true }));
 

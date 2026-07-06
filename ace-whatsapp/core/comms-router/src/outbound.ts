@@ -61,9 +61,15 @@ export function consolidate(parts: Array<string | undefined | null>): string {
  */
 export async function sendCustomerMessage(
   msg: OutboundMessage,
-  phoneNumberId: string,
+  phoneNumberId?: string,
 ): Promise<SendClass> {
-  const raw = await redis.get(windowKey(msg.toPhone));
+  // toPhone is optional on OutboundMessage (Phase-2 multi-channel); the
+  // service-window key is keyed by the customer's phone, so resolve it here.
+  const toPhone = msg.toPhone ?? msg.toSenderId;
+  if (!toPhone) {
+    throw new Error("OutboundMessage has no recipient (toPhone/toSenderId)");
+  }
+  const raw = await redis.get(windowKey(toPhone));
   const expiresAt = raw ? Number(raw) : null;
   const sendClass = classifyWindow(expiresAt, Date.now());
 
@@ -72,7 +78,7 @@ export async function sendCustomerMessage(
     // template registry exists this is where we'd swap to a pre-approved
     // template; for now we log so per-merchant cost can be tracked.
     console.info(
-      `[outbound] billable send to ${msg.toPhone} (service window closed) — ` +
+      `[outbound] billable send to ${toPhone} (service window closed) — ` +
         `candidate for template fallback`,
     );
   }

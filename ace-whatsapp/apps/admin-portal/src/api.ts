@@ -26,11 +26,12 @@ export interface Product {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("ace_admin_token");
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(API_KEY ? { "x-api-key": API_KEY } : {}),
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });

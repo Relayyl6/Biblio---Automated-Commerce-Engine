@@ -7,13 +7,10 @@
 
 import Constants from "expo-constants";
 
+import * as SecureStore from 'expo-secure-store';
+
 const BASE_URL: string =
   (Constants.expoConfig?.extra?.merchantApiBaseUrl as string) ?? "http://localhost:3004";
-
-// Optional admin key — only needed if the API was started with ADMIN_API_KEY.
-const API_KEY: string | undefined = Constants.expoConfig?.extra?.adminApiKey as
-  | string
-  | undefined;
 
 export type Dialect = "pidgin" | "yoruba" | "igbo" | "hausa" | "english";
 
@@ -44,11 +41,12 @@ export interface Product {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await SecureStore.getItemAsync('ace_merchant_token');
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(API_KEY ? { "x-api-key": API_KEY } : {}),
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -56,12 +54,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${body || res.statusText}`);
   }
-  // Some endpoints return no body.
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
+  // Auth
+  sendOtp: (phone: string) => request<{ ok: true }>(`/auth/otp/send`, { method: "POST", body: JSON.stringify({ phone }) }),
+  verifyOtp: (phone: string, code: string, merchantId: string) => request<{ ok: true, globalBuyerId: string, token: string }>(`/auth/otp/verify`, { method: "POST", body: JSON.stringify({ phone, code, merchantId }) }),
+
+  // Telemetry
+  track: (action: string, metadata?: any) => request<{ ok: true }>(`/telemetry`, { method: "POST", body: JSON.stringify({ action, metadata }) }),
+
   getMerchant: (id: string) => request<Merchant>(`/merchants/${id}`),
 
   updateMerchant: (id: string, patch: Partial<Merchant>) =>

@@ -113,7 +113,8 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
       // paidAmount < total. We let it — that's the single source of truth.
       newState = transition(order.state, {
         type: "PAYMENT_CONFIRMED",
-        paidAmount: payment.amountNgn,
+        amount: payment.amountNgn,
+        paidAt: Date.now(),
       });
     } catch (err) {
       if (err instanceof TransitionError) {

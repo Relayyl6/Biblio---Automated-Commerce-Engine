@@ -69,7 +69,8 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
   // then schedule a fresh one. BullMQ job IDs must be unique per queue —
   // using customerId as the jobId is what makes "remove + re-add" act as
   // a reset rather than creating a second job.
-  const existing = await turnQueue.getJob(customerId);
+  const bullJobId = `turn_${customerId}`;
+  const existing = await turnQueue.getJob(bullJobId);
   if (existing) {
     // A job that's already running (not just delayed) can't be removed —
     // in that case, let it run; the NEXT message will schedule its own
@@ -84,7 +85,7 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
     "process-turn",
     { customerId },
     {
-      jobId: customerId,
+      jobId: bullJobId,
       delay: DEBOUNCE_MS,
       // CRITICAL: free the jobId as soon as the job settles. BullMQ treats
       // add() with an existing jobId as a no-op across ALL states — including

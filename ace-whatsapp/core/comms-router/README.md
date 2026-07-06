@@ -1,8 +1,8 @@
-# Out-of-Band Communication Router
+# Omni-Channel Communication Router
 
 > **ACE WhatsApp — Core Microservice #10**  
 > Stack: **Rust**  
-> Role: Message delivery watchdog, priority escalation, and the Vendor Communiqué engine
+> Role: Omni-Channel Shared Inbox router, message delivery watchdog, and the Vendor Communiqué engine
 
 ---
 
@@ -10,8 +10,8 @@
 
 This service does two distinct things:
 
-1. **Customer-facing fallback** — when WhatsApp is unavailable, routes customer communications via SMS or AI voice
-2. **Vendor Communiqué engine** — routes merchant decision requests via the appropriate channel (SMS reply-code, WhatsApp, app push, or AI voice call)
+1. **Omni-Channel Customer Routing (Shared Inbox)** — routes inbound and outbound interactions across WhatsApp, Instagram, FB Messenger, Email, and VoIP. If a primary channel fails, it handles priority fallback via SMS or AI voice.
+2. **Vendor Communiqué engine** — routes merchant decision requests via the appropriate channel (SMS reply-code, WhatsApp, app push, or AI voice call).
 
 ---
 

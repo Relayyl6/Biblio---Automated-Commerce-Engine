@@ -43,7 +43,7 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           status: "draft",
           orderId: event.orderId,
           items: event.items,
-          total: event.total,
+          quotedTotal: event.total,
         };
       }
       throw new TransitionError(state.status, event.type);
@@ -55,7 +55,7 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           status: "draft",
           orderId: event.orderId,
           items: event.items,
-          total: event.total,
+          quotedTotal: event.total,
         };
       }
       if (event.type === "PAYMENT_LINK_ISSUED") {
@@ -63,12 +63,12 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           status: "awaiting_payment",
           orderId: state.orderId,
           items: state.items,
-          total: state.total,
+          total: state.quotedTotal,
           virtualAccountNumber: event.virtualAccountNumber,
           expiresAt: event.expiresAt,
         };
       }
-      if (event.type === "CANCELLED") {
+      if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
       throw new TransitionError(state.status, event.type);
@@ -76,11 +76,11 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
     case "awaiting_payment":
       if (event.type === "PAYMENT_CONFIRMED") {
         // Amount-match guard: never advance on an underpayment.
-        if (event.paidAmount < state.total) {
+        if (event.amount < state.total) {
           throw new TransitionError(
             state.status,
             event.type,
-            `paid ₦${event.paidAmount} < order total ₦${state.total}`,
+            `paid ₦${event.amount} < order total ₦${state.total}`,
           );
         }
         return {
@@ -88,41 +88,37 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           orderId: state.orderId,
           items: state.items,
           total: state.total,
-          paidAmount: event.paidAmount,
+          paidAt: event.paidAt,
         };
       }
-      if (event.type === "CANCELLED") {
+      if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
       throw new TransitionError(state.status, event.type);
 
     case "payment_verified":
-      if (event.type === "DISPATCHED") {
+      if (event.type === "RIDER_ASSIGNED") {
         return {
           status: "out_for_delivery",
           orderId: state.orderId,
           items: state.items,
-          total: state.total,
-          riderId: event.riderId,
+          riderTrackingUrl: event.trackingUrl,
         };
       }
-      if (event.type === "CANCELLED") {
+      if (event.type === "ORDER_CANCELLED") {
         // Allowed pre-dispatch; downstream handles refund of the held escrow.
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
       throw new TransitionError(state.status, event.type);
 
     case "out_for_delivery":
-      if (event.type === "DELIVERED") {
+      if (event.type === "DELIVERY_CONFIRMED") {
         return {
           status: "delivered",
           orderId: state.orderId,
-          items: state.items,
-          total: state.total,
-          deliveredAt: event.deliveredAt,
         };
       }
-      if (event.type === "CANCELLED") {
+      if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
       throw new TransitionError(state.status, event.type);

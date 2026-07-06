@@ -1,124 +1,80 @@
 // shared/src/types.ts
 //
-// The shared domain vocabulary for the whole MVP. Almost every other file
-// imports from here, so the rule is: this module has ZERO runtime imports and
-// ZERO side effects — it's types only. That keeps it safe to import from
-// pure code (pricingService, state machine) and from infra code alike.
+// These types are the "contract" between services. 
+// 
+// ingestion-service produces InboundMessage, 
+// comms-router coalesces them into ConversationTurn,
+// ai-negotiator consumes ConversationTurn + OrderState and proposes Events,
+// state-machine validates Events and produces new OrderState.
 //
-// Shapes here are derived from the existing consumers — ingestion-service
-// (InboundMessage construction), ai-negotiator/agentLoop + tools (OrderState,
-// OrderEvent, OrderItem), and comms-router/whatsapp (OutboundMessage). When in
-// doubt, the consumer is the spec.
-//
-//   - OrderState is a DISCRIMINATED UNION on `status`, stored as a single JSONB
-//     column (infra/schema.sql). Narrow on `status` and the compiler tells you
-//     which fields are present.
-//   - InboundMessage.content is also a discriminated union (text/audio/image/
-//     interactive); the agent loop switches on `content.type` exhaustively.
+// WHY a shared package at all: in a monorepo, the temptation is to redefine
+// "Order" slightly differently in three services because each team is moving
+// fast. That's how you get a production bug where comms-router thinks
+// `status` is a string but state-machine emits an enum. One source of truth
+// for these shapes removes an entire category of integration bugs.
 
-// ─── Seller context (merchant → the AI's voice & catalog) ───────────────────
-
-/** Regional register the negotiator writes in. Mirrors merchants.dialect. */
-export type Dialect = "pidgin" | "yoruba" | "igbo" | "hausa" | "english";
-
-/**
- * The seller context the negotiator speaks FROM. Loaded once per turn and
- * injected into the system prompt so each merchant's agent sounds like them.
- * Mirrors the prompt-relevant columns of the `merchants` table.
- */
-export interface MerchantContext {
-  id: string;
-  name: string;
-  toneGuide: string | null;
-  businessPolicies: string | null;
-  deliveryInfo: string | null;
-  dialect: Dialect;
-}
-
-/**
- * A catalog product with the deep context the agent sells on (not just price).
- * Mirrors the `products` table; returned by the check_inventory tool.
- */
-export interface Product {
-  sku: string;
-  name: string;
-  stock: number;
-  price: number;
-  description: string | null;
-  category: string | null;
-  tags: string[];
-  attributes: Record<string, unknown>;
-  imageUrl: string | null;
-  currency: string;
-}
-
-// ─── Inbound (customer → us) ────────────────────────────────────────────────
-
-export type MessageContent =
-  | { type: "text"; text: string }
-  | { type: "audio"; mediaId: string; mimeType?: string }
-  | { type: "image"; mediaId: string; caption?: string }
-  | { type: "interactive"; payload: Record<string, unknown> };
-
-/**
- * One normalised WhatsApp message. ingestion-service builds these from the raw
- * Meta webhook payload; they are JSON-serialised onto the per-customer Redis
- * scratch buffer by comms-router/debounce, so every field must be plain data.
- */
+/** Raw webhook payload, normalized from WhatsApp's verbose Graph API shape. (Legacy Phase 1) */
 export interface InboundMessage {
-  /** WhatsApp's `wamid` — used as the idempotency key for dedup. */
+  /** WhatsApp message ID — used for idempotency dedup */
   waMessageId: string;
-  /** Customer phone in E.164 — the Phase-1 identity key. */
+  /** Customer's WhatsApp phone number (E.164), e.g. "2348012345678" */
   fromPhone: string;
-  /** The merchant's WhatsApp Business `phone_number_id` the message arrived on. */
+  /** Your business phone number ID this came in on */
   toPhoneNumberId: string;
-  /** Unix epoch millis. */
+  /** Unix ms timestamp from WhatsApp */
   timestamp: number;
-  content: MessageContent;
+  content:
+    | { type: "text"; text: string }
+    | { type: "audio"; mediaId: string }
+    | { type: "image"; mediaId: string; caption?: string }
+    | { type: "interactive"; payload: unknown };
+}
+
+export type PlatformChannel = "whatsapp" | "instagram" | "facebook" | "telegram" | "tiktok" | "email";
+
+/** Normalized message format spanning all supported channels (Phase 2) */
+export interface UnifiedMessage {
+  messageId: string;
+  channel: PlatformChannel;
+  /** The customer's identifier on that platform (Phone, IG Handle, Email, Telegram ID) */
+  senderId: string;
+  /** The merchant's identifier on that platform */
+  recipientId: string;
+  timestamp: number;
+  content:
+    | { type: "text"; text: string }
+    | { type: "audio"; mediaUrl?: string; mediaId?: string }
+    | { type: "image"; mediaUrl?: string; mediaId?: string; caption?: string }
+    | { type: "interactive"; payload: unknown };
 }
 
 /**
- * A debounced batch of inbound messages from one customer, plus the order
- * state they were sent against. This is the unit handed to the negotiator.
+ * A "turn" is one or more InboundMessages that arrived within the debounce
+ * window and are treated as a single semantic unit by the negotiator.
+ * This is the unit the ai-negotiator actually reasons over.
  */
 export interface ConversationTurn {
-  customerId: string;
+  customerId: string; // Phase 1: == fromPhone. Phase 2: Global Buyer ID
   merchantId: string;
-  messages: InboundMessage[];
+  messages: Array<InboundMessage | UnifiedMessage>;
+  /** The order state at the moment this turn is being processed */
   orderState: OrderState;
 }
 
-// ─── Outbound (us → customer) ───────────────────────────────────────────────
-
-export interface OutboundButton {
-  id: string;
-  title: string;
-}
-
-export interface OutboundMessage {
-  toPhone: string;
-  text?: string;
-  /** When present, sent as a WhatsApp interactive button message. */
-  buttons?: OutboundButton[];
-}
-
-// ─── Orders ─────────────────────────────────────────────────────────────────
-
-export interface OrderItem {
-  sku: string;
-  name: string;
-  quantity: number;
-  unitPrice: number;
-}
-
 /**
- * The order lifecycle as a discriminated union. `no_order` is the empty state;
- * every other state carries an `orderId`. Terminal: `delivered`, `cancelled`.
- * Field shapes follow what tools.ts / agentLoop.ts read off each state.
+ * The order state machine. Each variant carries exactly the data that's
+ * valid for that state — you cannot construct a "PaymentVerified" order
+ * with no orderId, the type system won't let you. This is the core
+ * "make illegal states unrepresentable" pattern.
  */
 export type OrderState =
   | { status: "no_order" }
-  | { status: "draft"; orderId: string; items: OrderItem[]; total: number }
+  | {
+      status: "draft";
+      orderId: string;
+      items: OrderItem[];
+      quotedTotal: number;
+    }
   | {
       status: "awaiting_payment";
       orderId: string;
@@ -132,37 +88,78 @@ export type OrderState =
       orderId: string;
       items: OrderItem[];
       total: number;
-      paidAmount: number;
+      paidAt: number;
     }
   | {
       status: "out_for_delivery";
       orderId: string;
       items: OrderItem[];
-      total: number;
-      riderId?: string;
+      riderTrackingUrl: string;
     }
-  | {
-      status: "delivered";
-      orderId: string;
-      items: OrderItem[];
-      total: number;
-      deliveredAt: number;
-    }
-  | { status: "cancelled"; orderId: string; reason?: string };
+  | { status: "delivered"; orderId: string }
+  | { status: "cancelled"; orderId: string; reason: string };
 
-export type OrderStatus = OrderState["status"];
+export interface OrderItem {
+  sku: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+}
 
 /**
- * Events that drive the order state machine. Names/fields match the calls in
- * core/ai-negotiator/src/tools.ts (`QUOTE_CREATED`, `PAYMENT_LINK_ISSUED`).
- * The state machine validates each against the current state.
+ * Events are the ONLY way OrderState changes. The ai-negotiator proposes
+ * events; state-machine.transition() is the sole authority on whether
+ * the proposed event is legal from the current state.
  */
 export type OrderEvent =
   | { type: "QUOTE_CREATED"; orderId: string; items: OrderItem[]; total: number }
   | { type: "PAYMENT_LINK_ISSUED"; virtualAccountNumber: string; expiresAt: number }
-  | { type: "PAYMENT_CONFIRMED"; paidAmount: number }
-  | { type: "DISPATCHED"; riderId?: string }
-  | { type: "DELIVERED"; deliveredAt: number }
-  | { type: "CANCELLED"; reason?: string };
+  | { type: "PAYMENT_CONFIRMED"; paidAt: number; amount: number }
+  | { type: "PAYMENT_TIMEOUT" }
+  | { type: "RIDER_ASSIGNED"; trackingUrl: string }
+  | { type: "DELIVERY_CONFIRMED" }
+  | { type: "ORDER_CANCELLED"; reason: string };
 
+/** A message the agent wants to send back to the customer. */
+export interface OutboundMessage {
+  toPhone?: string; // Legacy Phase 1
+  toSenderId?: string; // Phase 2: Global Buyer ID or Platform ID
+  channel?: PlatformChannel;
+  text: string;
+  /** Optional buttons/links for interactive messages */
+  buttons?: OutboundButton[];
+}
+
+export interface OutboundButton {
+  id: string;
+  label: string;
+}
+
+export type OrderStatus = OrderState["status"];
 export type OrderEventType = OrderEvent["type"];
+
+export type Dialect = "pidgin" | "yoruba" | "igbo" | "hausa" | "english";
+
+export interface Product {
+  sku: string;
+  name: string;
+  stock: number;
+  price: number;
+  description: string | null;
+  category: string | null;
+  tags: string[];
+  attributes: Record<string, unknown>;
+  image_url: string | null;
+  currency: string;
+  active: boolean;
+  source: string;
+}
+
+export interface MerchantContext {
+  id: string;
+  name: string;
+  toneGuide: string | null;
+  businessPolicies: string | null;
+  deliveryInfo: string | null;
+  dialect: Dialect;
+}

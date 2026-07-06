@@ -1,31 +1,30 @@
 // core/ai-negotiator/src/agentLoop.ts
 //
-// The negotiation agent's per-turn entry point. One debounced ConversationTurn
-// comes in; the loop drives a tool-using Claude call until the model stops
-// requesting tools, then finalizes (persist order, flush trace, send reply).
+// PRODUCTION ADDITIONS IN THIS VERSION:
 //
-// Invariants worth keeping in mind while reading:
+// 1) RESILIENT MODEL CALLS. Anthropic's API can return 429 (rate limit) or
+//    529 (overloaded) — both transient. A naive `await anthropic.messages
+//    .create(...)` with no retry means a momentary blip kills the entire
+//    negotiation turn and the customer gets silence. We wrap the call with
+//    a small retry, same backoff-with-jitter pattern as comms-router uses
+//    for WhatsApp sends.
 //
-//   - PRICES ARE NEVER TRUSTED FROM THE MODEL. The authorized range starts as a
-//     sentinel with floor=Infinity (blocks every propose_price) and is only
-//     widened reactively, after check_inventory returns a real price and
-//     get_customer_profile returns the real tier. By the time the model can
-//     legally propose, ctx.authorizedRange reflects real data — enforced in
-//     tools.ts, not just the prompt.
+// 2) PER-TURN TIMEOUT. 8 iterations of tool calls could, in a pathological
+//    case, take a very long time. A hard ceiling means a stuck turn fails
+//    into escalateToHuman rather than holding the Redis lock (and the
+//    customer's attention) indefinitely.
 //
-//   - ONE TURN PER CUSTOMER AT A TIME. A Redis SETNX lock guards against two
-//     concurrent debounce jobs racing into conflicting state writes.
+// 3) TURN-LEVEL TRY/CATCH WITH GUARANTEED CUSTOMER-FACING FALLBACK. If
+//    anything in `_runTurn` throws after retries are exhausted — a DB
+//    outage, a malformed tool result, whatever — the customer must not
+//    just get silence. We catch at the top level and escalate.
 //
-//   - OUTBOUND GOES THROUGH ONE DOOR. finalizeTurn sends via comms-router's
-//     sendCustomerMessage (service-window classification lives there), never the
-//     raw Graph sender.
-//
-//   - TERMINAL ARCS BECOME TRACES. negotiationTrace.buildNegotiationTrace turns a
-//     terminal arc into the negotiation_traces row (the enterprise data asset);
-//     it returns null mid-negotiation, so finalizeTurn can call it unconditionally.
+// 4) CORRECT, CONFIGURABLE MODEL STRING. Loaded from env so you can roll
+//    forward to a new model version without a code deploy.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { sql, redis, jsonb } from "@ace/shared/clients";
+import { loadNegotiatorEnv } from "@ace/shared/env";
 import { sendCustomerMessage } from "../../comms-router/src/outbound";
 import { executeTool, toolDefinitions, type ToolContext } from "./tools";
 import {
@@ -46,32 +45,60 @@ import type {
   MerchantContext,
   Dialect,
 } from "@ace/shared/types";
+import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
+import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = "claude-sonnet-4-6";
+const env = loadNegotiatorEnv();
+const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+const MODEL = env.ANTHROPIC_MODEL;
 const MAX_ITERATIONS = 8;
-const LOCK_TTL_SECONDS = 300; // 5 minutes — generous ceiling for an 8-iteration turn
+const LOCK_TTL_SECONDS = 300;
+const TURN_TIMEOUT_MS = 45_000; // hard ceiling; well above p99 for an 8-iteration turn
+const MAX_MODEL_RETRIES = 3;
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export async function runNegotiatorTurn(turn: ConversationTurn): Promise<void> {
-  // Distributed lock — prevents two concurrent turns for the same customer from
-  // producing conflicting state writes (debounce reset can race with job pickup).
   const lockKey = `lock:negotiation:${turn.customerId}`;
   const lockAcquired = await redis.set(lockKey, "1", "EX", LOCK_TTL_SECONDS, "NX");
 
   if (!lockAcquired) {
-    console.warn(
-      `[negotiator] lock contention for customer ${turn.customerId} — dropping duplicate turn`,
-    );
+    console.warn(`[negotiator] lock contention for customer ${turn.customerId} — dropping duplicate turn`);
     return;
   }
 
   try {
-    await _runTurn(turn);
+    await withTimeout(_runTurn(turn), TURN_TIMEOUT_MS);
+  } catch (err) {
+    console.error(`[negotiator] turn failed for customer ${turn.customerId}:`, err);
+    // Guaranteed customer-facing fallback. A silent failure here is worse
+    // than an imperfect one — the customer is mid-negotiation and waiting.
+    await safeEscalate(turn, `Unhandled error in negotiator turn: ${(err as Error).message}`);
   } finally {
-    // Always release the lock, even if the turn throws.
     await redis.del(lockKey);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`turn exceeded ${ms}ms timeout`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+async function safeEscalate(turn: ConversationTurn, reason: string): Promise<void> {
+  try {
+    // Build a minimal arc if we don't have one — this path can be hit
+    // before loadOrCreateArc ever ran.
+    const arc = await loadOrCreateArc(turn).catch(() => createFreshArc(turn));
+    await escalateToHuman(turn, arc, reason);
+  } catch (err) {
+    // If even escalation fails (e.g. DB is fully down), this is the last
+    // line of defense — log loud, don't crash the worker process.
+    console.error(`[negotiator] CRITICAL: escalation itself failed for customer ${turn.customerId}:`, err);
   }
 }
 
@@ -82,9 +109,6 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
     loadMerchantContext(turn.merchantId),
   ]);
 
-  // Sentinel range — floor=Infinity means NO price can pass until real product
-  // data arrives via check_inventory. Safer to block a proposal than to approve
-  // one against a floor of 0. Widened reactively in the tool loop below.
   let currentBasePrice = 0;
   let currentTier: CustomerTier = arc.tier;
 
@@ -113,13 +137,16 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   let currentArc: NegotiationArc = arc;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await anthropic.messages.create({
+    const response = await createMessageWithRetry({
       model: MODEL,
       max_tokens: 1024,
       system: systemPrompt,
       tools: toolDefinitions as unknown as Anthropic.Tool[],
       messages,
     });
+
+    // Observability: token usage drives per-merchant AI cost attribution.
+    logTokenUsage(turn.merchantId, response.usage);
 
     const toolUseBlocks = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -143,19 +170,29 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
       ctx.orderState = currentOrderState;
       ctx.arc = currentArc;
 
-      const result = await executeTool(block.name, block.input, ctx);
+      let result;
+      try {
+        result = await executeTool(block.name, block.input, ctx);
+      } catch (err) {
+        // A single tool failure (e.g. inventory DB hiccup) shouldn't kill
+        // the whole turn — feed the error back to the model as a tool
+        // result so it can adapt (retry, apologize, or pivot tactics),
+        // matching how Claude expects tool-use failures to be reported.
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify({ error: `tool_failed: ${(err as Error).message}` }),
+          is_error: true,
+        });
+        continue;
+      }
 
-      // Reactive range recomputation + arc bootstrap. When check_inventory
-      // returns a real price (and get_customer_profile the real tier), recompute
-      // the authorized range and project it onto the arc. The range is only ever
-      // as stale as one tool call — never the whole turn.
       if (result.rangeUpdate) {
         const { basePrice, tier, productSku } = result.rangeUpdate;
 
         if (basePrice !== undefined) currentBasePrice = basePrice;
         if (tier !== undefined) currentTier = tier;
         if (productSku !== undefined) {
-          // Carry the real SKU + tier forward so deploy_tactic sees them.
           currentArc = { ...currentArc, productSku, tier: currentTier };
         }
 
@@ -166,8 +203,6 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
           };
           const range = computeAuthorizedRange(updatedRules, currentTier);
           ctx.authorizedRange = range;
-          // Single source of truth: project anchor/floor/tier/sku onto the arc
-          // so the next turn's system prompt and the tactic guards all agree.
           currentArc = projectRangeOntoArc(currentArc, range, productSku);
         }
       }
@@ -188,12 +223,38 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   await escalateToHuman(turn, currentArc, "Negotiator exceeded max tool-call iterations");
 }
 
+// ─── Resilient model call ──────────────────────────────────────────────────
+
+async function createMessageWithRetry(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  attempt = 1,
+): Promise<Anthropic.Message> {
+  try {
+    return await anthropic.messages.create(params);
+  } catch (err: any) {
+    const status = err?.status;
+    const isRetryable = status === 429 || status === 529 || status >= 500;
+
+    if (isRetryable && attempt < MAX_MODEL_RETRIES) {
+      const backoffMs = 500 * 2 ** (attempt - 1) + Math.random() * 250;
+      await new Promise((r) => setTimeout(r, backoffMs));
+      return createMessageWithRetry(params, attempt + 1);
+    }
+    throw err;
+  }
+}
+
+function logTokenUsage(merchantId: string, usage: Anthropic.Usage | undefined) {
+  if (!usage) return;
+  console.info(
+    `[negotiator] merchant=${merchantId} input_tokens=${usage.input_tokens} output_tokens=${usage.output_tokens}`,
+  );
+  // In a real deployment, push this to your metrics/billing pipeline
+  // (e.g. dataIntelligence.logTokenUsage) rather than console.info —
+  // per-merchant AI cost attribution matters once you have >1 paying merchant.
+}
+
 // ─── System Prompt ────────────────────────────────────────────────────────────
-//
-// The floor shown here is arc.floor, which is 0 on a fresh arc until the loop's
-// first check_inventory call updates it. That's intentional: the model is told
-// to call check_inventory first, and tools.ts enforces the real floor regardless
-// of what the prompt shows. Belt + suspenders.
 
 function dialectGuidance(d: Dialect): string {
   switch (d) {
@@ -300,7 +361,6 @@ async function loadOrCreateArc(turn: ConversationTurn): Promise<NegotiationArc> 
 
   if (raw) {
     const existing = JSON.parse(raw) as NegotiationArc;
-    // A terminal arc from a previous deal shouldn't bleed into a new one.
     if (["close", "escalate", "abandoned"].includes(existing.stage)) {
       return createFreshArc(turn);
     }
@@ -316,10 +376,10 @@ function createFreshArc(turn: ConversationTurn): NegotiationArc {
     sessionId: crypto.randomUUID(),
     merchantId: turn.merchantId,
     customerId: turn.customerId,
-    productSku: "TBD", // Replaced by rangeUpdate from check_inventory
-    anchorPrice: 0,    // Replaced after check_inventory + recompute
-    floor: 0,          // Replaced after check_inventory + recompute
-    tier: "new",       // Replaced by rangeUpdate from get_customer_profile
+    productSku: "TBD",
+    anchorPrice: 0,
+    floor: 0,
+    tier: "new",
     stage: "anchor",
     tacticsDeployed: [],
     bundlePivotAttempted: false,
@@ -344,7 +404,6 @@ async function finalizeTurn(
   finalArc: NegotiationArc,
   replyText: string,
 ): Promise<void> {
-  // Persist the order if it changed and actually exists.
   if (finalOrderState !== turn.orderState && finalOrderState.status !== "no_order") {
     await sql`
       insert into orders (id, merchant_id, customer_id, state, updated_at)
@@ -359,25 +418,29 @@ async function finalizeTurn(
     `;
   }
 
-  // Flush the enterprise data asset on terminal arcs. buildNegotiationTrace
-  // returns null mid-negotiation, so this is a no-op until the arc is terminal.
   await flushNegotiationTrace(finalArc);
-
   await saveArc(finalArc);
 
-  // Send via the single outbound chokepoint, which classifies the service window
-  // (free session vs. billable) and will swap in template fallback in Phase 2.
   if (replyText.trim().length > 0) {
-    const phoneNumberId = turn.messages[0].toPhoneNumberId;
-    await sendCustomerMessage({ toPhone: turn.customerId, text: replyText }, phoneNumberId);
+    const phoneNumberId = replyPhoneNumberId(turn);
+    await sendCustomerMessage(
+      { toPhone: turn.customerId, text: replyText },
+      phoneNumberId,
+      turn.merchantId,
+    );
   }
+}
+
+function replyPhoneNumberId(turn: ConversationTurn): string | undefined {
+  const first = turn.messages[0];
+  return first && "toPhoneNumberId" in first ? first.toPhoneNumberId : undefined;
 }
 
 // ─── NegotiationTrace Flush ───────────────────────────────────────────────────
 
 async function flushNegotiationTrace(arc: NegotiationArc): Promise<void> {
   const trace = buildNegotiationTrace(arc);
-  if (!trace) return; // Non-terminal arc — nothing to record yet.
+  if (!trace) return;
 
   await sql`
     insert into negotiation_traces (
@@ -404,6 +467,8 @@ async function flushNegotiationTrace(arc: NegotiationArc): Promise<void> {
     )
     on conflict (session_id) do nothing
   `;
+
+  await dataIntelligence.logNegotiationTrace(trace as any);
 }
 
 // ─── Human Escalation ─────────────────────────────────────────────────────────
@@ -421,11 +486,28 @@ async function escalateToHuman(
       now()
     )
   `;
-  const phoneNumberId = turn.messages[0].toPhoneNumberId;
+  const phoneNumberId = replyPhoneNumberId(turn);
   await sendCustomerMessage(
     { toPhone: turn.customerId, text: "Let me check on this and get back to you shortly!" },
     phoneNumberId,
+    turn.merchantId,
   );
+
+  const merchantPhone = await loadMerchantNotificationPhone(turn.merchantId);
+  await vendorCommunique.dispatchEscalation(
+    turn.merchantId,
+    merchantPhone,
+    turn.customerId,
+    reason,
+    { turn, arc },
+  );
+}
+
+async function loadMerchantNotificationPhone(merchantId: string): Promise<string> {
+  const rows = await sql<{ notification_phone: string | null }[]>`
+    select notification_phone from merchants where id = ${merchantId} limit 1
+  `;
+  return rows[0]?.notification_phone ?? "";
 }
 
 // ─── Merchant Context (the seller's voice) ─────────────────────────────────────
@@ -446,8 +528,6 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
   `;
   const row = rows[0];
   if (!row) {
-    // Don't fail a live customer turn over missing seller copy — fall back to a
-    // neutral persona. The agent still negotiates correctly within the rules.
     return {
       id: merchantId,
       name: "our shop",
@@ -491,8 +571,6 @@ async function loadMerchantPricingRules(merchantId: string): Promise<MerchantPri
     limit 1
   `;
 
-  // base_price is NOT loaded here — it's per-product, set reactively from
-  // check_inventory via rangeUpdate. The rules object starts with basePrice=0.
   if (!rows[0]) {
     return {
       basePrice: 0,
@@ -504,7 +582,7 @@ async function loadMerchantPricingRules(merchantId: string): Promise<MerchantPri
   }
 
   return {
-    basePrice: 0, // Set by check_inventory via rangeUpdate
+    basePrice: 0,
     absoluteFloor: rows[0].absolute_floor,
     maxDiscountByTier: rows[0].max_discount_by_tier as Record<CustomerTier, number>,
     maxBundleValueAddByTier: rows[0].max_bundle_value_add_by_tier as Record<CustomerTier, number>,

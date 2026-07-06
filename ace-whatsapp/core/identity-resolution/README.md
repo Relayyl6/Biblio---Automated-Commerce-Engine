@@ -10,9 +10,10 @@ Clusters phone numbers, usernames, and email addresses from any channel into a s
 
 ## Key Functions
 
-- **Identifier clustering**: Maps phone numbers, WhatsApp IDs, Instagram handles, emails → single `global_buyer_id`
-- **Fuzzy name resolution**: "David", "Dave", "Davido" + same phone number → same identity
-- **Cross-platform coherence**: Same customer messaging via WhatsApp and Instagram DM = unified profile
+- **Contact Merge (Omni-Channel)**: If the same customer messages on WhatsApp in the morning and emails in the afternoon, the platform recognizes it's the same person and merges their profiles into a single thread.
+- **Identifier clustering**: Maps phone numbers, WhatsApp IDs, Instagram handles, emails → single `global_buyer_id`.
+- **Fuzzy name resolution**: "David", "Dave", "Davido" + same phone number → same identity.
+- **Cross-platform coherence**: Same customer messaging via WhatsApp and Instagram DM = unified profile avoiding duplicate tickets.
 - **Profile enrichment**: Aggregates purchase history, preferences, and addresses across all ACE merchants
 - **1-tap checkout enablement**: Verified details pre-populate on any ACE PWA after first checkout
 - **Privacy-preserving**: Internal ID is a hash — PII stored separately with strict access controls
