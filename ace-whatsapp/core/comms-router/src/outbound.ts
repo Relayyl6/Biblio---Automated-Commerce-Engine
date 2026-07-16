@@ -16,6 +16,12 @@
 //      several short sends into one structured message before it ever hits the
 //      Graph API.
 //
+//   3. BAILEYS ADAPTER PATH — if the merchant has an active Baileys session
+//      (vendor business line model), messages go through that socket instead
+//      of the Graph API. Baileys sends are always free (no per-message cost,
+//      no 24h session window constraint). The same classifyWindow() path
+//      still runs for telemetry/logging purposes.
+//
 // The actual template registry (pre-approved WhatsApp templates) is a Phase-2
 // gap; until it exists we still send via the session API when the window is
 // closed, but we log the billable classification so the cost-monitoring work
@@ -24,6 +30,10 @@
 import { redis } from "@ace/shared/clients";
 import type { OutboundMessage } from "@ace/shared/types";
 import { sendWhatsAppMessage } from "./whatsapp";
+import {
+  canSendViaBaileys,
+  sendViaBaileys,
+} from "../../baileys-gateway/src/outboundAdapter.js";
 
 /** How a send is billed by Meta. */
 export type SendClass = "free_session" | "billable_business_initiated";
@@ -56,12 +66,16 @@ export function consolidate(parts: Array<string | undefined | null>): string {
 
 /**
  * The one outbound entry point. Reads the service window, classifies the send,
- * logs the classification (for cost monitoring), and delegates to the Graph API
- * sender. Returns the classification so callers/metrics can act on it.
+ * logs the classification (for cost monitoring), and delegates to the correct
+ * sender — either the vendor's Baileys session (always free) or the Meta
+ * Graph API (subject to the 24h session window cost model).
+ *
+ * Returns the SendClass so callers/metrics can track cost attribution.
  */
 export async function sendCustomerMessage(
   msg: OutboundMessage,
   phoneNumberId?: string,
+  merchantId?: string,
 ): Promise<SendClass> {
   // toPhone is optional on OutboundMessage (Phase-2 multi-channel); the
   // service-window key is keyed by the customer's phone, so resolve it here.
@@ -69,6 +83,16 @@ export async function sendCustomerMessage(
   if (!toPhone) {
     throw new Error("OutboundMessage has no recipient (toPhone/toSenderId)");
   }
+
+  // ── Baileys fast path ────────────────────────────────────────────────────
+  // If this merchant has an active Baileys session, use it.
+  // Baileys sends are always free (no per-message Meta cost, no 24h window).
+  if (merchantId && canSendViaBaileys(merchantId)) {
+    await sendViaBaileys(msg, merchantId);
+    return "free_session";
+  }
+
+  // ── Meta Graph API path ──────────────────────────────────────────────────
   const raw = await redis.get(windowKey(toPhone));
   const expiresAt = raw ? Number(raw) : null;
   const sendClass = classifyWindow(expiresAt, Date.now());
@@ -83,6 +107,6 @@ export async function sendCustomerMessage(
     );
   }
 
-  await sendWhatsAppMessage(msg, phoneNumberId);
+  await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
   return sendClass;
 }

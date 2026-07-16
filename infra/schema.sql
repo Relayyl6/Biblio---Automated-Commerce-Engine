@@ -158,3 +158,87 @@ create table negotiation_traces (
 
 create index negotiation_traces_merchant_idx on negotiation_traces (merchant_id, created_at desc);
 create index negotiation_traces_outcome_idx on negotiation_traces (outcome);
+
+-- ─── Vendor Decisions (Vendor Communiqué reply codes) ────────────────────────
+-- Stores the outcome of a merchant's numeric reply to an escalation message.
+-- Written by vendorCommunique.ts handleMerchantReply().
+create table if not exists vendor_decisions (
+  id            uuid        primary key default uuid_generate_v4(),
+  merchant_id   uuid        references merchants(id),
+  decision_type text        not null,  -- 'escalation_reply'
+  channel       text        not null,  -- 'sms' | 'whatsapp' | 'baileys'
+  choice        text        not null,  -- 'approve_exception' | 'hold_firm' | 'offer_bundle'
+  created_at    timestamptz not null default now()
+);
+
+create index vendor_decisions_merchant_idx on vendor_decisions (merchant_id);
+
+-- ─── Baileys Vendor Business Line ─────────────────────────────────────────────
+-- One row per vendor (one Baileys session = one WhatsApp business line).
+-- A single merchant can have multiple vendors / business lines.
+create table vendors (
+  id                      uuid        primary key default uuid_generate_v4(),
+  merchant_id             uuid        not null references merchants(id) on delete cascade,
+
+  -- The dedicated "business line" SIM. E.164 without '+': '2348012345678'.
+  -- NULL until the vendor completes the pairing flow (POST /vendors/:id/pair).
+  business_line_number    text        unique,
+
+  -- The vendor's own personal WhatsApp number — the classifier uses this to
+  -- distinguish vendor product uploads from customer queries on the same socket.
+  personal_number         text        not null,
+
+  -- Optional contact for re-provision alerts (SMS / separate WA)
+  notification_phone      text,
+
+  -- Session lifecycle managed by baileys-gateway
+  session_status          text        not null default 'disconnected',
+    -- 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'logged_out'
+
+  -- WhatsApp Status (Stories) configuration
+  auto_status_enabled     boolean     not null default false,
+  posting_frequency_hours integer     not null default 24,
+  approve_before_post     boolean     not null default true,  -- false = fully automatic
+
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index vendors_merchant_id_idx on vendors (merchant_id);
+
+-- Track every WhatsApp Status (Story) post ever made by each vendor.
+-- Immutable audit log — never delete. Errors go in the error column.
+create table status_log (
+  id          uuid        primary key default uuid_generate_v4(),
+  vendor_id   uuid        not null references vendors(id) on delete cascade,
+  sku         text        not null,
+  image_url   text,
+  caption     text,
+  posted_at   timestamptz not null default now(),
+  error       text        -- null = success, error message on failure
+);
+
+create index status_log_vendor_idx  on status_log (vendor_id);
+create index status_log_posted_idx  on status_log (posted_at desc);
+
+-- Holds Status posts pending merchant approval (when approve_before_post = true).
+create table status_post_queue (
+  id          uuid        primary key default uuid_generate_v4(),
+  vendor_id   uuid        not null references vendors(id) on delete cascade,
+  sku         text        not null,
+  image_url   text,
+  caption     text,
+  queued_at   timestamptz not null default now(),
+  approved_at timestamptz,   -- null = pending dashboard review
+  posted_at   timestamptz    -- null = not yet published to Status
+);
+
+create index status_queue_vendor_idx on status_post_queue (vendor_id);
+create index status_queue_pending_idx
+  on status_post_queue (vendor_id)
+  where approved_at is not null and posted_at is null;
+
+-- Add vendor-push columns to products (idempotent with IF NOT EXISTS).
+-- 'source' already exists from catalog-sync — add 'last_posted_at' for the Status cron.
+alter table products
+  add column if not exists last_posted_at timestamptz;

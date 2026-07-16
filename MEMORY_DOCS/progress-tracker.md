@@ -3,11 +3,12 @@
 > Last updated: 2026-06-23. The living "where are we" log. **Update this file every time
 > work completes** (directive #8). Newest entries at top of the log.
 
-## Current status: Omni-Channel Convergence Layer Complete
+## Current status: Omni-Channel Convergence Layer Complete & Baileys Edge Service Built
 
 - **Omni-Channel Engine:** `ace-platform/services/channels` implemented with ingress/egress routers and stubs for TikTok, IG, FB, Telegram, Email, and WhatsApp.
 - **Identity Resolution:** Contact Merge deployed in `ace-whatsapp/core/identity-resolution` (hashes platform IDs to `Global_Buyer_ID`).
 - **Autonomous Routing:** Intent Parser stub and State Machine Orchestrator active, properly delegating visual/purchases/complaints instead of just dumping everything into the Negotiator.
+- **Baileys Edge Gateway:** Dedicated microservice created at `ace-whatsapp/core/baileys-gateway` to handle the Vendor Business Line model using `@whiskeysockets/baileys` v7. Includes session management, Claude Vision inventory ingestion, and automated Status posting.
 - **Compiles:** ✅ `npx tsc --noEmit` verified with 0 errors across the entire codebase.
 
 ## Done ✅
@@ -37,10 +38,12 @@
 - **merchant-app** (foundation) — settings (functional), catalog + command-center (placeholder).
 - **admin-portal** (foundation) — Merchant Management (load, view catalog, sync).
 - **MEMORY_DOCS** created (this folder) — 2026-06-23.
+- **baileys-gateway** — Edge microservice for vendor business lines. Handles pairing, Redis-backed auth state, classification of vendor push vs customer query, Claude Vision image-to-catalog parsing, and automatic/approved Status posting.
+- **Schema Updates** — Added `vendors`, `status_log`, and `status_post_queue` tables to support Baileys multi-device business lines.
 
 ## In progress 🟡
 
-- (none active yet — next up is Phase A in `build-plan.md`)
+- (none active yet — next up is Phase A in `build-plan.md` or further Baileys dashboard work)
 
 ## Pending / not started 🔲 (highest-value first)
 

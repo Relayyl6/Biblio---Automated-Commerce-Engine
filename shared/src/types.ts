@@ -125,9 +125,17 @@ export interface OutboundMessage {
   toPhone?: string; // Legacy Phase 1
   toSenderId?: string; // Phase 2: Global Buyer ID or Platform ID
   channel?: PlatformChannel;
-  text: string;
+  text?: string; // Optional — may be absent if sending media-only
   /** Optional buttons/links for interactive messages */
   buttons?: OutboundButton[];
+  /** URL to an image or media file to send */
+  mediaUrl?: string;
+  /** WhatsApp approved template name (for out-of-window sends via Meta Graph API) */
+  templateName?: string;
+  /** BCP-47 language code for the template, e.g. "en", "en_GB" */
+  templateLanguage?: string;
+  /** Positional parameters to inject into the template body component */
+  templateParams?: string[];
 }
 
 export interface OutboundButton {
@@ -162,4 +170,30 @@ export interface MerchantContext {
   businessPolicies: string | null;
   deliveryInfo: string | null;
   dialect: Dialect;
+}
+
+/**
+ * Represents one vendor's Baileys business-line configuration.
+ * This is the canonical type used across baileys-gateway and comms-router.
+ * The DB table is `vendors` — see infra/schema.sql.
+ */
+export interface VendorSession {
+  /** UUID primary key of the vendors table row */
+  id: string;
+  /** FK to merchants.id */
+  merchant_id: string;
+  /** WhatsApp business line number (E.164, no +): '2348012345678'. Null until paired. */
+  business_line_number: string | null;
+  /** Vendor's personal WhatsApp — used to detect product submission vs. customer query */
+  personal_number: string;
+  /** Optional contact number for re-provision SMS alerts */
+  notification_phone: string | null;
+  /** Lifecycle state of the Baileys WebSocket session */
+  session_status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'logged_out';
+  /** Whether to automatically post new products to WhatsApp Status */
+  auto_status_enabled: boolean;
+  /** Minimum hours between posting the same product to Status */
+  posting_frequency_hours: number;
+  /** If true, Status posts are held in status_post_queue for merchant approval */
+  approve_before_post: boolean;
 }

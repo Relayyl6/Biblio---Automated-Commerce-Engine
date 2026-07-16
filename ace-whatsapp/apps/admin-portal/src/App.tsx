@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Link, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, useNavigate, Navigate } from "react-router-dom";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { LayoutDashboard, Users, Settings, LogOut } from "lucide-react";
-import { api, type Merchant, type Product } from "./api";
+import { LayoutDashboard, Users, LogOut, Smartphone } from "lucide-react";
+import { api, type Merchant, type Product, type StatusLogEntry, type QueueItem } from "./api";
 
 const DEMO_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -18,14 +18,13 @@ export function App() {
 }
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
   const token = localStorage.getItem("ace_admin_token");
 
-  useEffect(() => {
-    if (!token) navigate("/login");
-  }, [token, navigate]);
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
 
-  return token ? <>{children}</> : null;
+  return <>{children}</>;
 }
 
 function Login() {
@@ -65,6 +64,7 @@ function DashboardLayout() {
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 15, marginTop: 40 }}>
           <Link to="/" style={S.navLink}><LayoutDashboard size={18} /> Data Intelligence</Link>
           <Link to="/merchants" style={S.navLink}><Users size={18} /> Merchants</Link>
+          <Link to="/vendor-status" style={S.navLink}><Smartphone size={18} /> Vendor Status</Link>
           <button style={{...S.navLink, background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer'}} onClick={() => {
             localStorage.removeItem("ace_admin_token");
             navigate("/login");
@@ -75,6 +75,7 @@ function DashboardLayout() {
         <Routes>
           <Route path="/" element={<DataIntelligenceDashboard />} />
           <Route path="/merchants" element={<MerchantManagement />} />
+          <Route path="/vendor-status" element={<VendorStatusPanel />} />
         </Routes>
       </main>
     </div>
@@ -83,14 +84,25 @@ function DashboardLayout() {
 
 function DataIntelligenceDashboard() {
   const [data, setData] = useState<any>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetch("http://localhost:3004/telemetry/dashboard", {
       headers: { "Authorization": `Bearer ${localStorage.getItem("ace_admin_token")}` }
     })
-      .then(r => r.json())
-      .then(setData);
-  }, []);
+      .then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem("ace_admin_token");
+          navigate("/login");
+          return null;
+        }
+        return r.json();
+      })
+      .then(d => {
+        if (d && !d.error) setData(d);
+      })
+      .catch(console.error);
+  }, [navigate]);
 
   if (!data) return <p>Loading metrics...</p>;
 
@@ -203,6 +215,238 @@ function MerchantManagement() {
                   <td style={S.td}>{p.name}</td>
                   <td style={S.td}>₦{Number(p.price).toLocaleString()}</td>
                   <td style={S.td}>{p.stock}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── Vendor Status Panel (Phase D — Baileys business line dashboard) ─────────
+// Shows: Baileys session health, Status posting log with thumbnails, approval queue
+
+function VendorStatusPanel() {
+  const [vendorId, setVendorId] = useState("");
+  const [status, setStatus] = useState<{ dbStatus: string; inMemory?: boolean; businessLineNumber?: string | null } | null>(null);
+  const [log, setLog] = useState<StatusLogEntry[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [msg, setMsg] = useState("");
+
+  // Create state
+  const [merchantId, setMerchantId] = useState(DEMO_ID);
+  const [personalNumber, setPersonalNumber] = useState("2348000000000");
+
+  // Pair state
+  const [pairPhone, setPairPhone] = useState("234");
+  const [pairCode, setPairCode] = useState("");
+
+  const load = async (vId = vendorId) => {
+    if (!vId.trim()) return;
+    setVendorId(vId);
+    setMsg("Loading…");
+    try {
+      const [s, l, q] = await Promise.all([
+        api.getVendorStatus(vId),
+        api.getStatusLog(vId),
+        api.getQueue(vId),
+      ]);
+      setStatus(s);
+      setLog(l);
+      setQueue(q);
+      setMsg("");
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const createVendor = async () => {
+    setMsg("Creating vendor…");
+    try {
+      const res = await api.createVendor({ merchantId, personalNumber });
+      setVendorId(res.vendorId);
+      setMsg("Vendor created: " + res.vendorId);
+      load(res.vendorId);
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const pairVendor = async () => {
+    setMsg("Requesting pairing code…");
+    
+    // Normalize: strip +, spaces, hyphens
+    const cleanPhone = pairPhone.replace(/^\+/, "").replace(/\s/g, "");
+    
+    // Validate basic sanity
+    if (!/^\d{11,15}$/.test(cleanPhone)) {
+      setMsg("Invalid phone format. Use E.164 without + (e.g., 2348012345678)");
+      return;
+    }
+
+    try {
+      const res = await api.pairVendor(vendorId, cleanPhone);
+      if (res.ok && res.code) {
+        setPairCode(res.code);
+        setMsg(`Pairing code received! Enter it on WhatsApp for ${cleanPhone}`);
+        // Poll for status every 5 seconds so they see it connect
+        const interval = setInterval(() => load(vendorId), 5000);
+        setTimeout(() => clearInterval(interval), 60000); // stop polling after 1m
+      } else {
+        setMsg("Pairing error: " + (res.error || "Unknown"));
+      }
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const triggerCron = async () => {
+    setMsg("Triggering Status Cron…");
+    try {
+      const res = await api.triggerStatusCron();
+      if (res.ok) {
+        setMsg("Cron executed. Reloading queue/log in 3s...");
+        setTimeout(() => load(vendorId), 3000);
+      }
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const approve = async (queueId: string) => {
+    setMsg("Approving…");
+    try {
+      await api.approveQueueItem(vendorId, queueId);
+      const q = await api.getQueue(vendorId);
+      setQueue(q);
+      setMsg("Approved ✅");
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const sessionColor = (dbStatus: string) => {
+    if (dbStatus === "connected") return "#0b6b3a";
+    if (dbStatus === "reconnecting") return "#e9c46a";
+    if (dbStatus === "logged_out") return "#e76f51";
+    return "#5a6b62";
+  };
+
+  return (
+    <div>
+      <h1 style={{ color: "#0b3a22", marginBottom: 24 }}>Vendor Status & Provisioning</h1>
+
+      {msg && <div style={{ background: "#2a9d8f", color: "white", padding: 12, borderRadius: 8, marginBottom: 16, fontWeight: 500 }}>{msg}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
+        <section style={S.card}>
+          <h3 style={{ margin: "0 0 16px" }}>1. Provision New Vendor</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <input style={S.input} value={merchantId} onChange={(e) => setMerchantId(e.target.value)} placeholder="Merchant ID" />
+            <input style={S.input} value={personalNumber} onChange={(e) => setPersonalNumber(e.target.value)} placeholder="Personal Number (e.g. 2348...)" />
+            <button style={{ ...S.btn, background: "#0b6b3a" }} onClick={createVendor}>Create Vendor</button>
+          </div>
+        </section>
+
+        <section style={S.card}>
+          <h3 style={{ margin: "0 0 16px" }}>2. Load Existing Vendor</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <input style={S.input} value={vendorId} onChange={(e) => setVendorId(e.target.value)} placeholder="Vendor UUID" />
+            <button style={S.btn} onClick={() => load()}>Load Data</button>
+          </div>
+        </section>
+      </div>
+
+      {status && (
+        <section style={S.card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Session Health</h3>
+            <button style={{ ...S.btn, background: "#2a9d8f" }} onClick={triggerCron}>🚀 Trigger Status Cron</button>
+          </div>
+          <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ background: sessionColor(status.dbStatus), color: "white", borderRadius: 20, padding: "4px 14px", fontWeight: 700, fontSize: 13 }}>
+              {status.dbStatus.toUpperCase()}
+            </div>
+            <span style={{ color: "#5a6b62", fontSize: 13 }}>
+              {status.inMemory ? "⚡ In-memory session active" : "📦 No in-process socket"}
+            </span>
+            {status.businessLineNumber && (
+              <span style={{ color: "#5a6b62", fontSize: 13 }}>📱 +{status.businessLineNumber}</span>
+            )}
+          </div>
+
+          {(!status.businessLineNumber || status.dbStatus !== "connected") && (
+            <div style={{ background: "#f4f7f5", padding: 16, borderRadius: 8, border: "1px solid #e3e8e5" }}>
+              <h4 style={{ margin: "0 0 12px" }}>Pair Device</h4>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input style={S.input} value={pairPhone} onChange={e => setPairPhone(e.target.value)} placeholder="Phone (e.g. 234...)" />
+                <button style={S.btn} onClick={pairVendor}>Get Code</button>
+              </div>
+              {pairCode && (
+                <div style={{ marginTop: 16, padding: 16, background: "white", borderRadius: 8, textAlign: "center", border: "2px dashed #2a9d8f" }}>
+                  <div style={{ fontSize: 13, color: "#5a6b62", marginBottom: 8 }}>Enter this code in WhatsApp &gt; Linked Devices &gt; Link with phone number</div>
+                  <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 8, color: "#0b3a22" }}>{pairCode}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {queue.length > 0 && (
+        <section style={S.card}>
+          <h3 style={{ margin: "0 0 12px" }}>Pending Approval ({queue.length})</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {queue.map((item) => (
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 16, padding: 12, borderRadius: 10, background: "#f4f7f5", border: "1px solid #e3e8e5" }}>
+                {item.image_url && (
+                  <img src={item.image_url} alt={item.product_name ?? item.sku} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 2 }}>{item.product_name ?? item.sku}</div>
+                  <div style={{ fontSize: 12, color: "#5a6b62", whiteSpace: "pre-line" }}>{item.caption}</div>
+                  <div style={{ fontSize: 11, color: "#aab8b2", marginTop: 4 }}>Queued {new Date(item.queued_at).toLocaleString()}</div>
+                </div>
+                <button id={`approve-${item.id}`} style={{ ...S.btn, fontSize: 13 }} onClick={() => approve(item.id)}>
+                  Approve ✅
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {status && queue.length === 0 && (
+        <section style={S.card}>
+          <p style={{ color: "#5a6b62", margin: 0 }}>No posts waiting for approval.</p>
+        </section>
+      )}
+
+      {log.length > 0 && (
+        <section style={S.card}>
+          <h3 style={{ margin: "0 0 12px" }}>Status Posting History</h3>
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>Image</th>
+                <th style={S.th}>Product</th>
+                <th style={S.th}>Caption</th>
+                <th style={S.th}>Posted At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {log.map((entry, i) => (
+                <tr key={i}>
+                  <td style={S.td}>
+                    {entry.image_url
+                      ? <img src={entry.image_url} alt={entry.product_name ?? entry.sku} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />
+                      : "—"}
+                  </td>
+                  <td style={S.td}>{entry.product_name ?? entry.sku}</td>
+                  <td style={{ ...S.td, fontSize: 12, color: "#5a6b62", whiteSpace: "pre-line", maxWidth: 200 }}>{entry.caption}</td>
+                  <td style={S.td}>{new Date(entry.posted_at).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

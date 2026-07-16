@@ -32,7 +32,7 @@
 
 import { redis, sql } from "@ace/shared/clients";
 import { loadCommsEnv } from "@ace/shared/env";
-import type { OutboundMessage } from "../../../shared/src/types";
+import type { OutboundMessage } from "@ace/shared/types";
 
 const env = loadCommsEnv();
 const GRAPH_API_VERSION = env.GRAPH_API_VERSION;
@@ -88,7 +88,7 @@ export async function sendWhatsAppMessage(
   const accessToken = await resolveAccessToken(merchantId);
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
-  const withinWindow = await isWithinSessionWindow(merchantId, msg.toPhone);
+  const withinWindow = await isWithinSessionWindow(merchantId, msg.toPhone ?? "");
 
   let body: unknown;
   if (!withinWindow) {
@@ -132,7 +132,7 @@ function buildTemplateBody(msg: OutboundMessage) {
       name: msg.templateName,
       language: { code: msg.templateLanguage ?? "en" },
       components: msg.templateParams
-        ? [{ type: "body", parameters: msg.templateParams.map((p) => ({ type: "text", text: p })) }]
+        ? [{ type: "body", parameters: msg.templateParams.map((p: string) => ({ type: "text", text: p })) }]
         : [],
     },
   };
@@ -156,7 +156,7 @@ function buildInteractiveBody(msg: OutboundMessage) {
       type: "button",
       body: { text: msg.text },
       action: {
-        buttons: msg.buttons!.slice(0, 3).map((b) => ({
+        buttons: msg.buttons!.slice(0, 3).map((b: { id: string; label: string }) => ({
           // WhatsApp caps button labels at 20 chars and allows max 3 buttons.
           type: "reply",
           reply: { id: b.id, title: b.label.slice(0, 20) },

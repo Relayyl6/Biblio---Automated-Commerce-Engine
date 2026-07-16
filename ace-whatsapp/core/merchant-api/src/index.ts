@@ -22,6 +22,9 @@ import { authEngine } from "@ace/shared/auth/index.js";
 import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import cors from "@fastify/cors";
+// Baileys gateway management calls — forwarded to the gateway HTTP service
+const BAILEYS_GATEWAY_URL =
+  process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
 
 const app = Fastify({ logger: true });
 
@@ -287,6 +290,165 @@ app.post("/merchants/:id/catalog-sync", async (req, reply) => {
     req.log.error({ err, merchantId: id }, "catalog sync failed");
     return reply.code(502).send({ ok: false, error: (err as Error).message });
   }
+});
+
+// ─── Vendor (Baileys business line) management ────────────────────────────────
+
+// Create a vendor record — the first step of the business line onboarding flow.
+// After this, the merchant uses POST /vendors/:id/pair to get the pairing code.
+app.post("/vendors", async (req, reply) => {
+  const b = req.body as Record<string, unknown>;
+  const merchantId = str(b.merchantId);
+  const personalNumber = str(b.personalNumber);
+  if (!merchantId || !personalNumber) {
+    return reply.code(400).send({ error: "merchantId and personalNumber are required" });
+  }
+
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO vendors (
+      merchant_id, personal_number,
+      auto_status_enabled, posting_frequency_hours, approve_before_post
+    ) VALUES (
+      ${merchantId}, ${personalNumber.replace(/^\+/, "")},
+      ${bool(b.autoStatusEnabled) ?? false},
+      ${num(b.postingFrequencyHours) ?? 24},
+      ${bool(b.approveBeforePost) ?? true}
+    )
+    RETURNING id
+  `;
+  return reply.code(201).send({ ok: true, vendorId: rows[0].id });
+});
+
+// Get a pairing code for a vendor's new business line number.
+// The merchant enters this 8-character code in WhatsApp → Settings → Linked Devices.
+app.post("/vendors/:vendorId/pair", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const { phoneNumber } = req.body as { phoneNumber?: string };
+
+  if (!phoneNumber) {
+    return reply.code(400).send({ error: "phoneNumber is required (E.164 without +)" });
+  }
+
+  const cleanPhone = phoneNumber.replace(/^\+/, "");
+
+  // Clear this number from any old/orphaned vendor records first to prevent unique constraint errors
+  await sql`
+    UPDATE vendors 
+    SET business_line_number = NULL 
+    WHERE business_line_number = ${cleanPhone} 
+      AND id != ${vendorId}
+  `;
+
+  // Save the business line number to the vendors table
+  await sql`
+    UPDATE vendors SET business_line_number = ${cleanPhone}, updated_at = now()
+    WHERE id = ${vendorId}
+  `;
+
+  // Forward to the Baileys gateway — it manages the WebSocket sessions
+  try {
+    const res = await fetch(`${BAILEYS_GATEWAY_URL}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vendorId, phoneNumber: phoneNumber.replace(/^\+/, "") }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    if (!res.ok) return reply.code(502).send(data);
+    return reply.send(data);
+  } catch (err) {
+    return reply.code(502).send({
+      error: "Baileys gateway unavailable — is it running? (npm run baileys-gateway)",
+    });
+  }
+});
+
+// ─── Vendors (Baileys Business Lines) ────────────────────────────────────────
+
+// Get real-time session status for a vendor's business line.
+app.get("/vendors/:vendorId/status", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+
+  const rows = await sql<{ session_status: string; business_line_number: string | null }[]>`
+    SELECT session_status, business_line_number FROM vendors WHERE id = ${vendorId} LIMIT 1
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
+
+  // Also check live status from the Baileys gateway
+  let gatewayStatus: Record<string, unknown> = {};
+  try {
+    const res = await fetch(`${BAILEYS_GATEWAY_URL}/sessions/${vendorId}`);
+    if (res.ok) gatewayStatus = await res.json() as Record<string, unknown>;
+  } catch {
+    // Gateway may not be running — return DB status only
+  }
+
+  return reply.send({
+    vendorId,
+    businessLineNumber: rows[0].business_line_number,
+    dbStatus: rows[0].session_status,
+    ...gatewayStatus,
+  });
+});
+
+// Update vendor settings: toggle auto-status, posting frequency, approve-before-post.
+app.patch("/vendors/:vendorId/settings", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const b = req.body as Record<string, unknown>;
+
+  const rows = await sql<{ id: string }[]>`
+    UPDATE vendors SET
+      auto_status_enabled     = COALESCE(${bool(b.autoStatusEnabled)}, auto_status_enabled),
+      posting_frequency_hours = COALESCE(${num(b.postingFrequencyHours)}, posting_frequency_hours),
+      approve_before_post     = COALESCE(${bool(b.approveBeforePost)}, approve_before_post),
+      updated_at = now()
+    WHERE id = ${vendorId}
+    RETURNING id
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
+  return reply.send({ ok: true });
+});
+
+// Get vendor's Status posting history.
+app.get("/vendors/:vendorId/status-log", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const limit = num((req.query as Record<string, unknown>).limit) ?? 20;
+
+  const rows = await sql`
+    SELECT sl.sku, p.name AS product_name, sl.image_url, sl.caption, sl.posted_at
+    FROM status_log sl
+    LEFT JOIN products p ON p.sku = sl.sku
+    WHERE sl.vendor_id = ${vendorId}
+    ORDER BY sl.posted_at DESC
+    LIMIT ${limit}
+  `;
+  return reply.send(rows);
+});
+
+// Get vendor's pending approval queue.
+app.get("/vendors/:vendorId/queue", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const rows = await sql`
+    SELECT q.id, q.sku, p.name AS product_name, q.image_url, q.caption, q.queued_at, q.approved_at
+    FROM status_post_queue q
+    LEFT JOIN products p ON p.sku = q.sku
+    WHERE q.vendor_id = ${vendorId}
+      AND q.posted_at IS NULL
+    ORDER BY q.queued_at DESC
+  `;
+  return reply.send(rows);
+});
+
+// Approve a queued Status post.
+app.post("/vendors/:vendorId/queue/:queueId/approve", async (req, reply) => {
+  const { vendorId, queueId } = req.params as { vendorId: string; queueId: string };
+  const rows = await sql<{ id: string }[]>`
+    UPDATE status_post_queue
+    SET approved_at = now()
+    WHERE id = ${queueId} AND vendor_id = ${vendorId} AND approved_at IS NULL
+    RETURNING id
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "queue item not found or already approved" });
+  return reply.send({ ok: true });
 });
 
 // ─── Customer ↔ merchant link (Phase-1 identity) ─────────────────────────────
