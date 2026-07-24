@@ -1,33 +1,10 @@
-// core/baileys-gateway/src/messageClassifier.ts
-//
-// THE SINGLE MOST IMPORTANT ROUTING DECISION in the Baileys pipeline.
-//
-// Every inbound message on the business line is EITHER:
-//   (A) From the vendor's own personal number → product submission
-//   (B) From any customer → existing negotiator pipeline
-//
-// The heuristic is simple: compare the sender's bare phone number to the
-// vendor's registered personal_number. If they match → product submission.
-// Everything else is a customer query.
-//
-// v7.0.0 LID HANDLING:
-// In group contexts and for some users, WhatsApp now sends a LID JID
-// (@lid suffix) instead of a phone number JID (@s.whatsapp.net). For the
-// business line scenario (1-on-1 DMs only), this is rare, but we handle it
-// by falling back to remoteJidAlt when the primary JID is a LID.
-//
-// WHAT DOESN'T CHANGE DOWNSTREAM:
-// The customer query path calls the exact same enqueueInboundMessage()
-// that the Meta webhook ingestion-service calls. The negotiator, debounce
-// queue, and agent loop are completely unaware of whether the message
-// arrived via Meta or via Baileys.
-
 import { jidNormalizedUser, type WAMessage, type WASocket } from "@whiskeysockets/baileys";
 import { redis } from "@ace/shared/clients";
 import { enqueueInboundMessage } from "../../comms-router/src/debounce.js";
 import type { InboundMessage } from "@ace/shared/types";
 import type { VendorConfig } from "./sessionManager.js";
 import { parseVendorSubmission } from "./inventoryParser.js";
+import { resolveMessageContent } from "./mediaProcessor.js";
 
 // ─── Classify and route ───────────────────────────────────────────────────────
 
@@ -49,64 +26,38 @@ export async function classifyAndRoute(
     await parseVendorSubmission(msg, vendor, sock);
   } else {
     // ── Customer query path ────────────────────────────────────────────────
-    await routeToNegotiator(msg, vendor);
+    await routeToNegotiator(msg, vendor, sock);
   }
 }
 
 // ─── Customer → Negotiator ────────────────────────────────────────────────────
 
-async function routeToNegotiator(msg: WAMessage, vendor: VendorConfig): Promise<void> {
-  const msgContent = msg.message;
-  if (!msgContent) return;
-
+async function routeToNegotiator(
+  msg: WAMessage,
+  vendor: VendorConfig,
+  sock: WASocket
+): Promise<void> {
   const senderJid = resolveSenderJid(msg);
   if (!senderJid) return;
 
   const fromPhone = jidToPhone(senderJid);
   const timestamp = (Number(msg.messageTimestamp) * 1000) || Date.now();
 
-  const base = {
+  // resolveMessageContent downloads media, transcribes audio via Groq Whisper,
+  // encodes images as base64 for Claude Vision, and reads reply-thread context.
+  // Returns null for message types we should silently ignore (stickers, reactions, etc.)
+  const content = await resolveMessageContent(msg, sock);
+  if (!content) return;
+
+  const inbound: InboundMessage = {
     waMessageId: msg.key.id!,
     fromPhone,
     // vendorId used as the "phone number ID" — the comms-router uses this to
     // resolve which merchant to talk to. Same role as Meta's phone_number_id.
     toPhoneNumberId: vendor.id,
     timestamp,
+    content,
   };
-
-  let inbound: InboundMessage | null = null;
-
-  if (msgContent.conversation || msgContent.extendedTextMessage) {
-    const text =
-      msgContent.conversation || msgContent.extendedTextMessage?.text || "";
-    if (!text.trim()) return; // Empty message — skip
-    inbound = { ...base, content: { type: "text", text } };
-  } else if (msgContent.audioMessage) {
-    // Voice note — we pass the message ID as mediaId.
-    // The intent parser can use downloadMediaMessage with the Baileys socket
-    // if voice transcription is needed (Phase 2 — not wired yet).
-    inbound = { ...base, content: { type: "audio", mediaId: msg.key.id! } };
-  } else if (msgContent.imageMessage) {
-    inbound = {
-      ...base,
-      content: {
-        type: "image",
-        mediaId: msg.key.id!,
-        caption: msgContent.imageMessage.caption ?? undefined,
-      },
-    };
-  } else if (msgContent.orderMessage) {
-    // Native WhatsApp Business order — surface it as interactive payload
-    // so the negotiator can handle it (Phase 2: dedicated order handler)
-    inbound = {
-      ...base,
-      content: { type: "interactive", payload: msgContent.orderMessage },
-    };
-  }
-  // All other message types (reactions, stickers, location, etc.) — skip.
-  // Deliberately silent: an unrecognised type shouldn't break the pipeline.
-
-  if (!inbound) return;
 
   // Refresh the 24h service window key for compatibility with outbound.ts
   // cost-classification logic. In Baileys mode all messages are free, but
@@ -119,6 +70,7 @@ async function routeToNegotiator(msg: WAMessage, vendor: VendorConfig): Promise<
 
   await enqueueInboundMessage(inbound);
 }
+
 
 // ─── JID helpers ─────────────────────────────────────────────────────────────
 

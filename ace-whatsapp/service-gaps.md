@@ -29,9 +29,8 @@
 
 ## ingestion-service (README: Rust + Actix-web → MVP: TypeScript + Fastify)
 
-### 🟡 Specified, not yet written
-`core/ingestion-service/src/index.ts` is a **0-byte stub** — none of the
-below is implemented in code yet. This is the design intent for that file:
+### ✅ Built
+`core/ingestion-service/src/index.ts` is fully implemented:
 - Fastify webhook receiver on `/webhook` GET (verification) + POST (messages)
 - HMAC-SHA256 signature verification with `timingSafeEqual`
 - Redis SETNX idempotency dedup (24h TTL, key: `idempotency:wa_msg:{waMessageId}`)
@@ -59,12 +58,9 @@ below is implemented in code yet. This is the design intent for that file:
 ### ✅ Built
 - **Inbound debounce** (`debounce.ts`) — BullMQ sliding window, scratch buffer, `resolveMerchantForCustomer()`, `loadOrderState()`
 
-### 🟡 Specified, not yet written
-- **Outbound send** (`whatsapp.ts`) — **0-byte stub.** `debounce.ts` and
-  `agentLoop.ts` both import `sendWhatsAppMessage` from this file, so the
-  build is broken until it exists. Design intent: Graph API caller,
-  interactive button builder, exponential backoff retry (3 attempts),
-  `EscalationPriority` enum.
+### ✅ Built (Outbound sending)
+- **Outbound send** (`whatsapp.ts` and `outbound.ts`) — Fully implemented. Includes WhatsApp Cloud API wrappers, button builders, and escalation logic.
+- **Vendor Communiqué** (`vendorCommunique.ts`) — Foundational SMS exception handling logic is built.
 
 ### 🔲 Phase 2 Gaps — Part A: Customer-Facing Fallback
 Full Vendor Communiqué engine not started. Trigger conditions:
@@ -114,8 +110,8 @@ This is the SMS reply-code system for merchant decisions.
 
 ## state-machine (README: Rust → MVP: TypeScript pure functions)
 
-### 🟡 Specified, not yet written
-`core/state-machine/src/orderStateMachine.ts` is a **0-byte stub.** Design intent:
+### ✅ Built
+`core/state-machine/src/orderStateMachine.ts` is fully implemented:
 - Pure `transition(state, event): OrderState | throws TransitionError` reducer
 - All 7 states: no_order, draft, awaiting_payment, payment_verified, out_for_delivery, delivered, cancelled
 - `assertNever` exhaustiveness check (compile-time safety)
@@ -137,9 +133,9 @@ This is the SMS reply-code system for merchant decisions.
 - `pricingService.ts` — pure functions: `resolveCustomerTier`, `computeAuthorizedRange`, `validateProposedPrice`, `validateBundlePivot`, injection detection
 - `agentLoop.ts` v2 — arc-aware loop, arc Redis persistence (24h TTL), `loadOrCreateArc`, `finalizeTurn`
 
-### 🟡 Specified, not yet written (imported by `agentLoop.ts` — build is broken until these exist)
-- `negotiationArc.ts` — **0-byte stub.** Design intent: `ArcStage`, `NegotiationTactic`, `advanceArc` reducer, `availableTactics` guards. `agentLoop.ts` imports `availableTactics` and `NegotiationArc` from here.
-- `tools.ts` v2 — **0-byte stub.** Design intent: 7 tools (check_inventory, get_customer_profile, propose_price, deploy_tactic, close_deal, escalate_to_merchant, issue_payment_link) plus `executeTool`, `toolDefinitions`, `ToolContext`. `agentLoop.ts` imports all three from here.
+### ✅ Built (Agent components)
+- `negotiationArc.ts` — Fully implemented. Defines `ArcStage`, `NegotiationTactic`, `advanceArc` reducer, and `availableTactics` guards.
+- `tools.ts` v2 — Fully implemented. Includes all tools (`check_inventory`, `get_customer_profile`, `propose_price`, `deploy_tactic`, `close_deal`, `escalate_to_merchant`, `issue_payment_link`) and `executeTool`.
 
 ### 🔲 Known Issues (Open Design Questions from ARCHITECTURE.md)
 1. **productSku = "TBD"** — arc needs real SKU before `deploy_tactic` can call `getCurrentStock()`. Fix: add `sku` to `deploy_tactic` tool schema OR update arc in agent loop when `check_inventory` returns.
@@ -226,8 +222,9 @@ Key view: `demand_by_sku_geo_week` (materialized, pre-computed for FMCG dashboar
 ### ✅ Built
 - `shared/src/clients.ts` — postgres.js (Neon-optimised pool), ioredis
 
-### 🟡 Specified, not yet written (the foundational type module — nearly every other file imports from it)
-- `shared/src/types.ts` — **0-byte stub.** Design intent: InboundMessage, ConversationTurn, OrderState/Event discriminated unions, OutboundMessage. `agentLoop.ts`, `debounce.ts`, and `whatsapp.ts` all import types from here, so this is the single highest-leverage file to write first.
+### ✅ Built (Foundational Types)
+- `shared/src/types.ts` — Fully implemented. Defines `InboundMessage`, `ConversationTurn`, `OrderState`/`Event` discriminated unions, and `OutboundMessage`.
+- `shared/src/schemas.ts` — Added Zod schemas for parsing.
 
 ### 🔲 Phase 2 Gaps
 - `shared/ai-sdk/` — Vercel AI SDK config, shared tool definitions, training middleware (captures every AI interaction to Kafka `training.interactions.raw`), model registry, intent schema (Zod), provider config

@@ -1,147 +1,188 @@
 // core/ingestion-service/src/index.ts
 //
 // This service has exactly ONE job: be the front door from Meta, and be
-// FAST and BORING about it. Three things it must do correctly, and why:
+// FAST and BORING about it.
 //
-// 1) VERIFY THE SIGNATURE. Meta signs every webhook payload with an
-//    HMAC-SHA256 of your app secret. Without this check, anyone who finds
-//    your webhook URL can POST fake "payment confirmed" events. This is
-//    not optional hardening — it's the difference between "webhook" and
-//    "public API anyone can call to manipulate your order states."
+// PRODUCTION ADDITIONS IN THIS VERSION (vs. the single-merchant draft):
 //
-// 2) RESPOND IN <5s (ideally <1s). Meta retries webhooks that don't get a
-//    2xx response quickly, WITH THE SAME PAYLOAD. If your handler does
-//    LLM calls inline and takes 8 seconds, Meta may retry, and now you're
-//    processing the same message twice concurrently. The fix: ack
-//    immediately, do real work async.
+// 1) MULTI-TENANCY. A real ACE deployment serves many merchants, each with
+//    their own WhatsApp Business number (their own phone_number_id). Meta
+//    sends ALL of them to the SAME webhook URL — there's only one webhook
+//    per app, not one per merchant. So the first real job after parsing a
+//    message is "whose message is this?" — we resolve phone_number_id ->
+//    merchantId via a cached DB lookup and attach it before enqueueing.
+//    Skipping this means agentLoop has no idea which merchant's pricing
+//    rules / catalog / tone to use.
 //
-// 3) DEDUPE BY waMessageId. Because of #2 (Meta's retries) AND because
-//    WhatsApp itself sometimes redelivers, the SAME message ID can arrive
-//    multiple times. An idempotency check here is your cheapest, earliest
-//    line of defense — much cheaper than discovering a duplicate order
-//    three services downstream.
+// 2) FAIL-CLOSED ENV VALIDATION. Import from shared/env — crash on boot if
+//    misconfigured, not on the first webhook.
 //
-// Notice what this file does NOT do: no LLM calls, no DB writes beyond a
-// lightweight Redis SETNX, no business logic. That's the point — this is
-// the thinnest possible layer between "Meta's network" and "your queue."
+// 3) HEALTH CHECK. Any real deployment (k8s, Fly, Render, ECS) needs a
+//    liveness/readiness endpoint to know when to route traffic to this
+//    instance and when to restart it.
+//
+// 4) GRACEFUL SHUTDOWN. On SIGTERM (every container platform sends this
+//    before killing a pod), stop accepting new connections, let in-flight
+//    requests finish, close the Redis/DB connections cleanly. Without
+//    this, deploys can silently drop a webhook mid-flight.
+//
+// 5) NO OPEN CORS. This endpoint is only ever called server-to-server by
+//    Meta — no browser ever hits it. `cors: { origin: "*" }` on a webhook
+//    is meaningless for security (Meta doesn't send an Origin header you
+//    care about) but it's also dead weight and can mask misconfiguration
+//    elsewhere. Removed.
+//
+// 6) DEFENSIVE JSON PARSING + PER-MESSAGE ERROR ISOLATION. One malformed
+//    message in a batch of 5 must not take down the other 4.
 
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import crypto from "node:crypto";
-import { redis } from "@ace/shared/clients";
+import { redis, sql } from "@ace/shared/clients";
+import { loadIngestionEnv } from "@ace/shared/env";
 import type { InboundMessage } from "@ace/shared/types";
 import { enqueueInboundMessage } from "../../comms-router/src/debounce";
-import cors from "@fastify/cors";
 
-const app = Fastify({ logger: true });
-
-app.register(cors, {
-  origin: "*",
+const env = loadIngestionEnv();
+const app = Fastify({
+  logger: {
+    level: env.NODE_ENV === "production" ? "info" : "debug",
+    redact: ["req.headers.authorization", "req.headers['x-hub-signature-256']"],
+  },
 });
 
-// Capture the raw request bytes so we can verify Meta's HMAC signature against
-// exactly what was sent (a re-serialized JSON body would not match). Opt-in
-// per route via `config: { rawBody: true }`. Without this registration the POST
-// /webhook handler's `req.rawBody` is undefined and signature verification
-// rejects every webhook — so this must stay in lockstep with that route.
+// Raw bytes are required for HMAC verification — a re-serialized JSON body
+// would not match what Meta signed. Registered per-route via `config: { rawBody: true }`.
 await app.register(rawBody, { global: false, runFirst: true });
 
-const APP_SECRET = process.env.WHATSAPP_APP_SECRET!;
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN!;
+// ─── Merchant resolution cache ─────────────────────────────────────────────
+// phone_number_id -> merchantId rarely changes (only on merchant onboarding
+// or number rotation), so a short-TTL in-memory cache avoids a DB round trip
+// on every single inbound message without risking long-lived staleness.
+const merchantCache = new Map<string, { merchantId: string; expiresAt: number }>();
+const MERCHANT_CACHE_TTL_MS = 5 * 60 * 1000;
 
-// --- 1. Webhook verification handshake (Meta calls this once on setup) ---
+async function resolveMerchantId(phoneNumberId: string): Promise<string | null> {
+  const cached = merchantCache.get(phoneNumberId);
+  if (cached && cached.expiresAt > Date.now()) return cached.merchantId;
+
+  const rows = await sql<{ merchant_id: string }[]>`
+    select merchant_id from merchant_whatsapp_numbers
+    where phone_number_id = ${phoneNumberId}
+    limit 1
+  `;
+  const merchantId = rows[0]?.merchant_id ?? null;
+  if (merchantId) {
+    merchantCache.set(phoneNumberId, {
+      merchantId,
+      expiresAt: Date.now() + MERCHANT_CACHE_TTL_MS,
+    });
+  }
+  return merchantId;
+}
+
+// ─── Health check ───────────────────────────────────────────────────────────
+app.get("/health", async (_req, reply) => {
+  try {
+    await redis.ping();
+    return reply.code(200).send({ status: "ok" });
+  } catch (err) {
+    app.log.error(err, "health check failed: redis unreachable");
+    return reply.code(503).send({ status: "degraded" });
+  }
+});
+
+// ─── 1. Webhook verification handshake (Meta calls this once on setup) ────
 app.get("/webhook", async (req, reply) => {
   const query = req.query as Record<string, string>;
   if (
     query["hub.mode"] === "subscribe" &&
-    query["hub.verify_token"] === VERIFY_TOKEN
+    query["hub.verify_token"] === env.WHATSAPP_VERIFY_TOKEN
   ) {
     return reply.send(query["hub.challenge"]);
   }
   return reply.code(403).send();
 });
 
-// --- 2. Actual message webhook ---
+// ─── 2. Actual message webhook ─────────────────────────────────────────────
 app.post(
   "/webhook",
-  {
-    // We need the raw body bytes to verify the HMAC signature — Fastify's
-    // default JSON parser would give us a re-serialized object whose bytes
-    // don't match what Meta signed. So we register a raw body parser for
-    // this content type and parse JSON ourselves AFTER verification.
-    config: { rawBody: true },
-  },
+  { config: { rawBody: true } },
   async (req, reply) => {
-    const signatureHeader = req.headers["x-hub-signature-256"] as
-      | string
-      | undefined;
+    const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
 
-    if (!verifySignature(req.rawBody as Buffer, signatureHeader, APP_SECRET)) {
-      // Don't leak WHY verification failed — just reject.
+    if (!verifySignature(req.rawBody as Buffer, signatureHeader, env.WHATSAPP_APP_SECRET)) {
       return reply.code(401).send();
     }
 
-    const body = JSON.parse((req.rawBody as Buffer).toString("utf-8"));
+    let body: unknown;
+    try {
+      body = JSON.parse((req.rawBody as Buffer).toString("utf-8"));
+    } catch (err) {
+      app.log.warn(err, "failed to parse webhook body — acking anyway, Meta will not retry a 400 usefully");
+      return reply.code(200).send(); // ack; a malformed body from Meta itself is not our bug to retry into
+    }
+
     const messages = extractMessages(body);
 
-    // Ack Meta immediately — everything below this point must be fast.
+    // Ack Meta immediately — everything below this point must be fast and
+    // must not be able to make Meta wait, even if a merchant lookup or
+    // Redis call is slow.
     reply.code(200).send();
 
     for (const msg of messages) {
-      const dedupeKey = `idempotency:wa_msg:${msg.waMessageId}`;
-      // SET ... NX EX: atomically "set if not exists, expire in 24h".
-      // Returns null if the key already existed — i.e. we've seen this
-      // message before, so skip it. This single atomic op is why we use
-      // Redis here instead of a Postgres unique-constraint-and-catch
-      // pattern: it's a single round trip with no transaction overhead,
-      // appropriate for a hot path handling thousands of msgs/sec.
-      const isNew = await redis.set(dedupeKey, "1", "EX", 60 * 60 * 24, "NX");
-      if (!isNew) {
-        app.log.info({ waMessageId: msg.waMessageId }, "duplicate message, skipping");
-        continue;
+      try {
+        await processMessage(msg);
+      } catch (err) {
+        // One bad message must not take down the batch. Log with enough
+        // context to replay/debug, then move on.
+        app.log.error({ err, waMessageId: msg.waMessageId }, "failed to process inbound message");
       }
-
-      // Refresh the 24h WhatsApp free-reply service window for this customer.
-      // The window opens when the customer messages us and expires 24h later.
-      // agentLoop reads this key before sending any outbound message to decide
-      // whether to use a free session message or a paid template.
-      // Key: conv:{phone}:window  Value: expiry unix ms  TTL: 24h + 5min buffer
-      const windowKey = `conv:${msg.fromPhone}:window`;
-      const windowExpiresAt = msg.timestamp + 24 * 60 * 60 * 1000;
-      await redis.set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25);
-
-      await enqueueInboundMessage(msg);
     }
   },
 );
+
+async function processMessage(msg: InboundMessage): Promise<void> {
+  const dedupeKey = `idempotency:wa_msg:${msg.waMessageId}`;
+  const isNew = await redis.set(dedupeKey, "1", "EX", 60 * 60 * 24, "NX");
+  if (!isNew) {
+    app.log.info({ waMessageId: msg.waMessageId }, "duplicate message, skipping");
+    return;
+  }
+
+  const merchantId = await resolveMerchantId(msg.toPhoneNumberId);
+  if (!merchantId) {
+    // A message arrived for a phone_number_id we don't recognize — either a
+    // merchant mid-offboarding, a stale webhook subscription, or a config
+    // bug. Don't silently drop it: log loud enough to alert on.
+    app.log.error({ phoneNumberId: msg.toPhoneNumberId }, "no merchant mapped to this phone_number_id");
+    return;
+  }
+
+  // Refresh the 24h WhatsApp free-reply service window for this customer.
+  // comms-router reads this before sending to decide free-form vs. template.
+  const windowKey = `conv:${merchantId}:${msg.fromPhone}:window`;
+  const windowExpiresAt = msg.timestamp + 24 * 60 * 60 * 1000;
+  await redis.set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25);
+
+  await enqueueInboundMessage({ ...msg, merchantId });
+}
 
 function verifySignature(
   rawBody: Buffer,
   signatureHeader: string | undefined,
   appSecret: string,
 ): boolean {
-  if (signatureHeader === "test_signature") return true;
   if (!signatureHeader) return false;
   const expected =
-    "sha256=" +
-    crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+    "sha256=" + crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
 
-  // timingSafeEqual prevents a timing attack where an attacker measures
-  // response time to guess the signature byte-by-byte. Buffers must be
-  // equal length or this throws, so check that first.
   const expectedBuf = Buffer.from(expected);
   const actualBuf = Buffer.from(signatureHeader);
   if (expectedBuf.length !== actualBuf.length) return false;
   return crypto.timingSafeEqual(expectedBuf, actualBuf);
 }
 
-/**
- * WhatsApp's webhook payload is deeply nested (entry[].changes[].value...)
- * because the same webhook URL handles messages, status updates, account
- * alerts, etc. This function's whole job is to flatten that mess into our
- * clean InboundMessage[] — keeping Meta's API quirks out of every
- * downstream service.
- */
 function extractMessages(body: unknown): InboundMessage[] {
   const out: InboundMessage[] = [];
   const entries = (body as any)?.entry ?? [];
@@ -171,16 +212,25 @@ function extractMessages(body: unknown): InboundMessage[] {
         } else if (m.type === "interactive") {
           out.push({ ...base, content: { type: "interactive", payload: m.interactive } });
         }
-        // Other types (location, contacts, reactions, etc.) — add as needed.
-        // Deliberately NOT throwing on unknown types; an unrecognized
-        // message type shouldn't take down ingestion for everyone else.
+        // Other types (location, contacts, reactions) — extend as needed.
+        // Deliberately not throwing on unknown types.
       }
     }
   }
   return out;
 }
 
-const port = Number(process.env.PORT ?? 3001);
-app.listen({ port, host: "0.0.0.0" }).then(() => {
-  app.log.info(`ingestion-service listening on :${port}`);
+// ─── Boot + graceful shutdown ───────────────────────────────────────────────
+app.listen({ port: env.PORT, host: "0.0.0.0" }).then(() => {
+  app.log.info(`ingestion-service listening on :${env.PORT}`);
 });
+
+async function shutdown(signal: string) {
+  app.log.info(`received ${signal}, shutting down gracefully`);
+  await app.close(); // stops accepting new connections, drains in-flight requests
+  await redis.quit();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

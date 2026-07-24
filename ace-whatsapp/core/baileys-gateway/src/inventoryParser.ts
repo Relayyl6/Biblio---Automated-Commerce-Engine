@@ -46,6 +46,63 @@ interface ParsedProduct {
   currency: string;
 }
 
+// ─── Post instruction ─────────────────────────────────────────────────────────
+// Parsed from the vendor's message after the word "post".
+//
+// Vendor can append to ANY product message:
+//   "post this now"           → post to Status immediately
+//   "post in 30 minutes"      → schedule Status post in 30 min
+//   "post in 2 hours"         → schedule Status post in 2 hours
+//   "post to 09023287443"     → DM the product directly to that WhatsApp number
+//   (no "post" keyword)       → honour vendor.auto_status_enabled setting
+
+type PostInstruction =
+  | { type: "now" }
+  | { type: "delayed"; delayMs: number; label: string }
+  | { type: "direct"; targetPhone: string }
+  | { type: "none" };
+
+/**
+ * Extracts a PostInstruction from the raw caption/text.
+ * Strips the "post ..." suffix and returns the cleaned content + instruction.
+ */
+function parsePostInstruction(raw: string): { content: string; instruction: PostInstruction } {
+  // Match: "post this now", "post now", "post it now"
+  const nowMatch = raw.match(/\bpost(?:\s+(?:this|it))?\s+now\b/i);
+  if (nowMatch) {
+    return {
+      content: raw.replace(nowMatch[0], "").trim(),
+      instruction: { type: "now" },
+    };
+  }
+
+  // Match: "post in 30 minutes", "post in 2 hours", "post in 1 hour"
+  const delayMatch = raw.match(/\bpost(?:\s+(?:this|it))?\s+in\s+(\d+)\s*(minutes?|hours?|mins?|hrs?)\b/i);
+  if (delayMatch) {
+    const amount = parseInt(delayMatch[1], 10);
+    const unit = delayMatch[2].toLowerCase();
+    const isHours = unit.startsWith("h");
+    const delayMs = amount * (isHours ? 3600_000 : 60_000);
+    const label = `${amount} ${isHours ? "hour" : "minute"}${amount !== 1 ? "s" : ""}`;
+    return {
+      content: raw.replace(delayMatch[0], "").trim(),
+      instruction: { type: "delayed", delayMs, label },
+    };
+  }
+
+  // Match: "post to 09023287443" or "post to +2349023287443"
+  const directMatch = raw.match(/\bpost(?:\s+(?:this|it))?\s+to\s+([+\d][\d\s]{7,14})\b/i);
+  if (directMatch) {
+    const targetPhone = directMatch[1].replace(/[^\d]/g, "");
+    return {
+      content: raw.replace(directMatch[0], "").trim(),
+      instruction: { type: "direct", targetPhone },
+    };
+  }
+
+  return { content: raw, instruction: { type: "none" } };
+}
+
 // ─── Main pipeline ────────────────────────────────────────────────────────────
 
 export async function parseVendorSubmission(
@@ -56,39 +113,63 @@ export async function parseVendorSubmission(
   const msgContent = msg.message;
   const senderJid = msg.key.remoteJid!;
 
-  // If vendor sent text only (no image), send them a help message
-  if (!msgContent?.imageMessage) {
+  // ── Detect submission type ────────────────────────────────────────────────
+  const hasImage = !!msgContent?.imageMessage;
+  const hasAudio = !!msgContent?.audioMessage;
+  const rawText =
+    msgContent?.conversation ||
+    msgContent?.extendedTextMessage?.text ||
+    msgContent?.imageMessage?.caption ||
+    "";
+
+  // Nothing useful in this message
+  if (!hasImage && !hasAudio && !rawText.trim()) {
     await handleTextOnlySubmission(msg, senderJid, sock);
     return;
   }
 
-  const caption = msgContent.imageMessage.caption ?? "";
+  // ── Parse post instruction from text/caption ──────────────────────────────
+  const { content: cleanContent, instruction } = parsePostInstruction(rawText);
 
-  // ── Step 1: Download the image before the WA media URL expires ──────────
-  let imageBuffer: Buffer;
-  try {
-    imageBuffer = (await downloadMediaMessage(
-      msg,
-      "buffer",
-      {},
-    )) as Buffer;
-  } catch (err) {
-    logger.error({ err, vendorId: vendor.id }, "Failed to download vendor image");
-    await sock.sendMessage(senderJid, {
-      text: "❌ Couldn't download your photo. Please try sending it again.",
-    });
-    return;
+  // ── Acquire media ─────────────────────────────────────────────────────────
+  let imageBuffer: Buffer | null = null;
+  let audioTranscript: string | null = null;
+
+  if (hasImage) {
+    try {
+      imageBuffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+    } catch (err) {
+      logger.error({ err, vendorId: vendor.id }, "Failed to download vendor image");
+      await sock.sendMessage(senderJid, {
+        text: "❌ Couldn't download your photo. Please try sending it again.",
+      });
+      return;
+    }
   }
 
-  // ── Step 2: Upload to persistent storage ────────────────────────────────
-  const imageUrl = await uploadImage(imageBuffer, vendor.id, msg.key.id!);
+  if (hasAudio) {
+    try {
+      const audioBuffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+      // Lazy-import to avoid loading the heavy ONNX model on boot
+      const { transcribeBuffer } = await import("./mediaProcessor.js");
+      audioTranscript = await transcribeBuffer(audioBuffer);
+    } catch (err) {
+      logger.warn({ err, vendorId: vendor.id }, "Audio transcription failed — proceeding without it");
+    }
+  }
 
-  // ── Step 3: Claude Vision parse ─────────────────────────────────────────
+  // If vendor sent audio but no image, they're describing a product verbally
+  // Build a text-based extraction instead
+  const extractionText = audioTranscript
+    ? `Voice note: ${audioTranscript}\n${cleanContent}`.trim()
+    : cleanContent;
+
+  // ── Claude extraction ─────────────────────────────────────────────────────
   let parsed: ParsedProduct;
   try {
-    parsed = await parseWithClaude(imageBuffer, caption);
+    parsed = await parseWithClaude(imageBuffer, extractionText);
   } catch (err) {
-    logger.error({ err, vendorId: vendor.id, caption }, "Claude Vision parse failed");
+    logger.error({ err, vendorId: vendor.id, extractionText }, "Claude parse failed");
     await sock.sendMessage(senderJid, {
       text:
         "❌ Couldn't extract product details.\n\n" +
@@ -98,7 +179,12 @@ export async function parseVendorSubmission(
     return;
   }
 
-  // ── Step 4: Upsert into products table ──────────────────────────────────
+  // ── Upload image ──────────────────────────────────────────────────────────
+  const imageUrl = imageBuffer
+    ? await uploadImage(imageBuffer, vendor.id, msg.key.id!)
+    : null;
+
+  // ── Upsert into products ──────────────────────────────────────────────────
   const sku = generateSku(vendor.id, parsed.product_name);
 
   await sql`
@@ -135,31 +221,15 @@ export async function parseVendorSubmission(
     "Product upserted from vendor push"
   );
 
-  // ── Step 5: Post to Status if enabled ───────────────────────────────────
-  let statusNote = "";
+  // ── Handle post instruction ───────────────────────────────────────────────
+  const statusNote = await scheduleOrSendPost(
+    instruction,
+    sock,
+    { sku, ...parsed, image_url: imageUrl },
+    vendor
+  );
 
-  if (vendor.auto_status_enabled) {
-    if (!vendor.approve_before_post) {
-      // Fully automatic — post right now
-      await postProductToStatus(sock, { sku, ...parsed, image_url: imageUrl }, vendor.id);
-      statusNote = "Posted to your Status ✅";
-    } else {
-      // Approval required — queue it for dashboard review
-      await sql`
-        INSERT INTO status_post_queue (vendor_id, sku, image_url, caption, queued_at)
-        VALUES (
-          ${vendor.id},
-          ${sku},
-          ${imageUrl},
-          ${buildStatusCaption(parsed)},
-          now()
-        )
-      `;
-      statusNote = "Queued for your approval in the dashboard 📋";
-    }
-  }
-
-  // ── Step 6: Confirmation to vendor ──────────────────────────────────────
+  // ── Confirmation to vendor ────────────────────────────────────────────────
   const priceDisplay = parsed.price
     ? `₦${parsed.price.toLocaleString("en-NG")}`
     : "⚠️ No price found — please set it in your dashboard";
@@ -176,36 +246,103 @@ export async function parseVendorSubmission(
   });
 }
 
+// ─── Post routing based on instruction ───────────────────────────────────────
+
+async function scheduleOrSendPost(
+  instruction: PostInstruction,
+  sock: WASocket,
+  product: { sku: string; product_name: string; price: number | null; image_url: string | null },
+  vendor: VendorConfig
+): Promise<string> {
+  switch (instruction.type) {
+    case "now":
+      await postProductToStatus(sock, product, vendor.id);
+      return "📢 Posted to your Status now ✅";
+
+    case "delayed": {
+      const { delayMs, label } = instruction;
+      // Schedule via setTimeout — for MVP this is fine. For production, use BullMQ
+      // with a delayed job so it survives process restarts.
+      setTimeout(async () => {
+        try {
+          await postProductToStatus(sock, product, vendor.id);
+          // Notify vendor when the scheduled post fires
+          await sock.sendMessage(sock.authState.creds.me?.id.split(":")[0] + "@s.whatsapp.net", {
+            text: `⏰ Scheduled post fired: *${product.product_name}* posted to your Status.`,
+          }).catch(() => {});
+        } catch (err) {
+          logger.error({ err, vendorId: vendor.id, sku: product.sku }, "Scheduled Status post failed");
+        }
+      }, delayMs);
+      return `⏰ Scheduled to post to your Status in ${label}`;
+    }
+
+    case "direct": {
+      // DM the product directly to the specified WhatsApp number
+      const { targetPhone } = instruction;
+      const targetJid = `${targetPhone}@s.whatsapp.net`;
+      const caption = buildStatusCaption({ product_name: product.product_name, price: product.price });
+      try {
+        if (product.image_url) {
+          await sock.sendMessage(targetJid, { image: { url: product.image_url }, caption });
+        } else {
+          await sock.sendMessage(targetJid, { text: `${product.product_name}\n${caption}` });
+        }
+        return `📤 Sent directly to ${targetPhone} ✅`;
+      } catch (err) {
+        logger.error({ err, vendorId: vendor.id, targetPhone }, "Direct DM post failed");
+        return `❌ Failed to send to ${targetPhone} — check the number and try again`;
+      }
+    }
+
+    case "none":
+    default:
+      // Fall back to the vendor's auto_status_enabled setting
+      if (vendor.auto_status_enabled) {
+        if (!vendor.approve_before_post) {
+          await postProductToStatus(sock, product, vendor.id);
+          return "📢 Posted to your Status ✅";
+        } else {
+          await sql`
+            INSERT INTO status_post_queue (vendor_id, sku, image_url, caption, queued_at)
+            VALUES (
+              ${vendor.id},
+              ${product.sku},
+              ${product.image_url},
+              ${buildStatusCaption({ product_name: product.product_name, price: product.price })},
+              now()
+            )
+          `;
+          return "📋 Queued for your approval in the dashboard";
+        }
+      }
+      return "";
+  }
+}
+
 // ─── Claude Vision Extraction ─────────────────────────────────────────────────
 
 async function parseWithClaude(
-  imageBuffer: Buffer,
-  caption: string
+  imageBuffer: Buffer | null,
+  textContext: string
 ): Promise<ParsedProduct> {
-  const imageBase64 = imageBuffer.toString("base64");
+  const userContent: Anthropic.MessageParam["content"] = [];
+
+  // Include image if we have one
+  if (imageBuffer) {
+    const imageBase64 = imageBuffer.toString("base64");
+    userContent.push({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
+    });
+  }
+
+  userContent.push({ type: "text", text: CLAUDE_PARSE_PROMPT(textContext) });
 
   const response = await anthropic.messages.create({
     model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-5",
     max_tokens: 512,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/jpeg",
-              data: imageBase64,
-            },
-          },
-          {
-            type: "text",
-            text: CLAUDE_PARSE_PROMPT(caption),
-          },
-        ],
-      },
-    ],
+    messages: [{ role: "user", content: userContent }],
   });
 
   const text =
@@ -233,12 +370,13 @@ async function parseWithClaude(
   };
 }
 
-const CLAUDE_PARSE_PROMPT = (caption: string) => `
+const CLAUDE_PARSE_PROMPT = (context: string) => `
 You are a product cataloguing assistant for Nigerian informal commerce merchants.
 
-The vendor sent this product photo with caption: "${caption}"
+The vendor submitted this product (text/caption/voice transcript):
+"${context}"
 
-Analyse the image carefully. Return ONLY valid JSON with this exact structure, nothing else:
+Analyse the image (if provided) and the text carefully. Return ONLY valid JSON with this exact structure, nothing else:
 
 {
   "product_name": "string — concise, searchable product name (e.g. 'Red Ankara Fabric', 'Straight-leg Jeans', 'Peak Milk 400g')",
@@ -329,10 +467,9 @@ async function handleTextOnlySubmission(
     msg.message?.extendedTextMessage?.text ||
     "";
 
-  // Simple command parsing: vendor can send "status off" to toggle auto-Status
+  // Simple command: "status on" / "status off"
   if (/^status\s+(on|off)$/i.test(text.trim())) {
     const enable = /on/i.test(text);
-    // This would call a settings update — for now just acknowledge
     await sock.sendMessage(senderJid, {
       text: `Auto-Status posting ${enable ? "enabled ✅" : "disabled ⏸️"}. Update settings in your dashboard to make this permanent.`,
     });
@@ -342,11 +479,17 @@ async function handleTextOnlySubmission(
   // Default: show help
   await sock.sendMessage(senderJid, {
     text:
-      "📦 *Adding a product:*\nSend a photo with the name and price in the caption.\n\n" +
+      "📦 *Adding a product:*\n" +
+      "Send a photo OR voice note with the name and price.\n\n" +
       "*Examples:*\n" +
       "• _Red Ankara Fabric – ₦8,000_\n" +
       "• _White sneakers size 40-45, 15k_\n" +
-      "• _Peak Milk 400g, ₦1,200_\n\n" +
-      "The product will be added to your shop automatically.",
+      "• Voice note describing any product\n\n" +
+      "*📢 Posting options* (add to end of caption):\n" +
+      "• _...post this now_ → post to Status immediately\n" +
+      "• _...post in 30 minutes_ → schedule Status post\n" +
+      "• _...post in 2 hours_ → schedule Status post\n" +
+      "• _...post to 09023287443_ → DM directly to that number\n\n" +
+      "Without a post instruction, auto-Status uses your dashboard settings.",
   });
 }

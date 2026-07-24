@@ -24,10 +24,35 @@ export interface InboundMessage {
   /** Unix ms timestamp from WhatsApp */
   timestamp: number;
   content:
-    | { type: "text"; text: string }
-    | { type: "audio"; mediaId: string }
-    | { type: "image"; mediaId: string; caption?: string }
+    | {
+        type: "text";
+        text: string;
+        /** Text of the message being replied to, if this is a reply (contextInfo.quotedMessage) */
+        quotedText?: string;
+      }
+    | {
+        type: "audio";
+        mediaId: string;
+        /**
+         * Whisper transcript resolved by mediaProcessor.ts before enqueuing.
+         * When present, the agent loop uses this instead of a "[voice note]" placeholder.
+         */
+        transcript?: string;
+      }
+    | {
+        type: "image";
+        mediaId: string;
+        caption?: string;
+        /**
+         * Base64-encoded image bytes resolved by mediaProcessor.ts before enqueuing.
+         * When present, passed directly to Claude Vision as an image content block.
+         */
+        base64?: string;
+        /** MIME type of the image, e.g. "image/jpeg". Required when base64 is present. */
+        mimeType?: string;
+      }
     | { type: "interactive"; payload: unknown };
+
 }
 
 export type PlatformChannel = "whatsapp" | "instagram" | "facebook" | "telegram" | "tiktok" | "email";

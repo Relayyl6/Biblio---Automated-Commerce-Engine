@@ -187,6 +187,7 @@ export interface BundleProposal {
   addedItemsValue: number; // Market value of items being added
 }
 
+
 export type BundleValidationResult =
   | { ok: true }
   | { ok: false; reason: string };

@@ -178,6 +178,24 @@ export const toolDefinitions = [
       "Only valid once order is in draft status.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "search_web",
+    description:
+      "Search the internet for current market prices, product specs, or competitor pricing. " +
+      "Use when a customer asks about price ranges, comparisons, or specs for products " +
+      "you don't have in your catalog (e.g. 'i5 6th gen price range'). " +
+      "Returns top 3 search result snippets you can cite in your reply.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Specific search query. Include 'Nigeria' and current year for price queries.",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ] as const;
 
 // ─── Execution Context ────────────────────────────────────────────────────────
@@ -245,6 +263,11 @@ export async function executeTool(
       return await escalateToMerchant(input.customerFinalOffer, input.summary, ctx);
     case "issue_payment_link":
       return issuePaymentLink(ctx);
+    case "search_web": {
+      const { query } = input as { query: string };
+      const results = await executeSearchWeb(query);
+      return { output: results };
+    }
     default:
       return { output: { error: `Unknown tool: ${name}` } };
   }
@@ -547,4 +570,26 @@ async function getCurrentStock(merchantId: string, sku: string): Promise<number>
     select stock from products where merchant_id = ${merchantId} and sku = ${sku}
   `;
   return rows[0]?.stock ?? 0;
+}
+
+async function executeSearchWeb(query: string): Promise<{ snippets: string[]; query: string }> {
+  const apiKey = process.env.BRAVE_SEARCH_API_KEY;
+  if (!apiKey) return { snippets: ["Web search not configured. Tell the customer you cannot check market prices right now."], query };
+
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+  const res = await fetch(url, {
+    headers: {
+      "Accept": "application/json",
+      "X-Subscription-Token": apiKey,
+    },
+  });
+
+  if (!res.ok) return { snippets: [`Search failed: ${res.status}`], query };
+
+  const data = await res.json() as any;
+  const snippets: string[] = (data.web?.results ?? [])
+    .slice(0, 3)
+    .map((r: any) => `• ${r.title}: ${r.description}`);
+
+  return { snippets, query };
 }

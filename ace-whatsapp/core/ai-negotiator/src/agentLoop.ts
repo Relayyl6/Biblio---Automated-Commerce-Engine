@@ -130,9 +130,9 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   };
 
   const systemPrompt = buildSystemPrompt(turn, arc, merchant);
-  const userMessage = buildUserMessage(turn);
+  const userContent = buildUserContent(turn);
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userContent }];
   let currentOrderState: OrderState = turn.orderState;
   let currentArc: NegotiationArc = arc;
 
@@ -325,6 +325,12 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
     discount. Suggest genuine bundles from the catalog (e.g. a gele with a gown).
 11. Only quote delivery, returns, deposits, or hours from the seller policies above.
     Never invent a policy. If asked something not covered, offer to check with the seller.
+12. If the customer's message starts with [Replying to: "..."], use the quoted text
+    as context for what they are responding to — factor it into your understanding.
+13. If a message is labelled [Voice note], treat the transcribed words as the
+    customer's exact message. Respond naturally without mentioning voice notes.
+14. If the customer asks about prices or specs for items NOT in your catalog,
+    call search_web to get real-time market context before answering.
 
 ══ ARC PLAYBOOK ══
 → Fresh session: check_inventory → get_customer_profile → anchor with full price
@@ -336,17 +342,83 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
 ${JSON.stringify(turn.orderState)}`;
 }
 
-function buildUserMessage(turn: ConversationTurn): string {
-  return turn.messages
-    .map((m) => {
-      switch (m.content.type) {
-        case "text": return m.content.text;
-        case "audio": return "[voice note — ask customer to type if unclear]";
-        case "image": return `[image${m.content.caption ? `: ${m.content.caption}` : ""}]`;
-        case "interactive": return `[button reply: ${JSON.stringify(m.content.payload)}]`;
+/**
+ * Builds the user content for a Claude API call.
+ * Returns a ContentBlock[] (not a string) so multi-modal content —
+ * images, voice transcripts, reply context — is properly represented.
+ *
+ * Claude claude-3-5-sonnet and later support mixed image+text content blocks.
+ */
+function buildUserContent(turn: ConversationTurn): Anthropic.ContentBlockParam[] {
+  const blocks: Anthropic.ContentBlockParam[] = [];
+
+  for (const msg of turn.messages) {
+    const c = msg.content;
+
+    // ── Reply-thread context prefix ───────────────────────────────────────
+    if (c.type === "text" && c.quotedText) {
+      blocks.push({
+        type: "text",
+        text: `[Replying to: "${c.quotedText}"]\n`,
+      });
+    }
+
+    // ── Plain text ────────────────────────────────────────────────────────
+    if (c.type === "text") {
+      blocks.push({ type: "text", text: c.text });
+    }
+
+    // ── Voice note: prefer transcript, gracefully degrade ─────────────────
+    else if (c.type === "audio") {
+      if (c.transcript) {
+        blocks.push({ type: "text", text: `[Voice note]: ${c.transcript}` });
+      } else {
+        blocks.push({
+          type: "text",
+          text: "[Voice note — transcription unavailable. Ask customer to type their message.]",
+        });
       }
-    })
-    .join("\n");
+    }
+
+    // ── Image: use Claude Vision when base64 available ────────────────────
+    else if (c.type === "image") {
+      if (c.base64 && c.mimeType) {
+        // Caption first so Claude has text context before the image
+        if (c.caption) {
+          blocks.push({ type: "text", text: `[Image caption]: ${c.caption}` });
+        }
+        blocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: c.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+            data: c.base64,
+          },
+        });
+      } else {
+        // Fallback: media download failed or wasn't resolved
+        blocks.push({
+          type: "text",
+          text: `[Image${c.caption ? `: ${c.caption}` : " — no caption"}]`,
+        });
+      }
+    }
+
+    // ── Interactive (WA Business orders, button replies) ───────────────────
+    else if (c.type === "interactive") {
+      blocks.push({
+        type: "text",
+        text: `[Button reply / order: ${JSON.stringify(c.payload)}]`,
+      });
+    }
+  }
+
+  // Safety: Claude requires at least one content block
+  if (blocks.length === 0) {
+    blocks.push({ type: "text", text: "[empty message]" });
+  }
+
+  return blocks;
 }
 
 // ─── Arc Persistence ──────────────────────────────────────────────────────────

@@ -40,6 +40,12 @@ const logger = P({ level: "debug" });
 // because all messages for a vendor flow to the same process that holds the socket.
 const sessions = new Map<string, WASocket>();
 const reconnectAttempts = new Map<string, number>();
+// Track vendors that need a post-515 reconnect to finalise pairing
+const pendingPairingRestart = new Set<string>();
+// In-memory creds mirror — needed so creds.update partial patches are merged
+// before we write to Redis. Without this, the partial patch OVERWRITES the full
+// creds object in Redis and the post-515 reconnect sees creds as unregistered.
+const credsCache = new Map<string, AuthenticationCreds>();
 
 // ─── Redis-backed Auth State ─────────────────────────────────────────────────
 // Replaces useMultiFileAuthState for production. Session survives restarts.
@@ -143,6 +149,8 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     existingCreds = undefined;
   }
   const creds = existingCreds || initAuthCreds();
+  // Seed the in-memory cache so the first creds.update partial patch has a base to merge into
+  credsCache.set(vendorId, creds);
   
   if (!creds.registered && !isPairing) {
     logger.info({ vendorId }, "Unregistered vendor, skipping boot to prevent zombie socket.");
@@ -165,7 +173,7 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     },
     logger,
     printQRInTerminal: false, // Always headless — we use pairing codes
-    browser: Browsers.macOS("Desktop"), // macOS Desktop signature often avoids Meta blocks
+    browser: ['Ubuntu', 'Chrome', '22.04.4'], // Standard browser signature to prevent 400 bad-request
     connectTimeoutMs: 60_000,
     keepAliveIntervalMs: 25_000,
     markOnlineOnConnect: true,  // Must be true for pairing flow to complete on mobile
@@ -188,8 +196,14 @@ export async function createSession(vendorId: string, isPairing = false): Promis
   // ── CRITICAL: always save creds on every update ───────────────────────────
   // Failing to persist creds means the session is lost on the next restart
   // and the vendor has to re-pair. This is the single most important handler.
-  sock.ev.on("creds.update", async (creds) => {
-    await saveCredsToRedis(vendorId, creds as AuthenticationCreds);
+  sock.ev.on("creds.update", async (update) => {
+    // creds.update fires with a PARTIAL object — only the changed fields.
+    // We must merge it into the full in-memory creds before persisting,
+    // otherwise we overwrite the full creds with an incomplete patch.
+    const full = credsCache.get(vendorId) ?? creds;
+    const merged = { ...full, ...update } as AuthenticationCreds;
+    credsCache.set(vendorId, merged);
+    await saveCredsToRedis(vendorId, merged);
   });
 
   // ── Connection lifecycle ──────────────────────────────────────────────────
@@ -221,8 +235,13 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       }
 
       if (isRestartRequired) {
-        logger.info({ vendorId }, "Restart required — reconnecting immediately");
-        setTimeout(() => createSession(vendorId), 0);
+        // 515 is WhatsApp's way of saying "pairing done, reconnect to finalise".
+        // We MUST reconnect regardless of creds.registered state, because the
+        // creds aren't marked registered until the reconnect completes.
+        const isPostPairing = pendingPairingRestart.has(vendorId);
+        pendingPairingRestart.delete(vendorId);
+        logger.info({ vendorId, isPostPairing }, "Restart required — reconnecting immediately");
+        setTimeout(() => createSession(vendorId, isPostPairing), 0);
         return;
       }
 
@@ -300,6 +319,13 @@ export async function pairVendorNumber(vendorId: string, phoneNumber: string): P
     sessions.delete(vendorId);
   }
 
+  // Force a completely fresh state for pairing
+  await redis.del(`baileys:creds:${vendorId}`);
+  const keys = await redis.keys(`baileys:keys:${vendorId}:*`);
+  if (keys.length > 0) {
+    await redis.del(...keys);
+  }
+
   const sock = await createSession(vendorId, true);
   if (!sock) throw new Error("Failed to create session");
   logger.info({ vendorId }, "Socket created, waiting for connection handshake...");
@@ -327,6 +353,9 @@ export async function pairVendorNumber(vendorId: string, phoneNumber: string): P
   });
 
   if (!sock.authState.creds.registered) {
+    // Mark this vendor as needing a post-515 pairing restart BEFORE requesting
+    // the code — the 515 arrives within seconds of the user accepting on phone.
+    pendingPairingRestart.add(vendorId);
     logger.info({ vendorId, phone: normalised }, "Requesting pairing code from WhatsApp servers");
     const code = await sock.requestPairingCode(normalised);
     logger.info({ vendorId, code }, "Pairing code issued successfully");
