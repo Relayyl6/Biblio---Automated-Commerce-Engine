@@ -22,10 +22,10 @@
 // 4) CORRECT, CONFIGURABLE MODEL STRING. Loaded from env so you can roll
 //    forward to a new model version without a code deploy.
 
-import Anthropic from "@anthropic-ai/sdk";
+import Groq from "groq-sdk";
 import { sql, redis, jsonb } from "@ace/shared/clients";
 import { loadNegotiatorEnv } from "@ace/shared/env";
-import { sendCustomerMessage } from "../../comms-router/src/outbound";
+import { sendCustomerMessage, setTypingIndicator } from "../../comms-router/src/outbound";
 import { executeTool, toolDefinitions, type ToolContext } from "./tools";
 import {
   computeAuthorizedRange,
@@ -34,10 +34,12 @@ import {
   type CustomerTier,
 } from "./pricingService";
 import {
+  advanceArc,
   availableTactics,
   projectRangeOntoArc,
   type NegotiationArc,
 } from "./negotiationArc";
+
 import { buildNegotiationTrace } from "./negotiationTrace";
 import type {
   ConversationTurn,
@@ -49,12 +51,35 @@ import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 
 const env = loadNegotiatorEnv();
-const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-const MODEL = env.ANTHROPIC_MODEL;
+const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
+const MODEL = env.GROQ_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const MAX_ITERATIONS = 8;
 const LOCK_TTL_SECONDS = 300;
 const TURN_TIMEOUT_MS = 45_000; // hard ceiling; well above p99 for an 8-iteration turn
 const MAX_MODEL_RETRIES = 3;
+
+type Dialect = "pidgin" | "yoruba" | "igbo" | "hausa" | "english";
+
+interface DialectProfile {
+  /** Human-readable name, useful for logging/debugging */
+  label: string;
+  /** Core instruction on tone/style */
+  tone: string;
+  /** Natural phrases the model can sprinkle in, kept minimal to avoid overuse */
+  samplePhrases?: string[];
+  /** Explicit anti-patterns to steer away from stereotyping or forced slang */
+  avoid?: string[];
+}
+
+// Map tool schemas to Groq/OpenAI function format
+const groqTools: Groq.Chat.ChatCompletionTool[] = toolDefinitions.map((t) => ({
+  type: "function",
+  function: {
+    name: t.name,
+    description: t.description,
+    parameters: t.input_schema,
+  },
+}));
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
@@ -103,6 +128,9 @@ async function safeEscalate(turn: ConversationTurn, reason: string): Promise<voi
 }
 
 async function _runTurn(turn: ConversationTurn): Promise<void> {
+  // ── Show typing indicator immediately ──
+  await setTypingIndicator(turn.customerId, turn.merchantId).catch(console.warn);
+
   const arc = await loadOrCreateArc(turn);
   const [pricingRules, merchant] = await Promise.all([
     loadMerchantPricingRules(turn.merchantId),
@@ -121,69 +149,83 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
     tier: currentTier,
   };
 
+  let currentOrderState: OrderState = turn.orderState;
+  let currentArc: NegotiationArc = {
+    ...arc,
+    dialect: merchant.dialect,
+  };
+
+  // Extract any customer price offer from inbound messages and record on the arc
+  const customerOffer = extractCustomerPriceOffer(turn.messages);
+  if (customerOffer !== null && currentArc.stage !== "close") {
+    currentArc = advanceArc(currentArc, {
+      type: "CUSTOMER_COUNTERED",
+      customerOffer,
+    });
+  }
+
   const ctx: ToolContext = {
     customerId: turn.customerId,
     merchantId: turn.merchantId,
     orderState: turn.orderState,
-    arc,
+    arc: currentArc,
     authorizedRange: sentinelRange,
   };
 
-  const systemPrompt = buildSystemPrompt(turn, arc, merchant);
+  const systemPrompt = buildSystemPrompt(turn, currentArc, merchant);
   const userContent = buildUserContent(turn);
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userContent }];
-  let currentOrderState: OrderState = turn.orderState;
-  let currentArc: NegotiationArc = arc;
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent as any },
+  ];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await createMessageWithRetry({
       model: MODEL,
       max_tokens: 1024,
-      system: systemPrompt,
-      tools: toolDefinitions as unknown as Anthropic.Tool[],
+      temperature: 0.3,
       messages,
+      tools: groqTools,
+      tool_choice: "auto",
     });
 
-    // Observability: token usage drives per-merchant AI cost attribution.
     logTokenUsage(turn.merchantId, response.usage);
 
-    const toolUseBlocks = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-    );
+    const choice = response.choices[0];
+    if (!choice) break;
 
-    if (toolUseBlocks.length === 0) {
-      const replyText = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
+    const assistantMsg = choice.message;
+    const toolCalls = assistantMsg.tool_calls;
 
+    if (!toolCalls || toolCalls.length === 0) {
+      const replyText = assistantMsg.content || "";
       await finalizeTurn(turn, currentOrderState, currentArc, replyText);
       return;
     }
 
-    messages.push({ role: "assistant", content: response.content });
+    messages.push(assistantMsg as any);
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-    for (const block of toolUseBlocks) {
+    for (const call of toolCalls) {
       ctx.orderState = currentOrderState;
       ctx.arc = currentArc;
 
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {
+        args = {};
+      }
+
       let result;
       try {
-        result = await executeTool(block.name, block.input, ctx);
+        result = await executeTool(call.function.name, args, ctx);
       } catch (err) {
-        // A single tool failure (e.g. inventory DB hiccup) shouldn't kill
-        // the whole turn — feed the error back to the model as a tool
-        // result so it can adapt (retry, apologize, or pivot tactics),
-        // matching how Claude expects tool-use failures to be reported.
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
           content: JSON.stringify({ error: `tool_failed: ${(err as Error).message}` }),
-          is_error: true,
-        });
+        } as any);
         continue;
       }
 
@@ -210,30 +252,76 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
       if (result.newOrderState) currentOrderState = result.newOrderState;
       if (result.newArc) currentArc = result.newArc;
 
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: block.id,
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
         content: JSON.stringify(result.output),
-      });
+      } as any);
     }
-
-    messages.push({ role: "user", content: toolResults });
   }
 
   await escalateToHuman(turn, currentArc, "Negotiator exceeded max tool-call iterations");
 }
 
+// ─── Customer Price Extraction ──────────────────────────────────────────────
+
+function extractCustomerPriceOffer(messages: ConversationTurn["messages"]): number | null {
+  for (const m of messages) {
+    let text = "";
+    if (m.content.type === "text") {
+      text = m.content.text;
+    } else if (m.content.type === "audio" && m.content.transcript) {
+      text = m.content.transcript;
+    } else {
+      continue;
+    }
+    if (!text) continue;
+
+    // First check for 'k' notation: 15k -> 15000, 12.5k -> 12500
+    const kMatch = text.match(/(?:₦|N|NGN|\b)?\s*(\d+(?:\.\d+)?)\s*k\b/i);
+
+    if (kMatch && kMatch[1]) {
+      const val = parseFloat(kMatch[1]) * 1000;
+      if (!isNaN(val) && val > 0) return val;
+    }
+
+    // Match currency symbols or explicit numbers: ₦15,000, N15000, NGN 20000
+    const priceMatch = text.match(/(?:₦|N|NGN|\$)\s*([\d,]+(?:\.\d+)?)/i);
+    if (priceMatch && priceMatch[1]) {
+      const cleaned = priceMatch[1].replace(/,/g, "");
+      const val = parseFloat(cleaned);
+      if (!isNaN(val) && val > 0) return val;
+    }
+
+    // Match numbers followed by naira/ngn
+    const nairaMatch = text.match(/\b([\d,]+(?:\.\d+)?)\s*(?:naira|ngn)\b/i);
+    if (nairaMatch && nairaMatch[1]) {
+      const cleaned = nairaMatch[1].replace(/,/g, "");
+      const val = parseFloat(cleaned);
+      if (!isNaN(val) && val > 0) return val;
+    }
+
+    // Match contextual patterns: "offer 15000", "pay 12000", "have 8000"
+    const contextMatch = text.match(/(?:pay|offer|take|have|give|give you|last|price for)?\s*[\s:]*([1-9]\d{3,6})(?!\d)/i);
+    if (contextMatch && contextMatch[1]) {
+      const val = parseFloat(contextMatch[1]);
+      if (!isNaN(val) && val > 0) return val;
+    }
+  }
+  return null;
+}
+
 // ─── Resilient model call ──────────────────────────────────────────────────
 
 async function createMessageWithRetry(
-  params: Anthropic.MessageCreateParamsNonStreaming,
+  params: Parameters<typeof groq.chat.completions.create>[0],
   attempt = 1,
-): Promise<Anthropic.Message> {
+): Promise<any> {
   try {
-    return await anthropic.messages.create(params);
+    return await groq.chat.completions.create(params);
   } catch (err: any) {
     const status = err?.status;
-    const isRetryable = status === 429 || status === 529 || status >= 500;
+    const isRetryable = status === 429 || status === 503 || status >= 500;
 
     if (isRetryable && attempt < MAX_MODEL_RETRIES) {
       const backoffMs = 500 * 2 ** (attempt - 1) + Math.random() * 250;
@@ -244,31 +332,72 @@ async function createMessageWithRetry(
   }
 }
 
-function logTokenUsage(merchantId: string, usage: Anthropic.Usage | undefined) {
+function logTokenUsage(merchantId: string, usage: { prompt_tokens?: number; completion_tokens?: number } | undefined) {
   if (!usage) return;
-  console.info(
-    `[negotiator] merchant=${merchantId} input_tokens=${usage.input_tokens} output_tokens=${usage.output_tokens}`,
-  );
-  // In a real deployment, push this to your metrics/billing pipeline
-  // (e.g. dataIntelligence.logTokenUsage) rather than console.info —
-  // per-merchant AI cost attribution matters once you have >1 paying merchant.
+  const promptTokens = usage.prompt_tokens ?? 0;
+  const completionTokens = usage.completion_tokens ?? 0;
+
+  // Pipeline telemetry to DataIntelligenceEngine for cost attribution and enterprise billing
+  dataIntelligence.logTokenUsage({
+    service: "ai-negotiator",
+    merchantId,
+    model: MODEL,
+    promptTokens,
+    completionTokens,
+  }).catch(() => {});
 }
 
+
 // ─── System Prompt ────────────────────────────────────────────────────────────
+const DIALECT_PROFILES: Record<Dialect, DialectProfile> = {
+  pidgin: {
+    label: "Nigerian Pidgin",
+    tone:
+      "Use crisp, natural Nigerian English with a subtle street-smart flair. Be extremely concise.",
+    avoid: ["sharp sharp", "abeg", "forced or stereotypical slang"],
+  },
+  yoruba: {
+    label: "Yoruba-inflected",
+    tone: "Use Yoruba-inflected Nigerian English.",
+    samplePhrases: ["ẹ kú iṣẹ́", "ó dára"],
+  },
+  igbo: {
+    label: "Igbo-inflected",
+    tone: "Use Igbo-inflected Nigerian English.",
+    samplePhrases: ["daalụ", "ọ dị mma"],
+  },
+  hausa: {
+    label: "Hausa-inflected",
+    tone: "Use Hausa-inflected Nigerian English.",
+    samplePhrases: ["sannu", "madalla"],
+  },
+  english: {
+    label: "Standard Nigerian English",
+    tone: "Use clear, friendly Nigerian English.",
+  },
+};
+
+const DEFAULT_DIALECT: Dialect = "english";
 
 function dialectGuidance(d: Dialect): string {
-  switch (d) {
-    case "pidgin":
-      return 'Reply in warm Nigerian Pidgin English where it reads naturally ("abeg", "o", "sharp sharp", "no wahala"). Stay easy to understand.';
-    case "yoruba":
-      return 'Use Yoruba-inflected Nigerian English; drop light Yoruba phrases ("ẹ kú iṣẹ́", "ó dára") where natural.';
-    case "igbo":
-      return 'Use Igbo-inflected Nigerian English; drop light Igbo phrases ("daalụ", "ọ dị mma") where natural.';
-    case "hausa":
-      return 'Use Hausa-inflected Nigerian English; drop light Hausa phrases ("sannu", "madalla") where natural.';
-    case "english":
-      return "Use clear, friendly Nigerian English.";
+  const profile = DIALECT_PROFILES[d] ?? DIALECT_PROFILES[DEFAULT_DIALECT];
+
+  const parts: string[] = [profile.tone];
+
+  if (profile.samplePhrases?.length) {
+    const phrases = profile.samplePhrases.map((p) => `"${p}"`).join(", ");
+    parts.push(`Drop light phrases (e.g. ${phrases}) where natural — don't overuse them.`);
   }
+
+  if (profile.avoid?.length) {
+    const avoided = profile.avoid
+      .filter((a) => !a.includes(" ") || a.split(" ").length <= 3)
+      .map((a) => `"${a}"`)
+      .join(", ");
+    parts.push(`AVOID forced or stereotypical usage (e.g. ${avoided || "clichés"}).`);
+  }
+
+  return parts.join(" ");
 }
 
 function buildSystemPrompt(
@@ -317,12 +446,11 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
 5. Call deploy_tactic BEFORE using any tactic in your message. Pass the productSku.
 6. Only call close_deal when the customer has unambiguously said yes.
 7. escalate_to_merchant is only available after both bundle_pivot AND future_credit
-   have been attempted — the tool will reject premature escalation.
-8. Keep replies to 2–4 sentences. This is WhatsApp. Not email.
-9. Write in the seller's voice and language defined above. Stay in character as ${merchant.name}.
-10. Sell on VALUE using real product context — describe the fabric, fit, sizes, and
-    occasion from check_inventory (description/category/attributes) before you ever
-    discount. Suggest genuine bundles from the catalog (e.g. a gele with a gown).
+   have failed, or if the customer specifically asks to speak to a human.
+8. NEVER describe a product's features or details unless explicitly asked. If asked for a price, provide ONLY the price and availability in one short sentence.
+9. Keep replies to 2–4 sentences. This is WhatsApp. Not email.
+10. Write in the seller's voice and language defined above. Stay in character as ${merchant.name}.
+11. Suggest genuine bundles from the catalog (e.g. a gele with a gown) if appropriate.
 11. Only quote delivery, returns, deposits, or hours from the seller policies above.
     Never invent a policy. If asked something not covered, offer to check with the seller.
 12. If the customer's message starts with [Replying to: "..."], use the quoted text
@@ -343,21 +471,20 @@ ${JSON.stringify(turn.orderState)}`;
 }
 
 /**
- * Builds the user content for a Claude API call.
- * Returns a ContentBlock[] (not a string) so multi-modal content —
- * images, voice transcripts, reply context — is properly represented.
- *
- * Claude claude-3-5-sonnet and later support mixed image+text content blocks.
+ * Builds the user content for a Groq API call.
+ * Returns either a string (for text/voice/orders) or a content part array
+ * (when images are present).
  */
-function buildUserContent(turn: ConversationTurn): Anthropic.ContentBlockParam[] {
-  const blocks: Anthropic.ContentBlockParam[] = [];
+function buildUserContent(turn: ConversationTurn): string | Groq.Chat.ChatCompletionContentPart[] {
+  const parts: Groq.Chat.ChatCompletionContentPart[] = [];
+  let hasImage = false;
 
   for (const msg of turn.messages) {
     const c = msg.content;
 
     // ── Reply-thread context prefix ───────────────────────────────────────
     if (c.type === "text" && c.quotedText) {
-      blocks.push({
+      parts.push({
         type: "text",
         text: `[Replying to: "${c.quotedText}"]\n`,
       });
@@ -365,39 +492,37 @@ function buildUserContent(turn: ConversationTurn): Anthropic.ContentBlockParam[]
 
     // ── Plain text ────────────────────────────────────────────────────────
     if (c.type === "text") {
-      blocks.push({ type: "text", text: c.text });
+      parts.push({ type: "text", text: c.text });
     }
 
     // ── Voice note: prefer transcript, gracefully degrade ─────────────────
     else if (c.type === "audio") {
       if (c.transcript) {
-        blocks.push({ type: "text", text: `[Voice note]: ${c.transcript}` });
+        parts.push({ type: "text", text: `[Voice note]: ${c.transcript}` });
       } else {
-        blocks.push({
+        parts.push({
           type: "text",
           text: "[Voice note — transcription unavailable. Ask customer to type their message.]",
         });
       }
     }
 
-    // ── Image: use Claude Vision when base64 available ────────────────────
+    // ── Image: use Groq Vision format when base64 available ───────────────
     else if (c.type === "image") {
       if (c.base64 && c.mimeType) {
-        // Caption first so Claude has text context before the image
+        hasImage = true;
         if (c.caption) {
-          blocks.push({ type: "text", text: `[Image caption]: ${c.caption}` });
+          parts.push({ type: "text", text: `[Image caption]: ${c.caption}` });
         }
-        blocks.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: c.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-            data: c.base64,
+        parts.push({
+          type: "image_url",
+          image_url: {
+            url: `data:${c.mimeType};base64,${c.base64}`,
           },
         });
       } else {
         // Fallback: media download failed or wasn't resolved
-        blocks.push({
+        parts.push({
           type: "text",
           text: `[Image${c.caption ? `: ${c.caption}` : " — no caption"}]`,
         });
@@ -406,19 +531,22 @@ function buildUserContent(turn: ConversationTurn): Anthropic.ContentBlockParam[]
 
     // ── Interactive (WA Business orders, button replies) ───────────────────
     else if (c.type === "interactive") {
-      blocks.push({
+      parts.push({
         type: "text",
         text: `[Button reply / order: ${JSON.stringify(c.payload)}]`,
       });
     }
   }
 
-  // Safety: Claude requires at least one content block
-  if (blocks.length === 0) {
-    blocks.push({ type: "text", text: "[empty message]" });
+  if (parts.length === 0) {
+    return "[empty message]";
   }
 
-  return blocks;
+  if (!hasImage) {
+    return parts.map((p) => (p as { type: "text"; text: string }).text).join("\n");
+  }
+
+  return parts;
 }
 
 // ─── Arc Persistence ──────────────────────────────────────────────────────────
@@ -495,11 +623,35 @@ async function finalizeTurn(
 
   if (replyText.trim().length > 0) {
     const phoneNumberId = replyPhoneNumberId(turn);
-    await sendCustomerMessage(
-      { toPhone: turn.customerId, text: replyText },
-      phoneNumberId,
-      turn.merchantId,
-    );
+    
+    // Split text into chunks by sentence boundaries (periods, exclamation marks, question marks)
+    // or by newlines, keeping them as manageable chat bubbles.
+    const chunks = replyText
+      .split(/\n+/)
+      .flatMap(p => p.split(/(?<=[.!?])\s+(?=[A-Z0-9])/))
+      .map(c => c.trim())
+      .filter(c => c.length > 0);
+
+    for (const chunk of chunks) {
+      // Trigger typing indicator
+      await setTypingIndicator(turn.customerId, turn.merchantId, "composing");
+      
+      // Artificial delay to simulate human typing
+      // e.g., 40ms per character, min 750ms, max 3 seconds
+      const delayMs = Math.min(Math.max(chunk.length * 40, 750), 3000);
+      await new Promise(r => setTimeout(r, delayMs));
+      
+      // Send the chunk
+      await sendCustomerMessage(
+        { toPhone: turn.customerId, text: chunk },
+        phoneNumberId,
+        turn.merchantId,
+      );
+      
+      // Pause typing and add a small gap before next chunk
+      await setTypingIndicator(turn.customerId, turn.merchantId, "paused");
+      await new Promise(r => setTimeout(r, 600));
+    }
   }
 }
 
@@ -576,10 +728,16 @@ async function escalateToHuman(
 }
 
 async function loadMerchantNotificationPhone(merchantId: string): Promise<string> {
-  const rows = await sql<{ notification_phone: string | null }[]>`
-    select notification_phone from merchants where id = ${merchantId} limit 1
-  `;
-  return rows[0]?.notification_phone ?? "";
+  const vendorRows = await sql<{ personal_number: string | null; business_line_number: string | null }[]>`
+    select personal_number, business_line_number from vendors where merchant_id = ${merchantId} limit 1
+  `.catch(() => []);
+  if (vendorRows[0]?.personal_number || vendorRows[0]?.business_line_number) {
+    return vendorRows[0].personal_number || vendorRows[0].business_line_number || "";
+  }
+  const rows = await sql<{ phone_number_id: string | null }[]>`
+    select phone_number_id from merchants where id = ${merchantId} limit 1
+  `.catch(() => []);
+  return rows[0]?.phone_number_id ?? "";
 }
 
 // ─── Merchant Context (the seller's voice) ─────────────────────────────────────

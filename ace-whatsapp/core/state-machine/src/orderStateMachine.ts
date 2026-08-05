@@ -1,43 +1,56 @@
 // core/state-machine/src/orderStateMachine.ts
 //
-// The deterministic control plane. The AI proposes; THIS approves or rejects.
-// `transition` is a pure reducer: (state, event) → new state, or it throws a
-// TransitionError for any illegal pairing. There is no I/O here — the caller
-// loads the current state, calls transition, and persists the result.
+// THE CORE IDEA: `transition` is a pure function. Given the current state
+// and a proposed event, it returns either the new state or a
+// TransitionError. It does NOT touch the database, NOT call WhatsApp,
+// NOT call an LLM. That's deliberate — it's the one piece of this whole
+// system you can unit-test with zero mocks, and the one piece where bugs
+// are catastrophic (an illegal transition = money or inventory moving
+// incorrectly).
 //
-// tools.ts is the consumer: it calls transition with QUOTE_CREATED (on
-// close_deal) and PAYMENT_LINK_ISSUED (on issue_payment_link), and catches
-// TransitionError. Event names/fields here match shared/src/types.ts.
+// The ai-negotiator's job is to look at a ConversationTurn and PROPOSE an
+// OrderEvent. This file's job is to be the skeptical gatekeeper that says
+// "no, you can't mark payment confirmed from `draft` state — there's no
+// virtual account to have been paid into."
 //
-// This is also the spec for the eventual Rust port: each `case` below maps to a
-// Rust `match` arm. `assertNever` gives compile-time proof every state is
-// handled.
+// Why a switch-based reducer instead of a library like XState?
+// XState is excellent and I'd reach for it once you have states with
+// timers, parallel regions, or nested sub-machines (e.g. "awaiting_payment"
+// containing its own "reminder sent / not sent" sub-state). For an order
+// lifecycle that's fundamentally linear with one branch (cancellation), a
+// hand-written switch is more transparent, has zero extra dependencies,
+// and — critically for THIS file — gives you compiler-enforced
+// exhaustiveness via the `assertNever` trick below. Revisit XState when
+// `awaiting_payment` grows a reminder sub-state machine of its own.
 
-import type {
-  OrderState,
-  OrderEvent,
-  OrderStatus,
-  OrderEventType,
-} from "@ace/shared/types";
+import type { OrderState, OrderEvent } from "@ace/shared/types";
 
 export class TransitionError extends Error {
   constructor(
-    public readonly fromStatus: OrderStatus,
-    public readonly eventType: OrderEventType,
-    detail?: string,
+    public readonly fromStatus: OrderState["status"],
+    public readonly eventType: OrderEvent["type"],
+    reason: string,
   ) {
     super(
-      `Illegal transition: cannot apply '${eventType}' to order in '${fromStatus}'` +
-        (detail ? ` — ${detail}` : ""),
+      `Illegal transition: ${eventType} from state ${fromStatus} — ${reason}`,
     );
     this.name = "TransitionError";
   }
 }
 
-export function transition(state: OrderState, event: OrderEvent): OrderState {
+/** Exhaustiveness helper: if a switch is missing a case, this line fails
+ *  to compile because `x` can't be `never`. Delete a case above and you'll
+ *  get a compile error pointing exactly here — that's the safety net. */
+function assertNever(x: never): never {
+  throw new Error(`Unhandled case: ${JSON.stringify(x)}`);
+}
+
+export function transition(
+  state: OrderState,
+  event: OrderEvent,
+): OrderState {
   switch (state.status) {
-    case "no_order":
-      // The only way to leave no_order is to create a quote → draft.
+    case "no_order": {
       if (event.type === "QUOTE_CREATED") {
         return {
           status: "draft",
@@ -46,11 +59,15 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           quotedTotal: event.total,
         };
       }
-      throw new TransitionError(state.status, event.type);
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "no order exists yet — only QUOTE_CREATED is valid here",
+      );
+    }
 
-    case "draft":
+    case "draft": {
       if (event.type === "QUOTE_CREATED") {
-        // Re-quoting (price changed / items changed) stays in draft.
         return {
           status: "draft",
           orderId: event.orderId,
@@ -71,16 +88,20 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
       if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
-      throw new TransitionError(state.status, event.type);
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "draft orders can only get a payment link or be cancelled",
+      );
+    }
 
-    case "awaiting_payment":
+    case "awaiting_payment": {
       if (event.type === "PAYMENT_CONFIRMED") {
-        // Amount-match guard: never advance on an underpayment.
         if (event.amount < state.total) {
           throw new TransitionError(
             state.status,
             event.type,
-            `paid ₦${event.amount} < order total ₦${state.total}`,
+            `amount mismatch: expected ${state.total}, got ${event.amount}`,
           );
         }
         return {
@@ -91,12 +112,24 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
           paidAt: event.paidAt,
         };
       }
+      if (event.type === "PAYMENT_TIMEOUT") {
+        return {
+          status: "cancelled",
+          orderId: state.orderId,
+          reason: "payment window expired",
+        };
+      }
       if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
-      throw new TransitionError(state.status, event.type);
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "awaiting_payment can only resolve to payment_verified, timeout, or cancellation",
+      );
+    }
 
-    case "payment_verified":
+    case "payment_verified": {
       if (event.type === "RIDER_ASSIGNED") {
         return {
           status: "out_for_delivery",
@@ -106,36 +139,45 @@ export function transition(state: OrderState, event: OrderEvent): OrderState {
         };
       }
       if (event.type === "ORDER_CANCELLED") {
-        // Allowed pre-dispatch; downstream handles refund of the held escrow.
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
-      throw new TransitionError(state.status, event.type);
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "paid orders move to out_for_delivery via RIDER_ASSIGNED only",
+      );
+    }
 
-    case "out_for_delivery":
+    case "out_for_delivery": {
       if (event.type === "DELIVERY_CONFIRMED") {
-        return {
-          status: "delivered",
-          orderId: state.orderId,
-        };
+        return { status: "delivered", orderId: state.orderId };
       }
       if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
-      throw new TransitionError(state.status, event.type);
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "out_for_delivery can only resolve to delivered",
+      );
+    }
 
     case "delivered":
-      // Terminal. (DISPUTED is a documented Phase-2 addition.)
-      throw new TransitionError(state.status, event.type);
-
-    case "cancelled":
-      // Terminal.
-      throw new TransitionError(state.status, event.type);
+    case "cancelled": {
+      // Terminal states. Any event here is a no-op from the state
+      // machine's perspective — but the CALLER (ai-negotiator) should
+      // treat this as a signal that it's reasoning about stale state,
+      // likely because two webhook deliveries raced. Surfacing it as an
+      // error (rather than silently swallowing) makes that race visible
+      // in your logs instead of hiding it.
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "order is in a terminal state — no further transitions allowed",
+      );
+    }
 
     default:
       return assertNever(state);
   }
-}
-
-export function assertNever(x: never): never {
-  throw new Error(`Unreachable: unhandled variant ${JSON.stringify(x)}`);
 }

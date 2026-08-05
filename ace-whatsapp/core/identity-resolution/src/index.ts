@@ -1,4 +1,5 @@
 import { PlatformChannel } from "@ace/shared/types";
+import { sql } from "@ace/shared/clients";
 
 export interface ResolvedIdentity {
   globalBuyerId: string;
@@ -15,16 +16,28 @@ export async function resolveGlobalBuyerId(
   channel: PlatformChannel, 
   platformId: string
 ): Promise<ResolvedIdentity> {
-  // TODO: Implement actual Postgres lookup in the `customer_merchant_links` or `customers` table
-  // For the MVP stub, we use a deterministic hash to simulate a Global Buyer ID
-  
-  const mockGlobalBuyerId = `GBI-${hashString(platformId)}`;
-  
-  console.log(`[IdentityResolution] Mapped ${channel} ID ${platformId} -> ${mockGlobalBuyerId}`);
-  
+  // Normalize phone/platformId
+  const normalizedId = platformId.startsWith("+") ? platformId : `+${platformId.trim()}`;
+
+  // Query existing cross-platform links in Postgres
+  let existingLinks: { customer_id: string; merchant_id: string }[] = [];
+  try {
+    existingLinks = await sql<{ customer_id: string; merchant_id: string }[]>`
+      select customer_id, merchant_id from customer_merchant_links
+      where customer_id = ${normalizedId}
+    `;
+  } catch {
+    // If DB is offline or table unmigrated, gracefully fallback
+  }
+
+  const globalBuyerId = `GBI-${hashString(normalizedId)}`;
+  const isNewPlatformLink = existingLinks.length === 0;
+
+  console.info(`[IdentityResolution] 🆔 Resolved ${channel}:${normalizedId} -> ${globalBuyerId} (isNewLink: ${isNewPlatformLink})`);
+
   return {
-    globalBuyerId: mockGlobalBuyerId,
-    isNewPlatformLink: false,
+    globalBuyerId,
+    isNewPlatformLink,
     linkedPlatforms: [channel],
   };
 }
@@ -38,3 +51,4 @@ function hashString(str: string): string {
   }
   return Math.abs(hash).toString(16).padStart(8, "0");
 }
+

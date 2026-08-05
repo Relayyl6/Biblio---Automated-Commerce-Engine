@@ -24,8 +24,10 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import P from "pino";
 import { sql } from "@ace/shared/clients";
-import { createSession, pairVendorNumber, getAllActiveSessions } from "./sessionManager.js";
+import { createSession, getSession, getAllActiveSessions, pairVendorNumber } from "./sessionManager.js";
 import { startStatusCron, runStatusCron } from "./statusPoster.js";
+import { sendViaBaileys, canSendViaBaileys } from "./outboundAdapter.js";
+import type { OutboundMessage } from "@ace/shared/types";
 
 const logger = P({ level: "info" });
 const app = Fastify({ logger: true });
@@ -40,24 +42,24 @@ app.get("/health", async () => ({
 }));
 
 // ─── Pair a new vendor business line ─────────────────────────────────────────
-// Called from the merchant-api / dashboard onboarding flow.
-// Body: { vendorId: string, phoneNumber: string }
-// Returns: { code: string } — 8-char pairing code to enter in WA Settings
+// Called from the merchant-api / dashboard onboarding flow or CLI.
+// Body: { phoneNumber: string, vendorId?: string }
+// Returns: { ok: true, code: string, vendorId: string, merchantId: string }
 app.post("/pair", async (req, reply) => {
   const { vendorId, phoneNumber } = req.body as {
     vendorId?: string;
     phoneNumber?: string;
   };
 
-  if (!vendorId || !phoneNumber) {
-    return reply.code(400).send({ error: "vendorId and phoneNumber are required" });
+  if (!phoneNumber) {
+    return reply.code(400).send({ error: "phoneNumber is required (E.164 format, e.g. 2348012345678)" });
   }
 
   try {
-    const code = await pairVendorNumber(vendorId, phoneNumber);
-    return reply.send({ ok: true, code });
+    const res = await pairVendorNumber(phoneNumber, vendorId);
+    return reply.send({ ok: true, ...res });
   } catch (err) {
-    req.log.error({ err, vendorId }, "Pairing failed");
+    req.log.error({ err, vendorId, phoneNumber }, "Pairing failed");
     return reply.code(500).send({ ok: false, error: (err as Error).message });
   }
 });
@@ -94,6 +96,48 @@ app.post("/sessions/:vendorId/connect", async (req, reply) => {
 app.post("/status/cron", async (_req, reply) => {
   await runStatusCron();
   return reply.send({ ok: true, message: "Status cron run completed" });
+});
+
+// ─── Outbound send (called by comms-router across process boundary) ───────────
+// Body: OutboundMessage & { merchantId: string }
+// Returns: { ok: true } or { ok: false, error: string }
+app.post("/send", async (req, reply) => {
+  const body = req.body as OutboundMessage & { merchantId: string };
+  if (!body.merchantId) {
+    return reply.code(400).send({ ok: false, error: "merchantId is required" });
+  }
+  if (!canSendViaBaileys(body.merchantId)) {
+    return reply.code(503).send({ ok: false, error: `No active Baileys session for merchant ${body.merchantId}` });
+  }
+  try {
+    await sendViaBaileys(body, body.merchantId);
+    return reply.send({ ok: true });
+  } catch (err) {
+    req.log.error({ err, merchantId: body.merchantId }, "Baileys send failed via /send");
+    return reply.code(500).send({ ok: false, error: (err as Error).message });
+  }
+});
+
+// ─── Presence update (called by comms-router to show typing indicator) ────────
+// Body: { merchantId: string, toJid: string, presence: "composing" | "paused" }
+app.post("/presence", async (req, reply) => {
+  const { merchantId, toJid, presence } = req.body as { merchantId?: string; toJid?: string; presence?: "composing" | "paused" };
+  if (!merchantId || !toJid || !presence) {
+    return reply.code(400).send({ ok: false, error: "merchantId, toJid, and presence are required" });
+  }
+  
+  const sock = getSession(merchantId);
+  if (!sock) {
+    return reply.code(503).send({ ok: false, error: `No active session for merchant ${merchantId}` });
+  }
+  
+  try {
+    await sock.sendPresenceUpdate(presence, toJid);
+    return reply.send({ ok: true });
+  } catch (err) {
+    req.log.error({ err, merchantId, toJid }, "Failed to send presence update");
+    return reply.code(500).send({ ok: false, error: (err as Error).message });
+  }
 });
 
 // ─── Startup ─────────────────────────────────────────────────────────────────

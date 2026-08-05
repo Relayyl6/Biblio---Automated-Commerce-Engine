@@ -139,6 +139,14 @@ app.post("/merchants", async (req, reply) => {
   return reply.code(201).send({ id: rows[0].id });
 });
 
+app.get("/merchants", async () => {
+  return await sql`
+    select id, name, phone_number_id, tone_guide, business_policies,
+           delivery_info, dialect, whatsapp_catalog_id, created_at
+    from merchants order by created_at desc limit 50
+  `;
+});
+
 app.get("/merchants/:id", async (req, reply) => {
   const { id } = req.params as { id: string };
   const rows = await sql`
@@ -319,6 +327,53 @@ app.post("/vendors", async (req, reply) => {
   return reply.code(201).send({ ok: true, vendorId: rows[0].id });
 });
 
+// Universal Auto-Provisioning & Pairing:
+// Given just a phone number, provisions merchant, vendor, pricing rules, dialect,
+// and requests an 8-digit WhatsApp pairing code from the Baileys gateway in one step.
+app.post("/pair", async (req, reply) => {
+  const { phoneNumber, vendorId, merchantName, dialect } = req.body as {
+    phoneNumber?: string;
+    vendorId?: string;
+    merchantName?: string;
+    dialect?: string;
+  };
+
+  if (!phoneNumber) {
+    return reply.code(400).send({ error: "phoneNumber is required (e.g. 2348012345678)" });
+  }
+
+  try {
+    const res = await fetch(`${BAILEYS_GATEWAY_URL}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phoneNumber: phoneNumber.replace(/^\+/, ""),
+        vendorId,
+        merchantName,
+        dialect
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    return reply.status(res.status).send(data);
+  } catch (err) {
+    return reply.code(502).send({
+      error: "Baileys gateway unavailable — is it running? (npm run baileys-gateway)",
+    });
+  }
+});
+
+// List all vendors with their merchant metadata for the Admin Portal
+app.get("/vendors", async () => {
+  return await sql`
+    SELECT v.id as vendor_id, v.merchant_id, v.personal_number, v.business_line_number,
+           v.session_status, v.auto_status_enabled, v.posting_frequency_hours, v.approve_before_post,
+           v.created_at, m.name as merchant_name, m.dialect, m.phone_number_id
+    FROM vendors v
+    LEFT JOIN merchants m ON m.id = v.merchant_id
+    ORDER BY v.created_at DESC LIMIT 50
+  `;
+});
+
 // Get a pairing code for a vendor's new business line number.
 // The merchant enters this 8-character code in WhatsApp → Settings → Linked Devices.
 app.post("/vendors/:vendorId/pair", async (req, reply) => {
@@ -350,7 +405,7 @@ app.post("/vendors/:vendorId/pair", async (req, reply) => {
     const res = await fetch(`${BAILEYS_GATEWAY_URL}/pair`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vendorId, phoneNumber: phoneNumber.replace(/^\+/, "") }),
+      body: JSON.stringify({ vendorId, phoneNumber: cleanPhone }),
     });
     const data = await res.json() as Record<string, unknown>;
     if (!res.ok) return reply.code(502).send(data);

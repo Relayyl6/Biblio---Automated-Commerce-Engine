@@ -50,31 +50,44 @@ const connection = {
   connection: { ...redis.options, maxRetriesPerRequest: null },
 };
 
-export const turnQueue = new Queue<{ customerId: string }>("conversation-turns", connection);
+export const turnQueue = new Queue<{ customerId: string; merchantId: string }>(
+  "conversation-turns",
+  connection
+);
 
-function scratchKey(customerId: string) {
-  return `scratch:${customerId}`;
+function scratchKey(merchantId: string, customerId: string) {
+  return `scratch:${merchantId}:${customerId}`;
 }
 
 /**
- * Called by ingestion-service for every deduped inbound message.
+ * Called for every deduped inbound message.
+ * Scoped strictly per (merchantId, customerId) for multi-vendor isolation.
  */
 export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> {
-  const customerId = msg.fromPhone; // Phase 1 identity resolution: see core/identity-resolution stub
+  const customerId = msg.fromPhone;
+  const merchantId = msg.toPhoneNumberId;
 
-  // Push the raw message onto this customer's scratch buffer.
-  await redis.rpush(scratchKey(customerId), JSON.stringify(msg));
+  if (!merchantId) {
+    throw new Error(
+      `Inbound message ${msg.waMessageId} has no toPhoneNumberId (merchant/vendor ID)`
+    );
+  }
 
-  // Sliding debounce: remove any existing delayed job for this customer,
-  // then schedule a fresh one. BullMQ job IDs must be unique per queue —
-  // using customerId as the jobId is what makes "remove + re-add" act as
-  // a reset rather than creating a second job.
-  const bullJobId = `turn_${customerId}`;
+  // Push raw message onto this merchant-customer conversation buffer
+  const key = scratchKey(merchantId, customerId);
+  await redis.rpush(key, JSON.stringify(msg));
+
+  // Upsert customer-merchant link asynchronously
+  sql`
+    INSERT INTO customer_merchant_links (customer_id, merchant_id)
+    VALUES (${customerId}, ${merchantId})
+    ON CONFLICT DO NOTHING
+  `.catch(() => {});
+
+  // Sliding debounce: unique per (merchantId, customerId)
+  const bullJobId = `turn_${merchantId}_${customerId}`;
   const existing = await turnQueue.getJob(bullJobId);
   if (existing) {
-    // A job that's already running (not just delayed) can't be removed —
-    // in that case, let it run; the NEXT message will schedule its own
-    // fresh job once this one completes. Don't throw on this race.
     const state = await existing.getState();
     if (state === "delayed") {
       await existing.remove();
@@ -83,35 +96,26 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
 
   await turnQueue.add(
     "process-turn",
-    { customerId },
+    { customerId, merchantId },
     {
       jobId: bullJobId,
       delay: DEBOUNCE_MS,
-      // CRITICAL: free the jobId as soon as the job settles. BullMQ treats
-      // add() with an existing jobId as a no-op across ALL states — including
-      // `completed`/`failed`. Without these, the FIRST turn for a customer
-      // completes, its job is retained under jobId=customerId, and every
-      // subsequent message's add() silently no-ops — so the customer's second
-      // conversation turn never fires. removeOnComplete/Fail releases the id.
       removeOnComplete: true,
       removeOnFail: true,
-    },
+    }
   );
 }
 
 /**
- * Worker: fires once the debounce window closes. Drains the scratch
- * buffer, loads current order state, and hands everything to the
- * negotiator.
+ * Worker: fires once the debounce window closes for a specific (merchant, customer) pair.
  */
-export const turnWorker = new Worker<{ customerId: string }>(
+export const turnWorker = new Worker<{ customerId: string; merchantId: string }>(
   "conversation-turns",
-  async (job: Job<{ customerId: string }>) => {
-    const { customerId } = job.data;
-    const key = scratchKey(customerId);
+  async (job: Job<{ customerId: string; merchantId: string }>) => {
+    const { customerId, merchantId } = job.data;
+    const key = scratchKey(merchantId, customerId);
 
-    // Atomically read-and-clear the buffer. LMPOP would be ideal (Redis
-    // 7+); for broad compatibility we use a small MULTI transaction.
+    // Atomically read-and-clear the buffer
     const tx = redis.multi();
     tx.lrange(key, 0, -1);
     tx.del(key);
@@ -119,34 +123,17 @@ export const turnWorker = new Worker<{ customerId: string }>(
     const rawMessages = (results?.[0]?.[1] as string[]) ?? [];
 
     if (rawMessages.length === 0) {
-      // Can happen if two jobs raced; nothing to do.
       return;
     }
 
     const messages: InboundMessage[] = rawMessages.map((r) => JSON.parse(r));
-    const merchantId = await resolveMerchantForCustomer(customerId);
     const orderState = await loadOrderState(customerId, merchantId);
 
     const turn: ConversationTurn = { customerId, merchantId, messages, orderState };
     await runNegotiatorTurn(turn);
   },
-  connection,
+  connection
 );
-
-// --- Placeholder lookups — these are the "stubs" mentioned in the build map ---
-
-async function resolveMerchantForCustomer(customerId: string): Promise<string> {
-  // Phase 1: every customer talks to ONE merchant (the business phone
-  // number they messaged). Replace with a real lookup once you support
-  // multiple merchants on shared infrastructure.
-  const rows = await sql<{ merchant_id: string }[]>`
-    select merchant_id from customer_merchant_links where customer_id = ${customerId} limit 1
-  `;
-  if (rows.length === 0) {
-    throw new Error(`No merchant association for customer ${customerId}`);
-  }
-  return rows[0].merchant_id;
-}
 
 async function loadOrderState(customerId: string, merchantId: string): Promise<OrderState> {
   const rows = await sql<{ state: OrderState }[]>`

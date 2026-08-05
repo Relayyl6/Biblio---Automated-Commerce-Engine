@@ -13,7 +13,9 @@
     "catalog-sync": "tsx --env-file=.env ace-whatsapp/core/catalog-sync/src/index.ts",
     "merchant-api": "tsx --env-file=.env ace-whatsapp/core/merchant-api/src/index.ts",
     "baileys-gateway": "tsx --env-file=.env ace-whatsapp/core/baileys-gateway/src/index.ts",
-    "comms-router": "tsx --env-file=.env ace-whatsapp/core/comms-router/src/debounce.ts"
+    "comms-router": "tsx --env-file=.env ace-whatsapp/core/comms-router/src/debounce.ts",
+    "pair": "tsx --env-file=.env pair.ts",
+    "admin-portal": "npm --prefix ace-whatsapp/apps/admin-portal run dev"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

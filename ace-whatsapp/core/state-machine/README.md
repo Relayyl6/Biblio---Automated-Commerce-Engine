@@ -65,4 +65,9 @@ Escalates to merchant when:
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **Deterministic State Transition Reducer**: `transition(state, event)` enforcing pure mathematical transitions across all order lifecycle phases: `no_order` → `draft` → `awaiting_payment` → `payment_verified` → `out_for_delivery` → `delivered` (or `cancelled`).
+- **Guard Rail Validation**: Strict underpayment protection throwing `TransitionError` if `paidAmount < total`.
+- **Exhaustive Unit Test Coverage**: 100% test coverage validating all illegal transitions, amount matches, payment link expirations, and cancellation edges.
+

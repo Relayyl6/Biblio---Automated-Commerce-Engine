@@ -37,6 +37,7 @@ interface StatusProduct {
   product_name: string;
   price: number | null;
   image_url: string | null;
+  imageBuffer?: Buffer | null; // preferred over image_url — works without a CDN
 }
 
 // ─── Core Status Posting ──────────────────────────────────────────────────────
@@ -46,9 +47,12 @@ async function sendStatusPost(
   product: StatusProduct,
   vendorId: string
 ): Promise<void> {
-  if (!product.image_url) {
-    // Cannot post to Status without an image — skip silently
-    logger.warn({ vendorId, sku: product.sku }, "Skipping Status post — no image_url");
+  // Prefer in-memory buffer (works without S3/CDN), fall back to public URL
+  const hasBuffer = product.imageBuffer && product.imageBuffer.length > 0;
+  const hasUrl = !!product.image_url;
+
+  if (!hasBuffer && !hasUrl) {
+    logger.warn({ vendorId, sku: product.sku }, "Skipping Status post — no image buffer or URL");
     return;
   }
 
@@ -58,8 +62,9 @@ async function sendStatusPost(
   });
 
   // Post to WhatsApp Status (Stories)
+  // Baileys accepts either a Buffer or a { url } object for the image field
   await sock.sendMessage("status@broadcast", {
-    image: { url: product.image_url },
+    image: hasBuffer ? product.imageBuffer! : { url: product.image_url! },
     caption,
   });
 
@@ -78,7 +83,7 @@ async function sendStatusPost(
     VALUES (${vendorId}, ${product.sku}, ${product.image_url}, ${caption}, now())
   `;
 
-  logger.info({ vendorId, sku: product.sku, caption }, "Status post published");
+  logger.info({ vendorId, sku: product.sku, caption, viaBuffer: hasBuffer }, "Status post published");
 }
 
 // ─── Reactive Post (vendor push) ─────────────────────────────────────────────
@@ -91,6 +96,7 @@ export async function postProductToStatus(
     product_name: string;
     price: number | null;
     image_url: string | null;
+    imageBuffer?: Buffer | null;
   },
   vendorId: string
 ): Promise<void> {

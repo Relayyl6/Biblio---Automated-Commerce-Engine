@@ -54,12 +54,19 @@ async function resolveAccessToken(merchantId: string): Promise<string> {
   const cached = tokenCache.get(merchantId);
   if (cached && cached.expiresAt > Date.now()) return cached.token;
 
-  const rows = await sql<{ access_token: string | null }[]>`
-    select access_token from merchant_whatsapp_credentials
-    where merchant_id = ${merchantId}
-    limit 1
-  `;
-  const token = rows[0]?.access_token ?? env.WHATSAPP_ACCESS_TOKEN_FALLBACK;
+  let token: string | undefined = undefined;
+  try {
+    const rows = await sql<{ access_token: string | null }[]>`
+      select access_token from merchant_whatsapp_credentials
+      where merchant_id = ${merchantId}
+      limit 1
+    `;
+    token = rows[0]?.access_token ?? undefined;
+  } catch {
+    // Ignore if table doesn't exist yet
+  }
+
+  token = token ?? env.WHATSAPP_ACCESS_TOKEN_FALLBACK ?? process.env.WHATSAPP_TOKEN;
 
   if (!token) {
     throw new Error(`no WhatsApp access token available for merchant ${merchantId}`);

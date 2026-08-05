@@ -190,7 +190,7 @@ async function downloadBuffer(msg: WAMessage, sock: WASocket): Promise<Buffer | 
  * Handles the most common cases: plain text and extended text.
  */
 function extractQuotedText(
-  contextInfo?: { quotedMessage?: Record<string, unknown> } | null
+  contextInfo?: any
 ): string | undefined {
   const quoted = contextInfo?.quotedMessage;
   if (!quoted) return undefined;

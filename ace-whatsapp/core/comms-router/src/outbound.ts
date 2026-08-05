@@ -17,10 +17,10 @@
 //      Graph API.
 //
 //   3. BAILEYS ADAPTER PATH — if the merchant has an active Baileys session
-//      (vendor business line model), messages go through that socket instead
-//      of the Graph API. Baileys sends are always free (no per-message cost,
-//      no 24h session window constraint). The same classifyWindow() path
-//      still runs for telemetry/logging purposes.
+//      (vendor business line model), messages go through the gateway's HTTP
+//      /send endpoint instead of the Graph API. The gateway process holds the
+//      live socket in its own memory; we can only reach it via HTTP since these
+//      are separate Node.js processes.
 //
 // The actual template registry (pre-approved WhatsApp templates) is a Phase-2
 // gap; until it exists we still send via the session API when the window is
@@ -30,13 +30,11 @@
 import { redis } from "@ace/shared/clients";
 import type { OutboundMessage } from "@ace/shared/types";
 import { sendWhatsAppMessage } from "./whatsapp";
-import {
-  canSendViaBaileys,
-  sendViaBaileys,
-} from "../../baileys-gateway/src/outboundAdapter.js";
 
 /** How a send is billed by Meta. */
 export type SendClass = "free_session" | "billable_business_initiated";
+
+const GATEWAY_URL = process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
 
 function windowKey(phone: string) {
   return `conv:${phone}:window`;
@@ -65,10 +63,40 @@ export function consolidate(parts: Array<string | undefined | null>): string {
 }
 
 /**
+ * Try to send via the Baileys gateway's HTTP /send endpoint.
+ * Returns true if sent successfully, false if no session is active.
+ */
+async function tryBaileysHttpSend(msg: OutboundMessage, merchantId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${GATEWAY_URL}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...msg, merchantId }),
+    });
+    if (res.status === 503) {
+      // Gateway says no active session for this merchant — fall through to Graph API
+      return false;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw new Error(`Gateway /send returned ${res.status}: ${body.error ?? "unknown error"}`);
+    }
+    return true;
+  } catch (err) {
+    // If the gateway is down entirely, fall through to Graph API rather than silently dropping
+    if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
+      console.warn("[outbound] Baileys gateway unreachable — falling back to Graph API");
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * The one outbound entry point. Reads the service window, classifies the send,
  * logs the classification (for cost monitoring), and delegates to the correct
- * sender — either the vendor's Baileys session (always free) or the Meta
- * Graph API (subject to the 24h session window cost model).
+ * sender — either the vendor's Baileys session (always free, via HTTP) or the
+ * Meta Graph API (subject to the 24h session window cost model).
  *
  * Returns the SendClass so callers/metrics can track cost attribution.
  */
@@ -84,12 +112,12 @@ export async function sendCustomerMessage(
     throw new Error("OutboundMessage has no recipient (toPhone/toSenderId)");
   }
 
-  // ── Baileys fast path ────────────────────────────────────────────────────
-  // If this merchant has an active Baileys session, use it.
-  // Baileys sends are always free (no per-message Meta cost, no 24h window).
-  if (merchantId && canSendViaBaileys(merchantId)) {
-    await sendViaBaileys(msg, merchantId);
-    return "free_session";
+  // ── Baileys fast path (HTTP to gateway process) ───────────────────────────
+  // The gateway holds live Baileys sockets in its own process memory.
+  // We reach them via HTTP — never via direct function import.
+  if (merchantId) {
+    const sent = await tryBaileysHttpSend(msg, merchantId);
+    if (sent) return "free_session";
   }
 
   // ── Meta Graph API path ──────────────────────────────────────────────────
@@ -98,9 +126,6 @@ export async function sendCustomerMessage(
   const sendClass = classifyWindow(expiresAt, Date.now());
 
   if (sendClass === "billable_business_initiated") {
-    // Flaw 1: this send is outside the free window and will cost money. Once a
-    // template registry exists this is where we'd swap to a pre-approved
-    // template; for now we log so per-merchant cost can be tracked.
     console.info(
       `[outbound] billable send to ${toPhone} (service window closed) — ` +
         `candidate for template fallback`,
@@ -109,4 +134,27 @@ export async function sendCustomerMessage(
 
   await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
   return sendClass;
+}
+
+/**
+ * Triggers a "composing" (typing) indicator on WhatsApp via Baileys.
+ */
+export async function setTypingIndicator(
+  toPhone: string,
+  merchantId: string,
+  presence: "composing" | "paused" = "composing"
+): Promise<void> {
+  const toJid = toPhone.includes("@") ? toPhone : `${toPhone}@s.whatsapp.net`;
+  try {
+    const res = await fetch(`${GATEWAY_URL}/presence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ merchantId, toJid, presence }),
+    });
+    if (!res.ok) {
+      console.warn(`[outbound] failed to set typing indicator: ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("[outbound] error setting typing indicator:", err);
+  }
 }

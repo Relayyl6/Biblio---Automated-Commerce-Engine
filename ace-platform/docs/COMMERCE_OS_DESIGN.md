@@ -32,15 +32,15 @@ A respond.io-style three-pane layout — conversation list · thread · context 
 with ACE's twist: the thread is a **timeline of autonomous actions**, not a reply box.
 
 ```
-┌── Conversations ──┬── Thread: Amaka ───────────────┬── Context ──────────┐
-│ ● Amaka   ₦28.5k  │ Cust: "₦25k last price?"        │ Global Buyer ID     │
-│ ○ Chidi   ₦12k    │ 🤖 deploy_tactic: bundle_pivot  │ Tier: Loyal (8 ord) │
-│ ○ Bisi    ₦40k ⚠  │ 🤖 propose_price ₦27,000 ✓      │ LTV: ₦214,000       │
-│                   │ Cust: "ok send account"         │ AI confidence 0.94  │
-│                   │ 🤖 close_deal ₦27,000           │ Channel: WhatsApp   │
-│                   │ 🤖 issue_payment_link           │ ── Actions taken ── │
-│                   │ [ Only ⚠ threads need you ]      │ 6 autonomous · 0 you│
-└───────────────────┴────────────────────────────────┴─────────────────────┘
+┌── Conversations ──┬── Thread: Amaka ────────────────┬── Context ──────────────┐
+│ ● Amaka   ₦28.5k  │ Cust: "₦25k last price?"        │ Global Buyer ID        │
+│ ○ Chidi   ₦12k    │ 🤖 deploy_tactic: bundle_pivot  │ Tier: Loyal (8 ord)    │
+│ ○ Bisi    ₦40k⚠  │ 🤖 propose_price ₦27,000 ✓      │ LTV: ₦214,000          │
+│                   │ Cust: "ok send account"         │ AI confidence 0.94     │
+│                   │ 🤖 close_deal ₦27,000           │ Channel: WhatsApp      │
+│                   │ 🤖 issue_payment_link           │ ── Actions taken ──    │
+│                   │ [ Only ⚠ threads need you ]     │ 6 autonomous · 0 you   │
+└───────────────────┴─────────────────────────────────┴────────────────────────┘
 ```
 
 The list is **sorted by exceptions first** (low AI confidence, below-floor

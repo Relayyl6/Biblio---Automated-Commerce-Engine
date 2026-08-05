@@ -20,7 +20,9 @@
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import { sql, redis, jsonb } from "@ace/shared/clients";
+import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import type { OrderState } from "@ace/shared/types";
+
 import { transition, TransitionError } from "../../state-machine/src/orderStateMachine";
 import { sendCustomerMessage } from "../../comms-router/src/outbound";
 import {
@@ -38,6 +40,9 @@ await app.register(rawBody, { global: false, runFirst: true });
 
 const WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET ?? "";
 const LOCK_TTL_SECONDS = 30;
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+app.get("/health", async () => ({ ok: true, service: "payment-verification" }));
 
 // ─── Webhook ────────────────────────────────────────────────────────────────────
 
@@ -156,6 +161,16 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
 
     app.log.info({ orderId: order.orderId, amount: payment.amountNgn }, "payment verified");
 
+    // Telemetry: Capture state transition for TrustScore signals
+    dataIntelligence.captureOrderStateChange({
+      merchantId: order.merchantId,
+      customerId: order.customerId,
+      orderId: order.orderId,
+      fromState: "awaiting_payment",
+      toState: "payment_verified",
+      timestamp: Date.now(),
+    }).catch(() => {});
+
     // PHASE 2: publish `payments.verified` to Kafka here. Logistics-coordination
     // consumes it to auto-book a rider (order → out_for_delivery), and the escrow
     // engine opens the 24h hold. For now the order rests at payment_verified.
@@ -177,6 +192,21 @@ async function handleUnderpayment(order: MatchedOrder, payment: NormalizedPaymen
     )
     on conflict (provider_ref) do nothing
   `;
+
+  // Anomaly signal for TrustScore engine
+  dataIntelligence.auditLog({
+    service: "payment-verification",
+    merchantId: order.merchantId,
+    action: "underpayment_detected",
+    metadata: {
+      orderId: order.orderId,
+      customerId: order.customerId,
+      expected: order.total,
+      received: payment.amountNgn,
+      balance,
+    },
+  }).catch(() => {});
+
   // Order stays in awaiting_payment — the customer still owes the balance.
   await sendCustomerMessage(
     {
@@ -200,7 +230,19 @@ async function recordUnmatchedTransaction(payment: NormalizedPayment): Promise<v
     { providerRef: payment.providerRef, virtualAccount: payment.virtualAccount, amount: payment.amountNgn },
     "UNMATCHED PAYMENT — manual reconciliation required",
   );
+
+  dataIntelligence.auditLog({
+    service: "payment-verification",
+    merchantId: "unmatched",
+    action: "unmatched_van_payment",
+    metadata: {
+      providerRef: payment.providerRef,
+      virtualAccount: payment.virtualAccount,
+      amount: payment.amountNgn,
+    },
+  }).catch(() => {});
 }
+
 
 // ─── Order lookup ────────────────────────────────────────────────────────────────
 

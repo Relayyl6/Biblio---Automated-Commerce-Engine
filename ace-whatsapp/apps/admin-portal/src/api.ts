@@ -65,7 +65,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+export interface VendorSummary {
+  vendor_id: string;
+  merchant_id: string;
+  personal_number: string | null;
+  business_line_number: string | null;
+  session_status: string;
+  auto_status_enabled: boolean;
+  posting_frequency_hours: number;
+  approve_before_post: boolean;
+  created_at: string;
+  merchant_name: string | null;
+  dialect: string | null;
+  phone_number_id?: string | null;
+}
+
 export const api = {
+  listMerchants: () => req<Merchant[]>("/merchants"),
   getMerchant: (id: string) => req<Merchant>(`/merchants/${id}`),
   createMerchant: (body: {
     name: string;
@@ -79,6 +95,13 @@ export const api = {
     req<{ ok: true; fetched: number; upserted: number }>(`/merchants/${id}/catalog-sync`, {
       method: "POST",
     }),
+  // Auto-provisioning & pairing
+  autoPair: (body: { phoneNumber: string; merchantName?: string; dialect?: string; vendorId?: string }) =>
+    req<{ ok: boolean; code?: string; vendorId?: string; merchantId?: string; error?: string }>("/pair", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listVendors: () => req<VendorSummary[]>("/vendors"),
   // Vendor / Baileys business line
   createVendor: (body: { merchantId: string; personalNumber: string }) =>
     req<{ vendorId: string }>(`/vendors`, { method: "POST", body: JSON.stringify(body) }),

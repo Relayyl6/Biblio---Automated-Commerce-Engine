@@ -154,4 +154,10 @@ struct DigestBuilder {
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **Sliding Debounce Pipeline**: BullMQ-backed delayed job replacement (`turnQueue` + `turnWorker`) with sliding 10s window to batch rapid-fire bursts into atomic `ConversationTurn` payloads.
+- **Multi-Vendor Isolation**: All message queues and buffers strictly keyed by `(merchantId, customerId)` with automatic `customer_merchant_links` persistence.
+- **Vendor Communiqué Engine**: Two-way escalation engine formatting rich WhatsApp / SMS approval briefs for below-floor negotiations, stock exceptions, and payment anomalies with fast 1/2/3 reply code interception.
+- **Transport Routing**: Unified outbound abstraction supporting WhatsApp Cloud Graph API and Baileys local business line sockets.
+

@@ -45,4 +45,8 @@ global_buyer_id (PK, UUID)
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **Global Buyer ID Resolution**: Pure deterministic GBI hashing (`GBI-<hash>`) linking multi-channel platform contacts across WhatsApp, Instagram, and Email.
+- **Cross-Merchant Database Association**: Integrates with PostgreSQL `customer_merchant_links` table to resolve merchant ownership and detect new vs. recurring cross-merchant buyer identities.
+

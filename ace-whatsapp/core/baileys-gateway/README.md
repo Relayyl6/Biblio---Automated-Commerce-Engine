@@ -123,3 +123,15 @@ See [`infra/schema.sql`](../../../../infra/schema.sql) for full DDL.
 | `status_log` | Immutable audit log of every Status/Story post |
 | `status_post_queue` | Pending posts awaiting merchant approval (when `approve_before_post = true`) |
 | `products.last_posted_at` | Tracks when each product was last posted to Status (for the cron rotation) |
+
+---
+
+## Status
+
+`[x] Implemented & Active`
+
+- **Baileys WebSocket Engine**: Multi-session manager storing auth state durably in Redis with QR / pairing-code onboarding (`POST /pair`).
+- **Multimodal Inventory Ingestion**: Ingests vendor push images and audio voice notes, parses structured catalog attributes via Groq Vision (`llama-3.2-11b-vision-preview`) and ONNX Whisper transcription, and pushes analytics to `DataIntelligenceEngine`.
+- **Auto-Status Dispatcher**: Supports immediate reactive posting (`postProductToStatus`), delayed scheduled status posts (`post in 30 minutes`), and round-robin cron rotations.
+- **Transport Routing**: Classifies vendor push vs. customer messages and bridges directly into the BullMQ conversation turn pipeline.
+

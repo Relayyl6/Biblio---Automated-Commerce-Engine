@@ -241,4 +241,4 @@ create index status_queue_pending_idx
 -- Add vendor-push columns to products (idempotent with IF NOT EXISTS).
 -- 'source' already exists from catalog-sync — add 'last_posted_at' for the Status cron.
 alter table products
-  add column if not exists last_posted_at timestamptz;
+  add column if not exists last_posted_at timestamptz;

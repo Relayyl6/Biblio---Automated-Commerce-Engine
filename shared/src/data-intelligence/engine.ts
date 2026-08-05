@@ -119,6 +119,59 @@ export class DataIntelligenceEngine {
   }
 
   /**
+   * Log AI token consumption per merchant for cost attribution and billing.
+   */
+  public async logTokenUsage(payload: {
+    service: string;
+    merchantId: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+  }): Promise<void> {
+    const total = payload.promptTokens + payload.completionTokens;
+    console.info(
+      `[DataIntel] 🤖 TokenUsage [${payload.service}]: merchant=${payload.merchantId} ` +
+      `model=${payload.model} prompt=${payload.promptTokens} completion=${payload.completionTokens} total=${total}`
+    );
+    await this.auditLog({
+      service: payload.service,
+      merchantId: payload.merchantId,
+      action: "llm_token_usage",
+      metadata: {
+        model: payload.model,
+        promptTokens: payload.promptTokens,
+        completionTokens: payload.completionTokens,
+        total,
+      },
+    });
+  }
+
+  /**
+   * Capture inventory intake events across vendor channels (WhatsApp, webhooks, voice).
+   * Feeds the FMCG product intel stream.
+   */
+  public async logInventoryIngestion(payload: {
+    merchantId: string;
+    vendorId: string;
+    sku: string;
+    productName: string;
+    price: number | null;
+    stock: number;
+    source: "whatsapp_voice" | "whatsapp_image" | "manual" | "catalog_sync";
+  }): Promise<void> {
+    console.info(
+      `[DataIntel] 📦 InventoryIngestion: merchant=${payload.merchantId} vendor=${payload.vendorId} ` +
+      `sku=${payload.sku} price=₦${payload.price ?? 0} stock=${payload.stock} source=${payload.source}`
+    );
+    await this.auditLog({
+      service: "baileys-gateway",
+      merchantId: payload.merchantId,
+      action: "inventory_ingested",
+      metadata: payload as Record<string, unknown>,
+    });
+  }
+
+  /**
    * Internal mechanism to flag behavioral anomalies across the network.
    */
   private flagAnomaly(merchantId: string, anomalyType: string, context: unknown) {
@@ -129,3 +182,4 @@ export class DataIntelligenceEngine {
 
 // Export singleton instance for immediate use
 export const dataIntelligence = DataIntelligenceEngine.getInstance();
+

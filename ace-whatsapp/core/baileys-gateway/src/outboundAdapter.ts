@@ -142,6 +142,9 @@ export async function markMessageAsRead(
 // ─── JID helper ───────────────────────────────────────────────────────────────
 
 function toJid(phone: string): string {
+  if (phone.endsWith("@lid") || phone.endsWith("@g.us")) {
+    return phone;
+  }
   // Strip any existing suffix and re-apply the standard DM suffix
   // We use jidNormalizedUser to safely strip device suffixes (e.g. :1) if a full JID is passed
   const normalized = phone.includes("@") ? jidNormalizedUser(phone) : phone;

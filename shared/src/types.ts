@@ -13,6 +13,38 @@
 // `status` is a string but state-machine emits an enum. One source of truth
 // for these shapes removes an entire category of integration bugs.
 
+export type MessageContent =
+  | {
+      type: "text";
+      text: string;
+      /** Text of the message being replied to, if this is a reply (contextInfo.quotedMessage) */
+      quotedText?: string;
+    }
+  | {
+      type: "audio";
+      mediaId?: string;
+      mediaUrl?: string;
+      /**
+       * Whisper transcript resolved by mediaProcessor.ts before enqueuing.
+       * When present, the agent loop uses this instead of a "[voice note]" placeholder.
+       */
+      transcript?: string;
+    }
+  | {
+      type: "image";
+      mediaId?: string;
+      mediaUrl?: string;
+      caption?: string;
+      /**
+       * Base64-encoded image bytes resolved by mediaProcessor.ts before enqueuing.
+       * When present, passed directly to Claude/Groq Vision as an image content block.
+       */
+      base64?: string;
+      /** MIME type of the image, e.g. "image/jpeg". Required when base64 is present. */
+      mimeType?: string;
+    }
+  | { type: "interactive"; payload: unknown };
+
 /** Raw webhook payload, normalized from WhatsApp's verbose Graph API shape. (Legacy Phase 1) */
 export interface InboundMessage {
   /** WhatsApp message ID — used for idempotency dedup */
@@ -21,38 +53,11 @@ export interface InboundMessage {
   fromPhone: string;
   /** Your business phone number ID this came in on */
   toPhoneNumberId: string;
+  /** Merchant ID mapped to this phone number */
+  merchantId?: string;
   /** Unix ms timestamp from WhatsApp */
   timestamp: number;
-  content:
-    | {
-        type: "text";
-        text: string;
-        /** Text of the message being replied to, if this is a reply (contextInfo.quotedMessage) */
-        quotedText?: string;
-      }
-    | {
-        type: "audio";
-        mediaId: string;
-        /**
-         * Whisper transcript resolved by mediaProcessor.ts before enqueuing.
-         * When present, the agent loop uses this instead of a "[voice note]" placeholder.
-         */
-        transcript?: string;
-      }
-    | {
-        type: "image";
-        mediaId: string;
-        caption?: string;
-        /**
-         * Base64-encoded image bytes resolved by mediaProcessor.ts before enqueuing.
-         * When present, passed directly to Claude Vision as an image content block.
-         */
-        base64?: string;
-        /** MIME type of the image, e.g. "image/jpeg". Required when base64 is present. */
-        mimeType?: string;
-      }
-    | { type: "interactive"; payload: unknown };
-
+  content: MessageContent;
 }
 
 export type PlatformChannel = "whatsapp" | "instagram" | "facebook" | "telegram" | "tiktok" | "email";
@@ -66,11 +71,7 @@ export interface UnifiedMessage {
   /** The merchant's identifier on that platform */
   recipientId: string;
   timestamp: number;
-  content:
-    | { type: "text"; text: string }
-    | { type: "audio"; mediaUrl?: string; mediaId?: string }
-    | { type: "image"; mediaUrl?: string; mediaId?: string; caption?: string }
-    | { type: "interactive"; payload: unknown };
+  content: MessageContent;
 }
 
 /**

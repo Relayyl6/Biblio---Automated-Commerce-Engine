@@ -25,22 +25,31 @@
 // - Out-of-stock and made-to-order are explicitly supported availability states
 // - Confidence: if price is ambiguous, set to null rather than guess wrong
 
-import Anthropic from "@anthropic-ai/sdk";
+import Groq from "groq-sdk";
 import type { WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { downloadMediaMessage } from "@whiskeysockets/baileys";
 import P from "pino";
 import { sql } from "@ace/shared/clients";
+import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import type { VendorConfig } from "./sessionManager.js";
 import { postProductToStatus } from "./statusPoster.js";
 
+
 const logger = P({ level: "info" });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+let groqClient: Groq | null = null;
+function getGroq(): Groq {
+  if (!groqClient) {
+    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY || "" });
+  }
+  return groqClient;
+}
 
 // ─── Parsed output shape from Claude ─────────────────────────────────────────
 
 interface ParsedProduct {
   product_name: string;
   price: number | null;   // null if price not found in caption/image
+  stock: number | null;   // null if stock not mentioned
   description: string;
   availability: "in_stock" | "out_of_stock" | "made_to_order";
   currency: string;
@@ -103,7 +112,23 @@ function parsePostInstruction(raw: string): { content: string; instruction: Post
   return { content: raw, instruction: { type: "none" } };
 }
 
-// ─── Main pipeline ────────────────────────────────────────────────────────────
+interface InflightItem {
+  id: string;
+  text: string;
+  imageBuffer: Buffer | null;
+  audioTranscript: string | null;
+}
+
+interface InflightVendorBuffer {
+  items: InflightItem[];
+  timer: NodeJS.Timeout | null;
+  senderJid: string;
+}
+
+const vendorBuffers = new Map<string, InflightVendorBuffer>();
+const VENDOR_DEBOUNCE_MS = 10_000; // 10-second sliding debounce window
+
+// ─── Main pipeline with 10-second Sliding Debounce ───────────────────────────
 
 export async function parseVendorSubmission(
   msg: WAMessage,
@@ -111,7 +136,7 @@ export async function parseVendorSubmission(
   sock: WASocket
 ): Promise<void> {
   const msgContent = msg.message;
-  const senderJid = msg.key.remoteJid!;
+  const senderJid = msg.key.remoteJid || (vendor.business_line_number ? `${vendor.business_line_number}@s.whatsapp.net` : "");
 
   // ── Detect submission type ────────────────────────────────────────────────
   const hasImage = !!msgContent?.imageMessage;
@@ -122,16 +147,13 @@ export async function parseVendorSubmission(
     msgContent?.imageMessage?.caption ||
     "";
 
-  // Nothing useful in this message
-  if (!hasImage && !hasAudio && !rawText.trim()) {
+  // Standalone status command
+  if (!hasImage && !hasAudio && /^status\s+(on|off)$/i.test(rawText.trim())) {
     await handleTextOnlySubmission(msg, senderJid, sock);
     return;
   }
 
-  // ── Parse post instruction from text/caption ──────────────────────────────
-  const { content: cleanContent, instruction } = parsePostInstruction(rawText);
-
-  // ── Acquire media ─────────────────────────────────────────────────────────
+  // ── Acquire media immediately before buffering ───────────────────────────
   let imageBuffer: Buffer | null = null;
   let audioTranscript: string | null = null;
 
@@ -150,7 +172,6 @@ export async function parseVendorSubmission(
   if (hasAudio) {
     try {
       const audioBuffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
-      // Lazy-import to avoid loading the heavy ONNX model on boot
       const { transcribeBuffer } = await import("./mediaProcessor.js");
       audioTranscript = await transcribeBuffer(audioBuffer);
     } catch (err) {
@@ -158,30 +179,116 @@ export async function parseVendorSubmission(
     }
   }
 
-  // If vendor sent audio but no image, they're describing a product verbally
-  // Build a text-based extraction instead
-  const extractionText = audioTranscript
-    ? `Voice note: ${audioTranscript}\n${cleanContent}`.trim()
-    : cleanContent;
+  // ── Enqueue into Vendor Debounce Buffer ────────────────────────────────────
+  let inflight = vendorBuffers.get(vendor.id);
+  if (!inflight) {
+    inflight = {
+      items: [],
+      timer: null,
+      senderJid,
+    };
+    vendorBuffers.set(vendor.id, inflight);
+  }
 
-  // ── Claude extraction ─────────────────────────────────────────────────────
+  inflight.items.push({
+    id: msg.key.id || String(Date.now()),
+    text: rawText.trim(),
+    imageBuffer,
+    audioTranscript,
+  });
+
+  // Reset 10-second sliding debounce timer
+  if (inflight.timer) {
+    clearTimeout(inflight.timer);
+  }
+
+  logger.info(
+    { vendorId: vendor.id, bufferedCount: inflight.items.length, debounceMs: VENDOR_DEBOUNCE_MS },
+    "Vendor message buffered in 10s debounce window"
+  );
+
+  inflight.timer = setTimeout(async () => {
+    await flushVendorBuffer(vendor, sock);
+  }, VENDOR_DEBOUNCE_MS);
+}
+
+/**
+ * Flushes and processes all buffered messages for a vendor into a single inventory entry.
+ */
+export async function flushVendorBuffer(
+  vendor: VendorConfig,
+  sock: WASocket
+): Promise<void> {
+  const inflight = vendorBuffers.get(vendor.id);
+  if (!inflight || inflight.items.length === 0) {
+    if (inflight?.timer) clearTimeout(inflight.timer);
+    vendorBuffers.delete(vendor.id);
+    return;
+  }
+
+  if (inflight.timer) clearTimeout(inflight.timer);
+  vendorBuffers.delete(vendor.id);
+
+  await processGroupedVendorSubmission(inflight.items, inflight.senderJid, vendor, sock);
+}
+
+/**
+ * Parses and saves the consolidated inventory item.
+ */
+async function processGroupedVendorSubmission(
+  items: InflightItem[],
+  senderJid: string,
+  vendor: VendorConfig,
+  sock: WASocket
+): Promise<void> {
+  // Combine all texts and captions
+  const combinedTexts = items
+    .map(i => i.text)
+    .filter(Boolean)
+    .join("\n");
+
+  // Combine audio transcripts
+  const combinedTranscripts = items
+    .map(i => i.audioTranscript)
+    .filter(Boolean)
+    .join("\n");
+
+  // First non-null image buffer
+  const imageBuffer = items.find(i => i.imageBuffer)?.imageBuffer || null;
+  const primaryMessageId = items[0]?.id || String(Date.now());
+
+  const fullRaw = [
+    combinedTranscripts ? `Voice note: ${combinedTranscripts}` : "",
+    combinedTexts,
+  ].filter(Boolean).join("\n");
+
+  if (!imageBuffer && !fullRaw.trim()) {
+    return;
+  }
+
+  // Parse post instruction from combined text
+  const { content: cleanContent, instruction } = parsePostInstruction(fullRaw);
+
+  // ── Groq extraction with full consolidated context ────────────────────────
   let parsed: ParsedProduct;
   try {
-    parsed = await parseWithClaude(imageBuffer, extractionText);
+    parsed = await parseWithGroq(imageBuffer, cleanContent);
   } catch (err) {
-    logger.error({ err, vendorId: vendor.id, extractionText }, "Claude parse failed");
-    await sock.sendMessage(senderJid, {
-      text:
-        "❌ Couldn't extract product details.\n\n" +
-        "Please include the price in your caption, for example:\n" +
-        '"Ankara fabric – ₦8,000" or "Gown – 15k"',
-    });
+    logger.error({ err, vendorId: vendor.id, cleanContent }, "Groq parse failed on grouped submission");
+    if (senderJid) {
+      await sock.sendMessage(senderJid, {
+        text:
+          "❌ Couldn't extract product details from your submission.\n\n" +
+          "Please include the price, for example:\n" +
+          '"Ankara fabric – ₦8,000" or "Gown – 15k"',
+      });
+    }
     return;
   }
 
   // ── Upload image ──────────────────────────────────────────────────────────
   const imageUrl = imageBuffer
-    ? await uploadImage(imageBuffer, vendor.id, msg.key.id!)
+    ? await uploadImage(imageBuffer, vendor.id, primaryMessageId)
     : null;
 
   // ── Upsert into products ──────────────────────────────────────────────────
@@ -199,7 +306,7 @@ export async function parseVendorSubmission(
       ${parsed.price ?? 0},
       ${parsed.description},
       ${imageUrl},
-      999,
+      ${parsed.stock ?? 1},
       ${parsed.currency},
       true,
       'vendor_push',
@@ -218,14 +325,25 @@ export async function parseVendorSubmission(
 
   logger.info(
     { sku, vendorId: vendor.id, productName: parsed.product_name, price: parsed.price },
-    "Product upserted from vendor push"
+    "Grouped product upserted from vendor push"
   );
+
+  // Telemetry: Record product intelligence event
+  dataIntelligence.logInventoryIngestion({
+    merchantId: vendor.merchant_id,
+    vendorId: vendor.id,
+    sku,
+    productName: parsed.product_name,
+    price: parsed.price,
+    stock: parsed.stock ?? 1,
+    source: combinedTranscripts ? "whatsapp_voice" : "whatsapp_image",
+  }).catch(() => {});
 
   // ── Handle post instruction ───────────────────────────────────────────────
   const statusNote = await scheduleOrSendPost(
     instruction,
     sock,
-    { sku, ...parsed, image_url: imageUrl },
+    { sku, ...parsed, image_url: imageUrl, imageBuffer },
     vendor
   );
 
@@ -235,15 +353,17 @@ export async function parseVendorSubmission(
     : "⚠️ No price found — please set it in your dashboard";
 
   const confirmationLines = [
-    `✅ *${parsed.product_name}* added to your shop`,
+    `✅ *${parsed.product_name}* added to your shop inventory`,
     `💰 Price: ${priceDisplay}`,
     `📦 Availability: ${parsed.availability.replace(/_/g, " ")}`,
     statusNote,
   ].filter(Boolean);
 
-  await sock.sendMessage(senderJid, {
-    text: confirmationLines.join("\n"),
-  });
+  if (senderJid) {
+    await sock.sendMessage(senderJid, {
+      text: confirmationLines.join("\n"),
+    });
+  }
 }
 
 // ─── Post routing based on instruction ───────────────────────────────────────
@@ -251,7 +371,7 @@ export async function parseVendorSubmission(
 async function scheduleOrSendPost(
   instruction: PostInstruction,
   sock: WASocket,
-  product: { sku: string; product_name: string; price: number | null; image_url: string | null },
+  product: { sku: string; product_name: string; price: number | null; image_url: string | null; imageBuffer?: Buffer | null },
   vendor: VendorConfig
 ): Promise<string> {
   switch (instruction.type) {
@@ -320,57 +440,142 @@ async function scheduleOrSendPost(
   }
 }
 
-// ─── Claude Vision Extraction ─────────────────────────────────────────────────
+// ─── Groq Extraction ─────────────────────────────────────────────────────────
 
-async function parseWithClaude(
+/**
+ * Robustly extract a JSON object from a model response that may be:
+ *   - Pure JSON: {"product_name": ...}
+ *   - Markdown-fenced: ```json\n{...}\n```
+ *   - JSON embedded in prose: "Here is the result: {...} Done."
+ */
+function extractJson(raw: string): Record<string, unknown> {
+  // 1. Try direct parse first
+  try { return JSON.parse(raw); } catch { /* fall through */ }
+
+  // 2. Strip markdown code fences
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) {
+    try { return JSON.parse(fenceMatch[1].trim()); } catch { /* fall through */ }
+  }
+
+  // 3. Extract first {...} block
+  const braceMatch = raw.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try { return JSON.parse(braceMatch[0]); } catch { /* fall through */ }
+  }
+
+  throw new Error(`Cannot extract JSON from model response: ${raw.slice(0, 200)}`);
+}
+
+/**
+ * Fallback price extractor from raw text — handles "320k", "320K", "₦320,000", "320000", "1.5m"
+ * Used when the model returns null price but there's clearly a price in the caption.
+ */
+function extractPriceFromText(text: string): number | null {
+  // e.g. "1.5m", "1.5M" → 1_500_000
+  const millionMatch = text.match(/(\d+(?:\.\d+)?)\s*m\b/i);
+  if (millionMatch) return Math.round(parseFloat(millionMatch[1]) * 1_000_000);
+
+  // e.g. "320k", "8K", "15k"
+  const kMatch = text.match(/(\d+(?:\.\d+)?)\s*k\b/i);
+  if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1_000);
+
+  // e.g. "₦8,500" or "8,500" or "8500"
+  const nairaMatch = text.match(/[₦#]?\s*(\d{1,3}(?:[,_]\d{3})+|\d{4,})/);
+  if (nairaMatch) return parseInt(nairaMatch[1].replace(/[,_]/g, ""), 10);
+
+  return null;
+}
+
+async function parseWithGroq(
   imageBuffer: Buffer | null,
   textContext: string
 ): Promise<ParsedProduct> {
-  const userContent: Anthropic.MessageParam["content"] = [];
+  const client = getGroq();
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [];
 
-  // Include image if we have one
+  let rawContent: string;
+
   if (imageBuffer) {
     const imageBase64 = imageBuffer.toString("base64");
-    userContent.push({
-      type: "image",
-      source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
+    messages.push({
+      role: "user",
+      content: [
+        { type: "text", text: GROQ_PARSE_PROMPT(textContext) },
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:image/jpeg;base64,${imageBase64}`,
+          },
+        },
+      ],
     });
+
+    // NOTE: llama-3.2-11b-vision-preview does NOT support response_format JSON mode.
+    // We ask for JSON in the prompt and parse robustly instead.
+    try {
+      const response = await client.chat.completions.create({
+        model: "llama-3.2-11b-vision-preview",
+        max_tokens: 512,
+        temperature: 0.1,
+        messages,
+      });
+      rawContent = response.choices[0]?.message?.content ?? "{}";
+    } catch (err: any) {
+      if (err?.error?.error?.code === "model_decommissioned" || err?.status === 400 || err?.status === 404) {
+        // Groq took their vision models offline. Fallback to text-only extraction using the caption text.
+        const textResponse = await client.chat.completions.create({
+          model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+          max_tokens: 512,
+          temperature: 0.1,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: GROQ_PARSE_PROMPT(textContext) }],
+        });
+        rawContent = textResponse.choices[0]?.message?.content ?? "{}";
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    // Text-only path — text models DO support JSON mode
+    messages.push({
+      role: "user",
+      content: GROQ_PARSE_PROMPT(textContext),
+    });
+
+    const response = await client.chat.completions.create({
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      max_tokens: 512,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages,
+    });
+    rawContent = response.choices[0]?.message?.content ?? "{}";
   }
 
-  userContent.push({ type: "text", text: CLAUDE_PARSE_PROMPT(textContext) });
+  const parsed = extractJson(rawContent) as Partial<ParsedProduct>;
 
-  const response = await anthropic.messages.create({
-    model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-5",
-    max_tokens: 512,
-    messages: [{ role: "user", content: userContent }],
-  });
-
-  const text =
-    response.content[0].type === "text" ? response.content[0].text : "";
-
-  // Extract the first JSON object from Claude's response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Claude returned no JSON block");
-  }
-
-  const parsed = JSON.parse(jsonMatch[0]) as ParsedProduct;
-
-  // Validate the required fields
   if (!parsed.product_name || typeof parsed.product_name !== "string") {
-    throw new Error("Claude returned no product_name");
+    throw new Error("Groq returned no product_name");
+  }
+
+  // If the model missed the price, try to extract it ourselves from the caption
+  let price: number | null = typeof parsed.price === "number" ? Math.round(parsed.price) : null;
+  if (price === null && textContext) {
+    price = extractPriceFromText(textContext);
   }
 
   return {
     product_name: parsed.product_name.trim(),
-    price: typeof parsed.price === "number" ? Math.round(parsed.price) : null,
-    description: parsed.description ?? "",
-    availability: parsed.availability ?? "in_stock",
-    currency: parsed.currency ?? "NGN",
+    price,
+    stock: (parsed.stock as number | null) ?? null,
+    description: (parsed.description as string) ?? "",
+    availability: (parsed.availability as ParsedProduct["availability"]) ?? "in_stock",
+    currency: (parsed.currency as string) ?? "NGN",
   };
 }
 
-const CLAUDE_PARSE_PROMPT = (context: string) => `
+const GROQ_PARSE_PROMPT = (context: string) => `
 You are a product cataloguing assistant for Nigerian informal commerce merchants.
 
 The vendor submitted this product (text/caption/voice transcript):
@@ -381,6 +586,7 @@ Analyse the image (if provided) and the text carefully. Return ONLY valid JSON w
 {
   "product_name": "string — concise, searchable product name (e.g. 'Red Ankara Fabric', 'Straight-leg Jeans', 'Peak Milk 400g')",
   "price": number_or_null — price in Nigerian Naira as a plain integer. Extract from caption or visible price tags. Set null if not found.,
+  "stock": number_or_null — available stock quantity as a plain integer. Extract from caption if explicitly stated (e.g., '5 pieces left' -> 5, '3 available' -> 3). Set null if not found.,
   "description": "string — 1-2 sentences that help a WhatsApp customer decide to buy. Mention visible details: fabric type, colours, sizes, occasion, quality signals.",
   "availability": "in_stock" | "out_of_stock" | "made_to_order",
   "currency": "NGN"

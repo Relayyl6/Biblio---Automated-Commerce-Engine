@@ -24,8 +24,10 @@ const ingestionSchema = sharedSchema.extend({
 });
 
 const negotiatorSchema = sharedSchema.extend({
-  ANTHROPIC_API_KEY: z.string().min(1),
-  ANTHROPIC_MODEL: z.string().default("claude-sonnet-5"),
+  GROQ_API_KEY: z.string().min(1).default(() => process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY || ""),
+  GROQ_MODEL: z.string().default("llama-3.3-70b-versatile"),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().optional(),
 });
 
 const commsSchema = sharedSchema.extend({

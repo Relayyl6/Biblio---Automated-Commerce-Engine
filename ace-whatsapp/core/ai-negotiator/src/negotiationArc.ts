@@ -1,40 +1,54 @@
 // core/ai-negotiator/src/negotiationArc.ts
 //
-// The NegotiationArc is the per-customer strategic state of a live haggle.
-// It is hot state (read/written every turn) and lives in Redis — see the long
-// note at the top of agentLoop.ts for why Redis and not Postgres.
+// ─── THE NEGOTIATION ARC STATE ────────────────────────────────────────────────
 //
-// This module is PURE: the arc reducer (`advanceArc`) and the tactic-guard
-// function (`availableTactics`) have no I/O. tools.ts calls them and persists
-// the result. Keeping them pure means the arc can be rebuilt deterministically
-// from a transcript if Redis ever loses it.
+// This is one of the trickier design problems in the whole system. The README
+// says: "manages position across the full arc within a single conversation
+// thread, even across multiple messages over hours."
 //
-// The arc interface matches what agentLoop.ts.createFreshArc() constructs and
-// reads; the ArcEvent names match the advanceArc() calls in tools.ts.
+// That "even across multiple messages over hours" is the key constraint. It
+// means this state CANNOT live in memory. A BullMQ job that fires at 2pm
+// has no idea what the customer and AI were discussing at 10am. The arc state
+// must be persisted, loaded at the start of each turn, and written back at the
+// end.
+//
+// WHY NOT JUST GIVE THE LLM THE FULL CONVERSATION HISTORY?
+// You could. And you should — but the arc state is DIFFERENT from the
+// conversation transcript. The transcript tells the LLM *what was said*;
+// the arc tells it *where we are strategically*:
+//   - "We're in COUNTER, the customer's last offer was ₦13,000"
+//   - "We already tried the Bundle Pivot and it was rejected"
+//   - "The scarcity signal was deployed at 10:42am"
+//
+// Without this, the model would re-read the transcript on every turn and
+// re-derive the tactical position — possible, but expensive and error-prone
+// (it might conclude "I haven't tried bundle pivot" when it actually has).
+// The arc is the agent's working memory of the *strategy*, separate from
+// the *conversation*.
+//
+// ─── ARC STATE MACHINE ───────────────────────────────────────────────────────
+//
+// Note that this is a DIFFERENT state machine from the OrderStateMachine.
+// The order machine tracks "what has happened to this order" (draft →
+// awaiting_payment → etc.). The arc machine tracks "where are we in the
+// negotiation" (anchor → counter → close). They run in parallel:
+//   - Arc machine: CLOSE fires → Order machine: QUOTE_CREATED
+//   - Arc machine: ESCALATE fires → Order machine: stays in no_order,
+//                                   merchant notification sent
 
-import type { AuthorizedPriceRange, CustomerTier } from "./pricingService";
+import type { CustomerTier, AuthorizedPriceRange } from "./pricingService";
+import type { Dialect } from "@ace/shared/types";
 
-// ─── Stages & Tactics ───────────────────────────────────────────────────────
 
-// The arc: ANCHOR → ACKNOWLEDGE → COUNTER → CLOSE / PIVOT / ESCALATE.
-// Terminal stages are close | escalate | abandoned — agentLoop checks this set
-// to decide whether to start a fresh arc on the next message.
 export type ArcStage =
-  | "anchor"
-  | "acknowledge"
-  | "counter"
-  | "pivot"
-  | "close"
-  | "escalate"
-  | "abandoned";
+  | "anchor"      // Opening — AI has stated the full price, waiting for customer response
+  | "acknowledge" // Customer has countered — AI is about to acknowledge before countering
+  | "counter"     // AI has made a counter-offer, customer hasn't responded yet
+  | "close"       // Deal terms agreed — moving to checkout
+  | "pivot"       // Customer below floor — attempting bundle or credit
+  | "escalate"    // All tactics exhausted — escalated to merchant
+  | "abandoned";  // Customer stopped responding
 
-export const TERMINAL_STAGES: ReadonlySet<ArcStage> = new Set<ArcStage>([
-  "close",
-  "escalate",
-  "abandoned",
-]);
-
-// The 6 merchant-approved tactics from the README.
 export type NegotiationTactic =
   | "relationship_anchor"
   | "bundle_pivot"
@@ -43,67 +57,239 @@ export type NegotiationTactic =
   | "urgency_window"
   | "soft_close";
 
-// ─── The Arc ────────────────────────────────────────────────────────────────
-
-export interface ArcTurn {
-  role: "agent" | "customer";
-  /** The price named on this turn, if any. */
+export interface NegotiationTurn {
+  role: "customer" | "agent";
+  message?: string;
   offer?: number;
-  /** The tactic deployed on this turn, if any. */
+  offeredPrice?: number;
   tactic?: NegotiationTactic;
-  at: number;
+  tacticUsed?: NegotiationTactic;
+  at?: number;
+  timestamp: number;
 }
 
 export interface NegotiationArc {
   sessionId: string;
   merchantId: string;
   customerId: string;
-  /** "TBD" until check_inventory resolves the real SKU. */
   productSku: string;
+
+  // Authorized range — loaded from pricingService at session start,
+  // stored here so we don't re-query merchant rules on every turn.
   anchorPrice: number;
   floor: number;
   tier: CustomerTier;
-  stage: ArcStage;
+  dialect?: Dialect;
 
+  // Position tracking
+  stage: ArcStage;
+  customerLastOffer?: number;   // Most recent explicit price customer named
+  agentLastOffer?: number;      // Most recent price agent proposed
   tacticsDeployed: NegotiationTactic[];
+
+  // Tactic availability guards — tracked here so model can't "un-deploy" a tactic
   bundlePivotAttempted: boolean;
   futureCreditAttempted: boolean;
   scarcitySignalDeployed: boolean;
+  urgencyWindowExpiresAt?: number; // Unix ms — for the countdown to be real
 
-  agentLastOffer?: number;
-  customerLastOffer?: number;
-  /** Epoch millis when an active urgency window expires. */
-  urgencyWindowExpiresAt?: number;
+  // Full message transcript — carried alongside the arc for context assembly
+  turns: NegotiationTurn[];
 
-  turns: ArcTurn[];
+  // Outcome tracking (set on terminal stages)
+  outcome?: "closed" | "below_floor_escalated" | "bundle_closed" | "abandoned";
+  finalPrice?: number;
+
   createdAt: number;
   updatedAt: number;
 }
 
-// ─── Arc Events (input to the reducer) ──────────────────────────────────────
+// ─── Arc Transitions ──────────────────────────────────────────────────────────
 //
-// These names + fields match the advanceArc() call sites in tools.ts.
+// Like the order state machine, arc transitions are pure functions. The
+// agent loop calls these AFTER the model produces its reply, using the
+// model's declared intent (via a tool call) to drive the transition.
+
+export class ArcTransitionError extends Error {
+  constructor(public readonly from: ArcStage, public readonly event: string, reason: string) {
+    super(`Illegal arc transition: ${event} from stage '${from}' — ${reason}`);
+    this.name = "ArcTransitionError";
+  }
+}
 
 export type ArcEvent =
+  | { type: "AGENT_ANCHORED"; agentPrice: number }
+  | { type: "CUSTOMER_COUNTERED"; customerOffer: number }
   | { type: "AGENT_COUNTERED"; agentOffer: number; tactic?: NegotiationTactic }
+  | { type: "DEAL_ACCEPTED"; finalPrice: number }
   | { type: "BUNDLE_PIVOTED"; agentOffer: number }
   | { type: "CREDIT_OFFERED"; creditAmount: number }
-  | { type: "DEAL_ACCEPTED"; finalPrice: number }
-  | { type: "ESCALATED_TO_MERCHANT" };
+  | { type: "ESCALATED_TO_MERCHANT" }
+  | { type: "CUSTOMER_ABANDONED" };
 
-// ─── Tactic Guards ──────────────────────────────────────────────────────────
-//
-// Returns the tactics that are LEGAL to deploy right now. The agent is told
-// which are available in its system prompt; deploy_tactic re-checks here so the
-// model can't deploy an exhausted/illegal tactic even if it tries.
+export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc {
+  const now = Date.now();
+
+  switch (event.type) {
+    case "AGENT_ANCHORED": {
+      if (arc.stage !== "anchor") {
+        throw new ArcTransitionError(arc.stage, event.type, "can only anchor from initial stage");
+      }
+      return {
+        ...arc,
+        stage: "acknowledge",
+        agentLastOffer: event.agentPrice,
+        updatedAt: now,
+      };
+    }
+
+    case "CUSTOMER_COUNTERED": {
+      return {
+        ...arc,
+        stage: "counter",
+        customerLastOffer: event.customerOffer,
+        turns: [
+          ...arc.turns,
+          {
+            role: "customer",
+            offer: event.customerOffer,
+            offeredPrice: event.customerOffer,
+            at: now,
+            timestamp: now,
+          },
+        ],
+        updatedAt: now,
+      };
+    }
+
+    case "AGENT_COUNTERED": {
+      const nextTactics = event.tactic ? addTactic(arc.tacticsDeployed, event.tactic) : arc.tacticsDeployed;
+      const isScarcity = event.tactic === "scarcity_signal";
+
+      return {
+        ...arc,
+        stage: "counter",
+        agentLastOffer: event.agentOffer,
+        tacticsDeployed: nextTactics,
+        scarcitySignalDeployed: arc.scarcitySignalDeployed || isScarcity,
+        turns: [
+          ...arc.turns,
+          {
+            role: "agent",
+            offer: event.agentOffer,
+            offeredPrice: event.agentOffer,
+            tactic: event.tactic,
+            tacticUsed: event.tactic,
+            at: now,
+            timestamp: now,
+          },
+        ],
+        updatedAt: now,
+      };
+    }
+
+    case "BUNDLE_PIVOTED": {
+      return {
+        ...arc,
+        stage: "pivot",
+        bundlePivotAttempted: true,
+        agentLastOffer: event.agentOffer,
+        tacticsDeployed: addTactic(arc.tacticsDeployed, "bundle_pivot"),
+        turns: [
+          ...arc.turns,
+          {
+            role: "agent",
+            offer: event.agentOffer,
+            offeredPrice: event.agentOffer,
+            tactic: "bundle_pivot",
+            tacticUsed: "bundle_pivot",
+            at: now,
+            timestamp: now,
+          },
+        ],
+        updatedAt: now,
+      };
+    }
+
+    case "CREDIT_OFFERED": {
+      return {
+        ...arc,
+        stage: "pivot",
+        futureCreditAttempted: true,
+        tacticsDeployed: addTactic(arc.tacticsDeployed, "future_credit"),
+        turns: [
+          ...arc.turns,
+          {
+            role: "agent",
+            tactic: "future_credit",
+            tacticUsed: "future_credit",
+            at: now,
+            timestamp: now,
+          },
+        ],
+        updatedAt: now,
+      };
+    }
+
+    case "DEAL_ACCEPTED": {
+      return {
+        ...arc,
+        stage: "close",
+        outcome: "closed",
+        finalPrice: event.finalPrice,
+        agentLastOffer: event.finalPrice,
+        turns: [
+          ...arc.turns,
+          {
+            role: "agent",
+            offer: event.finalPrice,
+            offeredPrice: event.finalPrice,
+            at: now,
+            timestamp: now,
+          },
+        ],
+        updatedAt: now,
+      };
+    }
+
+    case "ESCALATED_TO_MERCHANT": {
+      return {
+        ...arc,
+        stage: "escalate",
+        outcome: "below_floor_escalated",
+        updatedAt: now,
+      };
+    }
+
+    case "CUSTOMER_ABANDONED": {
+      return {
+        ...arc,
+        stage: "abandoned",
+        outcome: "abandoned",
+        updatedAt: now,
+      };
+    }
+  }
+}
+
+function addTactic(
+  deployed: NegotiationTactic[],
+  tactic: NegotiationTactic,
+): NegotiationTactic[] {
+  return deployed.includes(tactic) ? deployed : [...deployed, tactic];
+}
+
+// ─── Tactic Guards ────────────────────────────────────────────────────────────
 
 const LOW_STOCK_THRESHOLD = 5;
 
-export function availableTactics(args: {
+export interface TacticGuardContext {
   arc: NegotiationArc;
   currentStockLevel: number;
-}): NegotiationTactic[] {
-  const { arc, currentStockLevel } = args;
+}
+
+export function availableTactics(ctx: TacticGuardContext): NegotiationTactic[] {
+  const { arc, currentStockLevel } = ctx;
   const deployed = new Set(arc.tacticsDeployed);
   const out: NegotiationTactic[] = [];
 
@@ -113,17 +299,22 @@ export function availableTactics(args: {
   }
 
   // Bundle pivot and future credit are one-shot escalation steps.
-  if (!arc.bundlePivotAttempted) out.push("bundle_pivot");
-  if (!arc.futureCreditAttempted) out.push("future_credit");
+  if (!arc.bundlePivotAttempted) {
+    out.push("bundle_pivot");
+  }
 
   // Inventory-VERIFIED scarcity: only honest when stock is genuinely low (>0
-  // but scarce). Never claim scarcity we can't back with real inventory.
+  // but scarce <= 5). Never claim scarcity we can't back with real inventory.
   if (
     !arc.scarcitySignalDeployed &&
     currentStockLevel > 0 &&
     currentStockLevel <= LOW_STOCK_THRESHOLD
   ) {
     out.push("scarcity_signal");
+  }
+
+  if (!arc.futureCreditAttempted && arc.tier !== "new") {
+    out.push("future_credit");
   }
 
   // Urgency window: only if one isn't already running.
@@ -139,70 +330,28 @@ export function availableTactics(args: {
   return out;
 }
 
-// ─── Reducer ────────────────────────────────────────────────────────────────
+export const TERMINAL_STAGES = new Set<ArcStage>(["close", "escalate", "abandoned"]);
 
-export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc {
-  const next: NegotiationArc = { ...arc, updatedAt: Date.now() };
+// ─── Discount Rate Limiting (BIBLO Flaw 3: anti-haggling) ────────────────────
+//
+// "After 3 negotiation attempts in one conversation: lock pricing at current
+// offer, no further negotiation." An attempt is a price the AGENT has put on
+// the table — every AGENT_COUNTERED/BUNDLE_PIVOTED/DEAL_ACCEPTED turn that
+// named an offer. Customer counters don't count against the limit; the agent's
+// own concessions do.
+export const MAX_NEGOTIATION_ATTEMPTS = 3;
 
-  switch (event.type) {
-    case "AGENT_COUNTERED": {
-      next.agentLastOffer = event.agentOffer;
-      if (event.tactic) {
-        next.tacticsDeployed = addTactic(arc.tacticsDeployed, event.tactic);
-        if (event.tactic === "scarcity_signal") next.scarcitySignalDeployed = true;
-      }
-      if (arc.stage === "anchor" || arc.stage === "acknowledge") next.stage = "counter";
-      next.turns = [
-        ...arc.turns,
-        { role: "agent", offer: event.agentOffer, tactic: event.tactic, at: next.updatedAt },
-      ];
-      return next;
-    }
-
-    case "BUNDLE_PIVOTED":
-      next.agentLastOffer = event.agentOffer;
-      next.bundlePivotAttempted = true;
-      next.tacticsDeployed = addTactic(arc.tacticsDeployed, "bundle_pivot");
-      next.stage = "pivot";
-      next.turns = [
-        ...arc.turns,
-        { role: "agent", offer: event.agentOffer, tactic: "bundle_pivot", at: next.updatedAt },
-      ];
-      return next;
-
-    case "CREDIT_OFFERED":
-      next.futureCreditAttempted = true;
-      next.tacticsDeployed = addTactic(arc.tacticsDeployed, "future_credit");
-      next.stage = "pivot";
-      next.turns = [
-        ...arc.turns,
-        { role: "agent", tactic: "future_credit", at: next.updatedAt },
-      ];
-      return next;
-
-    case "DEAL_ACCEPTED":
-      next.stage = "close";
-      next.agentLastOffer = event.finalPrice;
-      next.turns = [
-        ...arc.turns,
-        { role: "agent", offer: event.finalPrice, at: next.updatedAt },
-      ];
-      return next;
-
-    case "ESCALATED_TO_MERCHANT":
-      next.stage = "escalate";
-      return next;
-
-    default:
-      return assertNeverArc(event);
-  }
+export function negotiationAttempts(arc: NegotiationArc): number {
+  return arc.turns.filter((t) => t.role === "agent" && (t.offer !== undefined || t.offeredPrice !== undefined)).length;
 }
 
-function addTactic(
-  deployed: NegotiationTactic[],
-  tactic: NegotiationTactic,
-): NegotiationTactic[] {
-  return deployed.includes(tactic) ? deployed : [...deployed, tactic];
+/**
+ * True once the agent has made MAX_NEGOTIATION_ATTEMPTS priced offers. While
+ * locked, the negotiator may still hold or close at its current best offer, but
+ * propose_price refuses any FURTHER concession (a price below agentLastOffer).
+ */
+export function discountLocked(arc: NegotiationArc): boolean {
+  return negotiationAttempts(arc) >= MAX_NEGOTIATION_ATTEMPTS;
 }
 
 // ─── Range Projection (single source of truth for price) ─────────────────────
@@ -212,10 +361,6 @@ function addTactic(
 // Those numbers originate in pricingService.computeAuthorizedRange(); this pure
 // function copies them onto the arc once the agent loop has resolved the real
 // product price (check_inventory) and customer tier (get_customer_profile).
-//
-// Before this existed, the arc kept its createFreshArc() zeros forever while
-// validation used a separately-computed range — two disagreeing sources of
-// truth. Projecting the range onto the arc collapses them into one.
 export function projectRangeOntoArc(
   arc: NegotiationArc,
   range: AuthorizedPriceRange,
@@ -229,30 +374,4 @@ export function projectRangeOntoArc(
     productSku: productSku ?? arc.productSku,
     updatedAt: Date.now(),
   };
-}
-
-// ─── Discount Rate Limiting (BIBLO Flaw 3: anti-haggling) ────────────────────
-//
-// "After 3 negotiation attempts in one conversation: lock pricing at current
-// offer, no further negotiation." An attempt is a price the AGENT has put on
-// the table — every AGENT_COUNTERED/BUNDLE_PIVOTED/DEAL_ACCEPTED turn that
-// named an offer. Customer counters don't count against the limit; the agent's
-// own concessions do.
-export const MAX_NEGOTIATION_ATTEMPTS = 3;
-
-export function negotiationAttempts(arc: NegotiationArc): number {
-  return arc.turns.filter((t) => t.role === "agent" && t.offer !== undefined).length;
-}
-
-/**
- * True once the agent has made MAX_NEGOTIATION_ATTEMPTS priced offers. While
- * locked, the negotiator may still hold or close at its current best offer, but
- * propose_price refuses any FURTHER concession (a price below agentLastOffer).
- */
-export function discountLocked(arc: NegotiationArc): boolean {
-  return negotiationAttempts(arc) >= MAX_NEGOTIATION_ATTEMPTS;
-}
-
-function assertNeverArc(event: never): never {
-  throw new Error(`Unhandled ArcEvent: ${JSON.stringify(event)}`);
 }

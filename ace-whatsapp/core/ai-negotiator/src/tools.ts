@@ -22,7 +22,9 @@
 //                              code, not just the prompt.
 
 import { sql, jsonb } from "@ace/shared/clients";
+import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import { transition, TransitionError } from "../../state-machine/src/orderStateMachine";
+
 import {
   validateProposedPrice,
   validateBundlePivot,
@@ -500,6 +502,17 @@ function closeDeal(finalPrice: number, items: OrderItem[], ctx: ToolContext): To
   try {
     const newOrderState = transition(ctx.orderState, { type: "QUOTE_CREATED", orderId, items, total: finalPrice });
     const newArc = advanceArc(ctx.arc, { type: "DEAL_ACCEPTED", finalPrice });
+
+    // Telemetry: Capture state transition for TrustScore signals
+    dataIntelligence.captureOrderStateChange({
+      merchantId: ctx.merchantId,
+      customerId: ctx.customerId,
+      orderId,
+      fromState: ctx.orderState.status,
+      toState: newOrderState.status,
+      timestamp: Date.now(),
+    }).catch(() => {});
+
     return { output: { ok: true, orderId, finalPrice }, newOrderState, newArc };
   } catch (err) {
     if (err instanceof TransitionError) return { output: { ok: false, error: err.message } };
@@ -558,12 +571,24 @@ function issuePaymentLink(ctx: ToolContext): ToolResult {
       virtualAccountNumber,
       expiresAt,
     });
+
+    // Telemetry: Capture payment link issuance state transition
+    dataIntelligence.captureOrderStateChange({
+      merchantId: ctx.merchantId,
+      customerId: ctx.customerId,
+      orderId: ctx.orderState.orderId,
+      fromState: ctx.orderState.status,
+      toState: newOrderState.status,
+      timestamp: Date.now(),
+    }).catch(() => {});
+
     return { output: { ok: true, virtualAccountNumber, expiresInMinutes: 15 }, newOrderState };
   } catch (err) {
     if (err instanceof TransitionError) return { output: { ok: false, error: err.message } };
     throw err;
   }
 }
+
 
 async function getCurrentStock(merchantId: string, sku: string): Promise<number> {
   const rows = await sql<{ stock: number }[]>`

@@ -33,12 +33,13 @@ import P from "pino";
 import { redis, sql } from "@ace/shared/clients";
 import { classifyAndRoute } from "./messageClassifier.js";
 
-const logger = P({ level: "debug" });
+const logger = P({ level: "info" });
 
 // ─── In-process session registry ─────────────────────────────────────────────
 // One entry per active vendor session. We don't need distributed state here
 // because all messages for a vendor flow to the same process that holds the socket.
 const sessions = new Map<string, WASocket>();
+const merchantToVendor = new Map<string, string>();
 const reconnectAttempts = new Map<string, number>();
 // Track vendors that need a post-515 reconnect to finalise pairing
 const pendingPairingRestart = new Set<string>();
@@ -110,6 +111,30 @@ function buildKeyStore(vendorId: string) {
   };
 }
 
+// ─── Retry helper ────────────────────────────────────────────────────────────
+// Retries an async operation with exponential backoff. Designed to survive
+// a cold Neon DB wake-up (which can take 2-3 seconds) without dropping messages.
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  maxAttempts = 4,
+  baseDelayMs = 2000
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === maxAttempts) break;
+      const delay = baseDelayMs * attempt; // 2s, 4s, 6s
+      logger.warn({ label, attempt, delay, err }, `Retrying after failure (attempt ${attempt}/${maxAttempts})`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 // ─── Vendor Config ────────────────────────────────────────────────────────────
 
 export interface VendorConfig {
@@ -117,7 +142,6 @@ export interface VendorConfig {
   merchant_id: string;
   business_line_number: string;
   personal_number: string;        // The vendor's OWN WhatsApp — product submissions come from here
-  notification_phone: string;
   auto_status_enabled: boolean;
   posting_frequency_hours: number;
   approve_before_post: boolean;
@@ -126,7 +150,7 @@ export interface VendorConfig {
 export async function loadVendorConfig(vendorId: string): Promise<VendorConfig> {
   const rows = await sql<VendorConfig[]>`
     SELECT id, merchant_id, business_line_number, personal_number,
-           notification_phone, auto_status_enabled, posting_frequency_hours,
+           auto_status_enabled, posting_frequency_hours,
            approve_before_post
     FROM vendors
     WHERE id = ${vendorId}
@@ -134,6 +158,75 @@ export async function loadVendorConfig(vendorId: string): Promise<VendorConfig> 
   `;
   if (!rows[0]) throw new Error(`Vendor ${vendorId} not found`);
   return rows[0];
+}
+
+/**
+ * Auto-provisions a merchant and vendor record if one does not already exist
+ * for the given phone number. Enables zero-configuration pairing for new merchants.
+ */
+export async function getOrCreateVendorByPhone(phoneNumber: string): Promise<VendorConfig> {
+  const cleanPhone = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
+
+  // 1. Try finding existing vendor by business_line_number or personal_number
+  const existing = await sql<VendorConfig[]>`
+    SELECT id, merchant_id, business_line_number, personal_number,
+           auto_status_enabled, posting_frequency_hours,
+           approve_before_post
+    FROM vendors
+    WHERE business_line_number = ${cleanPhone} OR personal_number = ${cleanPhone}
+    LIMIT 1
+  `;
+  if (existing[0]) {
+    return existing[0];
+  }
+
+  // 2. Check if a merchant exists with this phone or create one
+  const existingMerchant = await sql<{ id: string }[]>`
+    SELECT id FROM merchants WHERE phone = ${cleanPhone} LIMIT 1
+  `;
+
+  let merchantId = existingMerchant[0]?.id;
+  if (!merchantId) {
+    const merchantRows = await sql<{ id: string }[]>`
+      INSERT INTO merchants (
+        name, phone, currency, dialect, tone_guide
+      ) VALUES (
+        ${`Store +${cleanPhone}`}, ${cleanPhone}, 'NGN', 'pidgin',
+        'Warm, respectful Nigerian merchant. Fast, polite, no-nonsense.'
+      )
+      RETURNING id
+    `;
+    merchantId = merchantRows[0].id;
+
+    // Seed default pricing rules for this new merchant
+    await sql`
+      INSERT INTO merchant_pricing_rules (
+        merchant_id, max_discount_pct, bundle_discount_pct, loyalty_discount_pct,
+        floor_margin_pct, bulk_threshold_units, payment_method_discounts, dynamic_pricing_enabled
+      ) VALUES (
+        ${merchantId}, 0.20, 0.10, 0.15,
+        0.10, 3, '{"transfer": 0.05, "card": 0.0}'::jsonb, true
+      )
+      ON CONFLICT (merchant_id) DO NOTHING
+    `;
+  }
+
+  // 3. Create vendor record
+  const vendorRows = await sql<VendorConfig[]>`
+    INSERT INTO vendors (
+      merchant_id, business_line_number, personal_number,
+      session_status, auto_status_enabled, posting_frequency_hours, approve_before_post
+    ) VALUES (
+      ${merchantId}, ${cleanPhone}, ${cleanPhone},
+      'pending', false, 24, false
+    )
+    RETURNING id, merchant_id, business_line_number, personal_number,
+              auto_status_enabled, posting_frequency_hours,
+              approve_before_post
+  `;
+
+  logger.info({ phone: cleanPhone, vendorId: vendorRows[0].id, merchantId }, "Auto-provisioned new merchant and vendor");
+  return vendorRows[0];
 }
 
 // ─── Session Lifecycle ────────────────────────────────────────────────────────
@@ -171,7 +264,7 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       keys: makeCacheableSignalKeyStore(keyStore as any, logger),
     },
-    logger,
+    logger: P({ level: 'silent' }) as any,
     printQRInTerminal: false, // Always headless — we use pairing codes
     browser: ['Ubuntu', 'Chrome', '22.04.4'], // Standard browser signature to prevent 400 bad-request
     connectTimeoutMs: 60_000,
@@ -190,8 +283,13 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     },
   });
 
-  // Track immediately to prevent duplicate sockets
+  const vendor = await loadVendorConfig(vendorId).catch(() => null);
+
+  // Track immediately by both vendorId and merchant_id for multi-vendor routing
   sessions.set(vendorId, sock);
+  if (vendor?.merchant_id) {
+    sessions.set(vendor.merchant_id, sock);
+  }
 
   // ── CRITICAL: always save creds on every update ───────────────────────────
   // Failing to persist creds means the session is lost on the next restart
@@ -217,6 +315,9 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
       sessions.delete(vendorId);
+      if (vendor?.merchant_id) {
+        sessions.delete(vendor.merchant_id);
+      }
 
       // Update DB so the merchant dashboard reflects the true state
       await sql`
@@ -257,6 +358,12 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     if (connection === "open") {
       reconnectAttempts.set(vendorId, 0);
       sessions.set(vendorId, sock);
+      // Also register under merchant_id so outbound routing works by merchantId
+      const vendorCfg = await loadVendorConfig(vendorId).catch(() => null);
+      if (vendorCfg?.merchant_id) {
+        sessions.set(vendorCfg.merchant_id, sock);
+        logger.info({ vendorId, merchantId: vendorCfg.merchant_id }, "Session registered under merchantId for outbound routing");
+      }
       await sql`
         UPDATE vendors SET session_status = 'connected', updated_at = now()
         WHERE id = ${vendorId}
@@ -272,8 +379,29 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     if (type !== "notify") return;
 
     for (const msg of messages) {
-      // Skip messages we sent ourselves
-      if (msg.key.fromMe || !msg.message) continue;
+      if (!msg.message) continue;
+
+      const rawText = (
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        msg.message.videoMessage?.caption ||
+        msg.message.documentMessage?.caption ||
+        ""
+      ).trim();
+
+      const hasBusinessStart = /^(business|start-business|start\s+business)\b/i.test(rawText) || /^business[:\s]/i.test(rawText);
+      const isEndBusiness = /^(end-business|end\s+business|exit-business|exit\s+business)$/i.test(rawText);
+      const isBusinessModeActive = await redis.get(`vendor:${vendorId}:business_mode`);
+
+      // If it's a message sent by the bot itself / note-to-self:
+      if (msg.key.fromMe) {
+        // ONLY process if business mode is active, or user sent 'business' / 'end-business'
+        if (!isBusinessModeActive && !hasBusinessStart && !isEndBusiness) {
+          continue;
+        }
+        logger.info({ msgId: msg.key.id, isBusinessModeActive: !!isBusinessModeActive, hasBusinessStart, isEndBusiness }, "Captured vendor Note-to-Self command");
+      }
 
       // Cache message content for getMessage() — needed for Baileys internals
       if (msg.key.id && msg.message) {
@@ -291,10 +419,14 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       }
 
       try {
-        const vendor = await loadVendorConfig(vendorId);
+        // withRetry ensures a cold Neon DB wake-up never silently drops a message.
+        const vendor = await withRetry(
+          () => loadVendorConfig(vendorId),
+          `loadVendorConfig:${vendorId}`
+        );
         await classifyAndRoute(msg, vendor, sock);
       } catch (err) {
-        logger.error({ err, vendorId, msgId: msg.key.id }, "Error routing message");
+        logger.error({ err, vendorId, msgId: msg.key.id }, "Error routing message after retries");
       }
     }
   });
@@ -303,48 +435,74 @@ export async function createSession(vendorId: string, isPairing = false): Promis
 }
 
 // ─── Pairing Code Provisioning ────────────────────────────────────────────────
-// Called by merchant-api when a vendor sets up their new business line.
+// Called by merchant-api / CLI when a vendor sets up their business line.
 // Returns the 8-character pairing code the vendor enters in WhatsApp →
 // Settings → Linked Devices → Link with phone number.
 
-export async function pairVendorNumber(vendorId: string, phoneNumber: string): Promise<string> {
+export interface PairResult {
+  code: string;
+  vendorId: string;
+  merchantId: string;
+}
+
+export async function pairVendorNumber(phoneNumber: string, vendorId?: string): Promise<PairResult> {
   // phoneNumber MUST be E.164 WITHOUT the '+' sign: "2348012345678"
   const normalised = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
   logger.info({ vendorId, normalised }, "pairVendorNumber called");
 
+  let vendor: VendorConfig;
+  if (vendorId) {
+    try {
+      vendor = await loadVendorConfig(vendorId);
+    } catch {
+      vendor = await getOrCreateVendorByPhone(normalised);
+    }
+  } else {
+    vendor = await getOrCreateVendorByPhone(normalised);
+  }
+
+  const effectiveVendorId = vendor.id;
+
+  // Save the business line number
+  await sql`
+    UPDATE vendors 
+    SET business_line_number = ${normalised}, updated_at = now()
+    WHERE id = ${effectiveVendorId}
+  `.catch(() => {});
+
   // Destroy any existing dead/zombie session to ensure fresh pairing code
-  if (sessions.has(vendorId)) {
-    const oldSock = sessions.get(vendorId)!;
+  if (sessions.has(effectiveVendorId)) {
+    const oldSock = sessions.get(effectiveVendorId)!;
     oldSock.end(undefined);
-    sessions.delete(vendorId);
+    sessions.delete(effectiveVendorId);
   }
 
   // Force a completely fresh state for pairing
-  await redis.del(`baileys:creds:${vendorId}`);
-  const keys = await redis.keys(`baileys:keys:${vendorId}:*`);
+  await redis.del(`baileys:creds:${effectiveVendorId}`);
+  const keys = await redis.keys(`baileys:keys:${effectiveVendorId}:*`);
   if (keys.length > 0) {
     await redis.del(...keys);
   }
 
-  const sock = await createSession(vendorId, true);
+  const sock = await createSession(effectiveVendorId, true);
   if (!sock) throw new Error("Failed to create session");
-  logger.info({ vendorId }, "Socket created, waiting for connection handshake...");
+  logger.info({ vendorId: effectiveVendorId }, "Socket created, waiting for connection handshake...");
 
   // Event-driven wait: Wait for the socket to be fully ready for auth/pairing
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      logger.error({ vendorId }, "Timeout waiting for socket to reach pairing state");
+      logger.error({ vendorId: effectiveVendorId }, "Timeout waiting for socket to reach pairing state");
       reject(new Error("Socket did not reach pairing state in time"));
     }, 15_000);
 
     const handler = (update: any) => {
-      logger.debug({ vendorId, update }, "Pairing connection update");
+      logger.debug({ vendorId: effectiveVendorId, update }, "Pairing connection update");
       // The `qr` event signifies that the NOISE handshake is done and it's waiting for auth.
       // If it reaches 'open', it's already authenticated.
       if (update.qr || update.connection === "open") {
         sock.ev.off("connection.update", handler);
         clearTimeout(timeout);
-        logger.info({ vendorId }, "Socket ready, proceeding to request pairing code");
+        logger.info({ vendorId: effectiveVendorId }, "Socket ready, proceeding to request pairing code");
         resolve();
       }
     };
@@ -355,20 +513,24 @@ export async function pairVendorNumber(vendorId: string, phoneNumber: string): P
   if (!sock.authState.creds.registered) {
     // Mark this vendor as needing a post-515 pairing restart BEFORE requesting
     // the code — the 515 arrives within seconds of the user accepting on phone.
-    pendingPairingRestart.add(vendorId);
-    logger.info({ vendorId, phone: normalised }, "Requesting pairing code from WhatsApp servers");
+    pendingPairingRestart.add(effectiveVendorId);
+    logger.info({ vendorId: effectiveVendorId, phone: normalised }, "Requesting pairing code from WhatsApp servers");
     const code = await sock.requestPairingCode(normalised);
-    logger.info({ vendorId, code }, "Pairing code issued successfully");
-    return code;
+    logger.info({ vendorId: effectiveVendorId, code }, "Pairing code issued successfully");
+    return { code, vendorId: effectiveVendorId, merchantId: vendor.merchant_id };
   }
 
-  return "already_registered";
+  return { code: "already_registered", vendorId: effectiveVendorId, merchantId: vendor.merchant_id };
 }
 
 // ─── Public accessors ─────────────────────────────────────────────────────────
 
-export function getSession(vendorId: string): WASocket | undefined {
-  return sessions.get(vendorId);
+export function getSession(id: string): WASocket | undefined {
+  if (sessions.has(id)) return sessions.get(id);
+  const mappedVendorId = merchantToVendor.get(id);
+  if (mappedVendorId && sessions.has(mappedVendorId)) return sessions.get(mappedVendorId);
+  if (sessions.size === 1) return [...sessions.values()][0];
+  return undefined;
 }
 
 export function getAllActiveSessions(): string[] {
@@ -383,7 +545,7 @@ async function alertVendorReprovision(vendorId: string): Promise<void> {
   // For now: log loud so ops can act.
   const vendor = await loadVendorConfig(vendorId).catch(() => null);
   logger.error(
-    { vendorId, phone: vendor?.notification_phone },
+    { vendorId, phone: vendor?.personal_number },
     "VENDOR SESSION LOGGED OUT — reprovision required"
   );
 }

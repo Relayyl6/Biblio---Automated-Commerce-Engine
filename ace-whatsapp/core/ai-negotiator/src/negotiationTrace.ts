@@ -12,6 +12,7 @@
 // be reconstructed deterministically from an archived arc.
 
 import type { NegotiationArc, NegotiationTactic } from "./negotiationArc";
+import type { Dialect } from "@ace/shared/types";
 
 export type NegotiationOutcome =
   | "closed"
@@ -25,6 +26,7 @@ export interface NegotiationTraceRow {
   merchantId: string;
   customerId: string;
   customerTier: string;
+  dialect?: Dialect;
   anchorPrice: number;
   authorizedFloor: number;
   outcome: NegotiationOutcome;
@@ -35,6 +37,7 @@ export interface NegotiationTraceRow {
   priceElasticitySignal: number | null;
   turns: NegotiationArc["turns"];
 }
+
 
 /**
  * Map a terminal arc stage to an outcome. Returns null for non-terminal arcs —
@@ -85,6 +88,7 @@ export function buildNegotiationTrace(arc: NegotiationArc): NegotiationTraceRow 
     merchantId: arc.merchantId,
     customerId: arc.customerId,
     customerTier: arc.tier,
+    dialect: arc.dialect ?? "pidgin",
     anchorPrice: arc.anchorPrice,
     authorizedFloor: arc.floor,
     outcome,
