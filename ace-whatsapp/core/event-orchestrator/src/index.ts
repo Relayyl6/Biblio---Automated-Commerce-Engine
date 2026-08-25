@@ -8,14 +8,26 @@ import { setupLoyaltyMilestoneFlow } from "./flows/loyaltyMilestoneFlow.js";
 async function main() {
   logger.log("[EventOrchestrator] Starting event orchestrator...");
 
-  // Initialize all flows
-  await setupPostPaymentFlow();
-  await setupAbandonedCartFlow();
-  await setupInventoryRestockFlow();
-  await setupPostServiceReviewFlow();
-  await setupLoyaltyMilestoneFlow();
+  // Initialize all flows (which now return BullMQ Workers)
+  const paymentWorker = await setupPostPaymentFlow();
+  const cartWorker = await setupAbandonedCartFlow();
+  const restockWorker = await setupInventoryRestockFlow();
+  const reviewWorker = await setupPostServiceReviewFlow();
+  const loyaltyWorker = await setupLoyaltyMilestoneFlow();
 
   logger.log("[EventOrchestrator] All flows initialized and listening.");
+
+  const gracefulShutdown = async (signal: string) => {
+    logger.log(`[EventOrchestrator] Received ${signal}. Shutting down gracefully...`);
+    
+    // Close workers to stop accepting new jobs and finish active ones safely
+    if (cartWorker) await cartWorker.close();
+    if (reviewWorker) await reviewWorker.close();
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 main().catch(err => {

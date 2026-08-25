@@ -3,20 +3,20 @@ import { redis, sql } from "@ace/shared/clients.js";
 
 // Uses Redis Pub/Sub to listen for PAYMENT_CONFIRMED events
 export async function setupPostPaymentFlow() {
-  const sub = redis.duplicate();
-  await sub.subscribe("events:payment_confirmed");
+  const { Worker, Queue } = require("bullmq");
 
-  sub.on("message", async (channel, message) => {
-    if (channel === "events:payment_confirmed") {
-      try {
-        const payload = JSON.parse(message);
-        await handlePaymentConfirmed(payload.orderId, payload.merchantId, payload.customerId);
-      } catch (err) {
-        logger.error("[PostPaymentFlow] Error processing event:", err);
-      }
+  const worker = new Worker("domain-events", async (job: any) => {
+    if (job.name === "payment_confirmed") {
+      const payload = job.data;
+      await handlePaymentConfirmed(payload.orderId, payload.merchantId, payload.customerId);
     }
-  });
-  logger.log("[PostPaymentFlow] Listening for payment_confirmed events...");
+  }, { connection: { ...redis.options, maxRetriesPerRequest: null } });
+
+  worker.on("failed", (job: any, err: any) => logger.error(`[PostPaymentFlow] Job ${job?.id} failed:`, err));
+  worker.on("error", (err: any) => logger.error(`[PostPaymentFlow] Redis error:`, err));
+
+  logger.log("[PostPaymentFlow] Listening for domain-events (payment_confirmed)...");
+  return worker;
 }
 
 async function handlePaymentConfirmed(orderId: string, merchantId: string, customerId: string) {

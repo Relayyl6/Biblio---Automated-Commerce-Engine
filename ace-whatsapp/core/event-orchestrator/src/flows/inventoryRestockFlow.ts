@@ -3,25 +3,23 @@ import { redis, sql } from "@ace/shared/clients.js";
 import { Queue } from "bullmq";
 
 export async function setupInventoryRestockFlow() {
-  const sub = redis.duplicate();
-  await sub.subscribe("events:inventory_deducted");
+  const { Worker, Queue } = require("bullmq");
 
-  sub.on("message", async (channel, message) => {
-    if (channel === "events:inventory_deducted") {
-      try {
-        const payload = JSON.parse(message);
-        // #5 Idempotency: skip duplicate events within 1 hour
-        const dedupe = `idempotency:restock:${payload.merchantId}:${payload.sku}`;
-        const isNew = await redis.set(dedupe, "1", "EX", 3600, "NX");
-        if (!isNew) return;
-        await handleInventoryCheck(payload.merchantId, payload.sku);
-      } catch (err) {
-        logger.error("[InventoryRestockFlow] Error processing event:", err);
-      }
+  const worker = new Worker("domain-events", async (job: any) => {
+    if (job.name === "inventory_deducted") {
+      const payload = job.data;
+      const dedupe = `idempotency:restock:${payload.merchantId}:${payload.sku}`;
+      const isNew = await redis.set(dedupe, "1", "EX", 3600, "NX");
+      if (!isNew) return;
+      await handleInventoryCheck(payload.merchantId, payload.sku);
     }
-  });
+  }, { connection: { ...redis.options, maxRetriesPerRequest: null } });
 
-  logger.log("[InventoryRestockFlow] Listening for inventory_deducted events...");
+  worker.on("failed", (job: any, err: any) => logger.error(`[InventoryRestockFlow] Job ${job?.id} failed:`, err));
+  worker.on("error", (err: any) => logger.error(`[InventoryRestockFlow] Redis error:`, err));
+
+  logger.log("[InventoryRestockFlow] Listening for domain-events (inventory_deducted)...");
+  return worker;
 }
 
 async function handleInventoryCheck(merchantId: string, sku: string) {

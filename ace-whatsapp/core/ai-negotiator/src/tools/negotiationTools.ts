@@ -231,7 +231,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'set_floor_price'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'set_floor_price'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -242,7 +242,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'override_ai_offer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'override_ai_offer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -253,7 +253,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'create_discount_code'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'create_discount_code'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -264,7 +264,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'disable_discount_code'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'disable_discount_code'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -275,7 +275,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'configure_negotiation_aggressiveness'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'configure_negotiation_aggressiveness'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -286,7 +286,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'enable_bundle_deals'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'enable_bundle_deals'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -297,7 +297,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'review_negotiation_transcripts'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'review_negotiation_transcripts'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -308,7 +308,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'approve_custom_quote'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'approve_custom_quote'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -319,7 +319,7 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'reject_custom_quote'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'reject_custom_quote'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

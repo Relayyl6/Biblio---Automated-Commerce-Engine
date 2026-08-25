@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // core/comms-router/src/debounce.ts
 //
 // THE PROBLEM THIS SOLVES (from our earlier discussion): a customer sends
@@ -213,3 +214,8 @@ async function loadOrderState(customerId: string, merchantId: string): Promise<O
   `;
   return rows[0]?.state ?? { status: "no_order" };
 }
+biblioWorker.on("error", (err) => logger.error("[BiblioWorker] Redis error:", err));
+biblioWorker.on("failed", (job, err) => logger.error(`[BiblioWorker] Job ${job?.id} failed:`, err));
+
+turnWorker.on("error", (err) => logger.error("[TurnWorker] Redis error:", err));
+turnWorker.on("failed", (job, err) => logger.error(`[TurnWorker] Job ${job?.id} failed:`, err));

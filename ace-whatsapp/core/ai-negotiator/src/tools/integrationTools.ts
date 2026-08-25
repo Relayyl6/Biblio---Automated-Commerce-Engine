@@ -162,12 +162,12 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
 
   detect_message_timeout: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'detect_message_timeout', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'detect_message_timeout', ${JSON.stringify(args)}, now())`;
     return "Detected 1 critical timeout: Customer +2348000000002 has not received the payment link (WhatsApp offline).";
   },
   send_sms_fallback: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'send_sms_fallback', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'send_sms_fallback', ${JSON.stringify(args)}, now())`;
     return `SMS Fallback delivered to ${args.customerId}: '${args.message}'`;
   },
 
@@ -176,7 +176,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'register_webhook'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'register_webhook'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -187,7 +187,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'remove_webhook'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'remove_webhook'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -198,7 +198,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'connect_mailchimp'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'connect_mailchimp'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -209,7 +209,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'connect_zapier'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'connect_zapier'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -264,7 +264,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'sync_google_sheets'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'sync_google_sheets'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -275,7 +275,7 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     await logger.log(`[ToolHandler:${'generate_api_key'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'generate_api_key'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

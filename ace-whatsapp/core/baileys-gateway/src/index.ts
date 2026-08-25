@@ -22,6 +22,7 @@
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import P from "pino";
 import { sql } from "@ace/shared/clients";
 import { createSession, getSession, getAllActiveSessions, pairVendorNumber } from "./sessionManager.js";
@@ -32,7 +33,26 @@ import type { OutboundMessage } from "@ace/shared/types";
 const logger = P({ level: "info" });
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: "*" });
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:5173").split(",").map(o => o.trim());
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === "development") {
+        cb(null, true);
+      } else {
+        cb(new Error(`Origin ${origin} not allowed`), false);
+      }
+    },
+    credentials: true,
+  });
+
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute'
+  });
+
+  app.setNotFoundHandler((request, reply) => {
+    reply.code(404).send({ error: "Not Found", message: `Route ${request.method}:${request.url} does not exist` });
+  });
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 app.get("/health", async () => ({

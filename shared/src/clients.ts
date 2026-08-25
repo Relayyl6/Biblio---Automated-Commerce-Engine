@@ -38,6 +38,7 @@ export const sql = postgres(connectionString, {
   // connection reuse within a single service instance.
   max: 10,
   idle_timeout: 20,
+  connect_timeout: 30,
 });
 
 /**
@@ -55,12 +56,8 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 export const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: 3,
   retryStrategy(times) {
-    // Stop retrying after 5 times
-    if (times > 5) {
-      logger.error("[redis] exhausted retries, stopping reconnection attempts.");
-      return null;
-    }
-    // Exponential backoff: 500ms, 1000ms, 2000ms...
+    // Retry indefinitely to recover from long DB restarts or network blips
+    // Capped exponential backoff: 500ms, 1000ms... up to 5000ms
     const delay = Math.min(times * 500, 5000);
     return delay;
   },

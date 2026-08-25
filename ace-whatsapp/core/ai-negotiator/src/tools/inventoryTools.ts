@@ -344,17 +344,17 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
 
   predict_stockouts: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'predict_stockouts', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'predict_stockouts', ${JSON.stringify(args)}, now())`;
     return "Analyzed velocity: SKU 'RED-ANKARA' predicted to stock out in 16 hours. Supplier 'Alhaji Textiles' identified.";
   },
   contact_supplier: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'contact_supplier', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'contact_supplier', ${JSON.stringify(args)}, now())`;
     return `Pinged supplier for ${args.quantity} units of ${args.sku}. Awaiting quote.`;
   },
   calculate_restock_margin: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'calculate_restock_margin', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'calculate_restock_margin', ${JSON.stringify(args)}, now())`;
     return `Margin is 44% (Healthy). Auto-approval thresholds met.`;
   },
 
@@ -386,7 +386,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'update_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'update_inventory'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -397,7 +397,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'delete_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'delete_inventory'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -408,7 +408,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'search_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'search_inventory'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -419,7 +419,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'auto_restock_alert_config'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'auto_restock_alert_config'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -430,7 +430,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'bulk_price_update'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'bulk_price_update'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -441,7 +441,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'generate_product_description'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'generate_product_description'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -452,7 +452,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'categorize_product'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'categorize_product'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -463,7 +463,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'sync_shopify_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'sync_shopify_inventory'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -474,7 +474,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'push_to_woocommerce'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'push_to_woocommerce'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -485,7 +485,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'list_out_of_stock'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'list_out_of_stock'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -496,7 +496,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'archive_product'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'archive_product'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -507,7 +507,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'unarchive_product'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'unarchive_product'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -518,7 +518,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'add_product_variant'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'add_product_variant'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -529,7 +529,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'remove_product_variant'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'remove_product_variant'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -540,7 +540,7 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'set_minimum_order_quantity'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'set_minimum_order_quantity'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

@@ -207,7 +207,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'view_daily_revenue'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'view_daily_revenue'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -218,7 +218,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'view_weekly_revenue'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'view_weekly_revenue'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -229,7 +229,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'check_escrow_balance'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'check_escrow_balance'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -240,7 +240,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'request_payout'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'request_payout'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -251,7 +251,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'verify_bank_transfer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'verify_bank_transfer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -281,7 +281,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'refund_customer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'refund_customer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -292,7 +292,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'log_cash_payment'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'log_cash_payment'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -303,7 +303,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'set_tax_rate'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'set_tax_rate'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -314,7 +314,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'download_tax_report'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'download_tax_report'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -400,7 +400,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     await logger.log(`[ToolHandler:${'analyze_profit_margins'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'analyze_profit_margins'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

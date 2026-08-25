@@ -22,6 +22,7 @@ import { authEngine } from "@ace/shared/auth/index.js";
 import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
 const BAILEYS_GATEWAY_URL =
   process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";

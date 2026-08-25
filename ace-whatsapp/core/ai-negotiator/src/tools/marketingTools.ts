@@ -175,12 +175,12 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
 
   query_social_media_posts: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'query_social_media_posts', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'query_social_media_posts', ${JSON.stringify(args)}, now())`;
     return "Fetched recent Instagram reel showing 'Blue Satin Midi Dress' (ImageURL: https://cdn.ace.io/ig/123.jpg).";
   },
   match_image_to_catalog: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'match_image_to_catalog', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'match_image_to_catalog', ${JSON.stringify(args)}, now())`;
     return "Image match confident (96%). Matched SKU: BLUE-SATIN-MIDI-DRESS. Price: 18500.";
   },
 
@@ -189,7 +189,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'configure_status_mode'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'configure_status_mode'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -200,7 +200,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'post_to_status_now'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'post_to_status_now'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -211,7 +211,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'generate_marketing_copy'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'generate_marketing_copy'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -222,7 +222,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'schedule_status_campaign'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'schedule_status_campaign'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -233,7 +233,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'analyze_status_views'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'analyze_status_views'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -244,7 +244,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'create_flash_sale'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'create_flash_sale'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -255,7 +255,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'end_flash_sale'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'end_flash_sale'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -266,7 +266,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'sync_facebook_catalog'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'sync_facebook_catalog'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -277,7 +277,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'sync_instagram_shop'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'sync_instagram_shop'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -288,7 +288,7 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     await logger.log(`[ToolHandler:${'run_abandoned_cart_recovery'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'run_abandoned_cart_recovery'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

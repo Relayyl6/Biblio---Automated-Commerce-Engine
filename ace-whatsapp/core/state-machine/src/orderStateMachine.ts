@@ -182,6 +182,11 @@ export function transition(
   }
 }
 import { redis, sql } from "@ace/shared/clients.js";
+import { Queue } from "bullmq";
+
+const domainEventsQueue = new Queue("domain-events", {
+  connection: { ...redis.options, maxRetriesPerRequest: null }
+});
 
 /**
  * Wraps the pure transition function to automatically save to DB and emit to Redis Pub/Sub.
@@ -206,13 +211,9 @@ export async function transitionAndEmit(
     // Emit event
     try {
       if (event.type === "PAYMENT_CONFIRMED") {
-      await redis.publish("events:payment_confirmed", JSON.stringify({
-        merchantId, customerId, orderId, timestamp: Date.now()
-      }));
+      await domainEventsQueue.add("payment_confirmed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
     } else if (event.type as string === "ORDER_COMPLETED") {
-      await redis.publish("events:order_completed", JSON.stringify({
-        merchantId, customerId, orderId, timestamp: Date.now()
-      }));
+      await domainEventsQueue.add("order_completed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
     } else if (event.type as string === "MARK_SHIPPED") {
        // Just as an example, this might trigger inventory deductions 
        // but typically those are explicit tool actions. 

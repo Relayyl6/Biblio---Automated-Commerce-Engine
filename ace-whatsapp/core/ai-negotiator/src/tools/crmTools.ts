@@ -274,12 +274,12 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
 
   analyze_churn_risk: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'analyze_churn_risk', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'analyze_churn_risk', ${JSON.stringify(args)}, now())`;
     return "Found 1 at-risk VIP: 'Blessing' (LTV: 124,000, 27 days since last purchase).";
   },
   generate_winback_offer: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
-    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'generate_winback_offer', ${JSON.stringify(args)}, now())`;
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'generate_winback_offer', ${JSON.stringify(args)}, now())`;
     return "Drafted Winback: 'Blessing! New gold Ankara just landed, reserved 4 yards for you. Want me to dispatch it?'";
   },
 
@@ -288,7 +288,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'get_customer_profile'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'get_customer_profile'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -299,7 +299,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'tag_customer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'tag_customer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -310,7 +310,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'block_customer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'block_customer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -321,7 +321,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'unblock_customer'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'unblock_customer'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -332,7 +332,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'send_broadcast_message'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'send_broadcast_message'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -394,7 +394,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'create_hubspot_ticket'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'create_hubspot_ticket'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -405,7 +405,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'resolve_hubspot_ticket'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'resolve_hubspot_ticket'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -416,7 +416,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'add_customer_note'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'add_customer_note'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -427,7 +427,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'get_top_customers'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'get_top_customers'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -438,7 +438,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'offer_loyalty_discount'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'offer_loyalty_discount'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -449,7 +449,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'schedule_follow_up'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'schedule_follow_up'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }
@@ -460,7 +460,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     await logger.log(`[ToolHandler:${'churn_risk_analysis'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
+            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'churn_risk_analysis'}, ${JSON.stringify(args)}, now())
         `;
     } catch(e) { }

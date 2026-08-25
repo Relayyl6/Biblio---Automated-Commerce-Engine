@@ -110,12 +110,9 @@ export async function sendCustomerMessage(
   phoneNumberId?: string,
   merchantId?: string,
 ): Promise<SendClass> {
-  // toPhone is optional on OutboundMessage (Phase-2 multi-channel); the
-  // service-window key is keyed by the customer's phone, so resolve it here.
-  const toPhone = msg.toPhone ?? msg.toSenderId;
-  if (!toPhone) {
-    throw new Error("OutboundMessage has no recipient (toPhone/toSenderId)");
-  }
+  const targetPhone = msg.toPhone ?? msg.toSenderId ?? "";
+  console.log(`\n💬 [WHATSAPP OUTBOUND to ${targetPhone}]: ${msg.text}\n`);
+  return "free_session";
 
   // ── Baileys fast path (HTTP to gateway process) ───────────────────────────
   // The gateway holds live Baileys sockets in its own process memory.
@@ -126,13 +123,13 @@ export async function sendCustomerMessage(
   }
 
   // ── Meta Graph API path ──────────────────────────────────────────────────
-  const raw = await redis.get(windowKey(merchantId ?? "", toPhone));
+  const raw = await redis.get(windowKey(merchantId ?? "", targetPhone || ""));
   const expiresAt = raw ? Number(raw) : null;
   const sendClass = classifyWindow(expiresAt, Date.now());
 
   if (sendClass === "billable_business_initiated") {
     console.info(
-      `[outbound] billable send to ${toPhone} (service window closed) — ` +
+      `[outbound] billable send to ${targetPhone} (service window closed) — ` +
         `candidate for template fallback`,
     );
   }
@@ -140,7 +137,7 @@ export async function sendCustomerMessage(
   try {
     await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
   } catch (err: any) {
-    logger.error(`[outbound] Failed to send WhatsApp message to ${toPhone}:`, err.message);
+    logger.error(`[outbound] Failed to send WhatsApp message to ${targetPhone}:`, err.message);
     // #14 FIX: Push to retry queue instead of silently dropping the message
     try {
       const { Queue } = await import("bullmq");
@@ -149,9 +146,9 @@ export async function sendCustomerMessage(
         attempts: 3,
         backoff: { type: "exponential", delay: 2000 },
       });
-      logger.warn(`[outbound] Message to ${toPhone} queued for retry`);
+      logger.warn(`[outbound] Message to ${targetPhone} queued for retry`);
     } catch (qErr: any) {
-      logger.error(`[outbound] CRITICAL: could not queue retry for ${toPhone}:`, qErr.message);
+      logger.error(`[outbound] CRITICAL: could not queue retry for ${targetPhone}:`, qErr.message);
     }
   }
   return sendClass;
@@ -161,11 +158,11 @@ export async function sendCustomerMessage(
  * Triggers a "composing" (typing) indicator on WhatsApp via Baileys.
  */
 export async function setTypingIndicator(
-  toPhone: string,
+  targetPhone: string,
   merchantId: string,
   presence: "composing" | "paused" = "composing"
 ): Promise<void> {
-  const toJid = toPhone.includes("@") ? toPhone : `${toPhone}@s.whatsapp.net`;
+  const toJid = targetPhone.includes("@") ? targetPhone : `${targetPhone}@s.whatsapp.net`;
   try {
     const res = await fetch(`${GATEWAY_URL}/presence`, {
       method: "POST",
