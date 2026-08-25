@@ -294,10 +294,27 @@ async function processGroupedVendorSubmission(
   // ── Upsert into products ──────────────────────────────────────────────────
   const sku = generateSku(vendor.id, parsed.product_name);
 
+  // ── Generate CLIP Embedding for Visual Search ───────────────────────────────
+  let embeddingStr = "[]";
+  try {
+    const { generateEmbedding } = await import("@ace/shared/data-intelligence/embeddings");
+    let inputForEmbedding = parsed.product_name + " " + parsed.description;
+    if (imageBuffer) {
+      inputForEmbedding = `data:image/jpeg;base64,${imageBuffer.toString("base64")}`;
+    }
+    const vector = await generateEmbedding(inputForEmbedding);
+    embeddingStr = `[${vector.join(",")}]`;
+    logger.info({ sku, vendorId: vendor.id }, "Successfully generated 512-dim embedding for product");
+  } catch (err) {
+    logger.error({ err, sku }, "Failed to generate CLIP embedding");
+  }
+
+  // ── Database Upsert ─────────────────────────────────────────────────────────
   await sql`
     INSERT INTO products (
       sku, merchant_id, name, price, description,
       image_url, stock, currency, active, source,
+      image_embedding,
       last_posted_at, updated_at
     ) VALUES (
       ${sku},
@@ -310,6 +327,7 @@ async function processGroupedVendorSubmission(
       ${parsed.currency},
       true,
       'vendor_push',
+      ${embeddingStr},
       NULL,
       now()
     )
@@ -318,6 +336,7 @@ async function processGroupedVendorSubmission(
       price         = EXCLUDED.price,
       description   = EXCLUDED.description,
       image_url     = COALESCE(EXCLUDED.image_url, products.image_url),
+      image_embedding = EXCLUDED.image_embedding,
       active        = true,
       source        = 'vendor_push',
       updated_at    = now()

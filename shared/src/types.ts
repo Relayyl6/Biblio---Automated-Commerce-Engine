@@ -58,6 +58,7 @@ export interface InboundMessage {
   /** Unix ms timestamp from WhatsApp */
   timestamp: number;
   content: MessageContent;
+  isMerchantCommand?: boolean;
 }
 
 export type PlatformChannel = "whatsapp" | "instagram" | "facebook" | "telegram" | "tiktok" | "email";
@@ -72,6 +73,7 @@ export interface UnifiedMessage {
   recipientId: string;
   timestamp: number;
   content: MessageContent;
+  isMerchantCommand?: boolean;
 }
 
 /**
@@ -223,3 +225,45 @@ export interface VendorSession {
   /** If true, Status posts are held in status_post_queue for merchant approval */
   approve_before_post: boolean;
 }
+
+// ─── Supplier Sourcing (B2B Procurement) ──────────────────────────────────────
+
+/**
+ * A single pricing condition in a source's pricing_rules array.
+ * Rules are evaluated top-to-bottom; the first matching rule is applied.
+ *
+ * Examples:
+ *   { if_cost_gte: 500000, markup_type: "flat", markup: 30000 }
+ *   { if_cost_gte: 0,      markup_type: "percent", markup: 20 }
+ *   { if_cost_gte: 0,      markup_type: "ask_merchant" }
+ */
+export type PricingExpression =
+  | { if_cost_gte: number; markup_type: "flat"; markup: number }
+  | { if_cost_gte: number; markup_type: "percent"; markup: number }
+  | { if_cost_gte: number; markup_type: "ask_merchant" };
+
+/**
+ * A Source is anything Biblio can query for a wholesale price:
+ * a WhatsApp contact, a group, a warehouse API, or the merchant themselves.
+ */
+export interface Source {
+  id: string;
+  merchant_id: string;
+  name: string;
+  type: "whatsapp_individual" | "whatsapp_group" | "warehouse_api" | "self";
+  contact: string | null;          // Phone, group JID, or API URL
+  description: string | null;      // Free-text for semantic routing
+  known_skus: string[];            // Explicit SKUs for exact-match routing
+  is_default: boolean;
+  reply_timeout_minutes: number;
+  pricing_rules: PricingExpression[];
+  avg_response_time_s: number | null;
+  active: boolean;
+}
+
+/**
+ * Result of evaluating pricing rules against a cost price.
+ */
+export type PricingResult =
+  | { action: "quote"; customerPrice: number; markup: number }
+  | { action: "ask_merchant"; costPrice: number };

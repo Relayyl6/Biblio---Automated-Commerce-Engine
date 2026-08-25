@@ -146,6 +146,18 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
         )
         on conflict (provider_ref) do nothing
       `;
+      
+      // Create Escrow Hold
+      const platformFeeRate = 0.05;
+      const dealPrice = Math.floor(payment.amountNgn / (1 + platformFeeRate));
+      await tx`
+        insert into escrow_accounts
+          (order_id, merchant_id, customer_id, amount, status)
+        values (
+          ${order.orderId}, ${order.merchantId}, ${order.customerId},
+          ${dealPrice}, 'held'
+        )
+      `;
     });
     await redis.del(`order:${order.orderId}:timer`);
 
@@ -157,11 +169,12 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
           `Your order is now being prepared. We'll let you know the moment it's on the way. 🎉`,
       },
       order.phoneNumberId,
+      order.merchantId
     );
 
     app.log.info({ orderId: order.orderId, amount: payment.amountNgn }, "payment verified");
 
-    // Telemetry: Capture state transition for TrustScore signals
+    // Telemetry
     dataIntelligence.captureOrderStateChange({
       merchantId: order.merchantId,
       customerId: order.customerId,
@@ -171,9 +184,15 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
       timestamp: Date.now(),
     }).catch(() => {});
 
-    // PHASE 2: publish `payments.verified` to Kafka here. Logistics-coordination
-    // consumes it to auto-book a rider (order → out_for_delivery), and the escrow
-    // engine opens the 24h hold. For now the order rests at payment_verified.
+    // Publish to Redis Stream so logistics-coordination can auto-book a rider
+    await redis.xadd("stream:payments.verified", "*",
+      "orderId", order.orderId,
+      "merchantId", order.merchantId,
+      "customerId", order.customerId,
+      "phoneNumberId", order.phoneNumberId,
+      "amountNgn", String(payment.amountNgn),
+      "itemsJson", JSON.stringify((newState as any).items ?? []),
+    );
   } finally {
     await redis.del(lockKey);
   }
@@ -289,9 +308,102 @@ async function findOrderByVirtualAccount(van: string): Promise<MatchedOrder | nu
   };
 }
 
+// ─── Logistics Webhook (Escrow Payout) ───────────────────────────────────────
+
+app.post("/logistics/webhook", async (req, reply) => {
+  // In production, verify the Sendbox/Logistics signature here.
+  const b = req.body as Record<string, any>;
+  const orderId = b.orderId;
+  const status = b.status; // e.g. "delivered"
+  
+  if (status !== "delivered" || !orderId) {
+    return reply.send({ ok: true });
+  }
+
+  // 1. Advance state to DELIVERY_CONFIRMED
+  const lockKey = `lock:delivery:${orderId}`;
+  const lock = await redis.set(lockKey, "1", "EX", 30, "NX");
+  if (!lock) return reply.send({ ok: true, status: "locked" });
+
+  try {
+    const rows = await sql<{ id: string; merchant_id: string; customer_id: string; state: OrderState }[]>`
+      select id, merchant_id, customer_id, state from orders where id = ${orderId} limit 1
+    `;
+    const order = rows[0];
+    if (!order || order.state.status !== "out_for_delivery") {
+      return reply.send({ ok: true, ignored: true });
+    }
+
+    const newState = transition(order.state, { type: "DELIVERY_CONFIRMED" });
+    
+    // 2. Fetch merchant recipient code and deal price
+    const merchantRows = await sql<{ paystack_recipient_code: string }[]>`
+      select paystack_recipient_code from merchants where id = ${order.merchant_id} limit 1
+    `;
+    const recipientCode = merchantRows[0]?.paystack_recipient_code;
+    
+    // We only transfer the deal total (excluding the 5% platform fee the customer paid)
+    // For 'out_for_delivery', 'total' property doesn't exist directly on state in TS,
+    // but we know it's in the DB JSON or we can fetch it from transactions.
+    const txRows = await sql<{ amount: number }[]>`
+      select amount from transactions where order_id = ${orderId} and status = 'confirmed' limit 1
+    `;
+    const customerPaid = txRows[0]?.amount ?? 0;
+    const platformFeeRate = 0.05;
+    // Deal price is derived: customerPaid = dealPrice * 1.05
+    const dealPrice = Math.floor(customerPaid / (1 + platformFeeRate));
+
+    if (recipientCode && dealPrice > 0) {
+      // 3. Initiate Transfer
+      const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+      if (paystackSecretKey) {
+        const transferRes = await fetch("https://api.paystack.co/transfer", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${paystackSecretKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            source: "balance",
+            amount: dealPrice * 100, // kobo
+            recipient: recipientCode,
+            reason: `Payout for order ${orderId}`
+          })
+        });
+        if (!transferRes.ok) {
+          app.log.error({ err: await transferRes.text() }, "Escrow transfer failed");
+        } else {
+          app.log.info({ orderId, amount: dealPrice }, "Escrow released to vendor");
+        }
+      }
+    } else {
+      app.log.warn({ orderId, merchantId: order.merchant_id }, "Escrow release skipped: no recipient code or deal price 0");
+    }
+
+    // Save final state and update escrow
+    await sql.begin(async (tx) => {
+      await tx`
+        update orders set state = ${jsonb(newState)}, updated_at = now()
+        where id = ${orderId}
+      `;
+      await tx`
+        update escrow_accounts set status = 'released', released_at = now()
+        where order_id = ${orderId}
+      `;
+    });
+
+    return reply.send({ ok: true });
+  } finally {
+    await redis.del(lockKey);
+  }
+});
+
 // ─── Boot ────────────────────────────────────────────────────────────────────────
+
+import { startPaymentTimerCron } from "./paymentTimerCron";
 
 const port = Number(process.env.PAYMENT_PORT ?? 3002);
 app.listen({ port, host: "0.0.0.0" }).then(() => {
   app.log.info(`payment-verification listening on :${port}`);
+  startPaymentTimerCron();
 });

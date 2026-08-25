@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // shared/src/background-jobs/index.ts
 //
 // Role: Multi-App Background Worker Pool
@@ -40,7 +41,7 @@ export class BackgroundEngine {
     });
 
     worker.on('failed', async (job: Job<T> | undefined, err: Error) => {
-      console.error(`[WorkerEngine] ❌ Job ${job?.id} in ${queueName} failed:`, err);
+      logger.error(`[WorkerEngine] ❌ Job ${job?.id} in ${queueName} failed:`, err);
       if (job) {
         await dataIntelligence.auditLog({
           service: 'background-engine',
@@ -52,7 +53,7 @@ export class BackgroundEngine {
     });
 
     worker.on('completed', (job: Job<T>) => {
-      console.log(`[WorkerEngine] ✅ Job ${job.id} in ${queueName} completed successfully.`);
+      logger.log(`[WorkerEngine] ✅ Job ${job.id} in ${queueName} completed successfully.`);
     });
 
     this.workers.set(queueName, worker);

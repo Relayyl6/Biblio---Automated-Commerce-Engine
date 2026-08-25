@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 import { UnifiedMessage } from "@ace/shared/types";
 
 export interface ParsedIntent {
@@ -12,15 +13,15 @@ export interface ParsedIntent {
  * routes the conversation to the correct AI Negotiator, Logistics, or Visual RAG module.
  */
 export async function delegateToStateEngine(msg: UnifiedMessage, globalBuyerId: string): Promise<void> {
-  console.log(`[Orchestrator] Analyzing intent for ${globalBuyerId}...`);
+  logger.log(`[Orchestrator] Analyzing intent for ${globalBuyerId}...`);
   
   const intent = await parseIntent(msg);
   
-  console.log(`[Orchestrator] Intent parsed: ${intent.action} (${Math.round(intent.confidence * 100)}%)`);
+  logger.log(`[Orchestrator] Intent parsed: ${intent.action} (${Math.round(intent.confidence * 100)}%)`);
 
   // Vendor Rules Engine Check: Auto-human escalation based on constraints
   if (intent.confidence < 0.75 || intent.action === "complaint") {
-    console.log(`[Orchestrator] Routing to Exception Queue for merchant review.`);
+    logger.log(`[Orchestrator] Routing to Exception Queue for merchant review.`);
     return;
   }
 
@@ -28,15 +29,15 @@ export async function delegateToStateEngine(msg: UnifiedMessage, globalBuyerId: 
   switch (intent.action) {
     case "purchase":
     case "inquiry":
-      console.log(`[Orchestrator] Handing off to AI Negotiator...`);
+      logger.log(`[Orchestrator] Handing off to AI Negotiator...`);
       // TODO: enqueue to ai-negotiator BullMQ
       break;
     case "visual_search":
-      console.log(`[Orchestrator] Handing off to Visual Context Resolution Service...`);
+      logger.log(`[Orchestrator] Handing off to Visual Context Resolution Service...`);
       // TODO: trigger Multimodal Visual Resolution (Layer 2)
       break;
     default:
-      console.log(`[Orchestrator] No action taken for unknown intent.`);
+      logger.log(`[Orchestrator] No action taken for unknown intent.`);
   }
 }
 

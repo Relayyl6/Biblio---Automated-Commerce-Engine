@@ -242,3 +242,39 @@ create index status_queue_pending_idx
 -- 'source' already exists from catalog-sync — add 'last_posted_at' for the Status cron.
 alter table products
   add column if not exists last_posted_at timestamptz;
+
+-- [Added 2026-08-20] Vendor Decisions Table
+CREATE TABLE IF NOT EXISTS vendor_decisions (
+  id uuid primary key default gen_random_uuid(),
+  merchant_id uuid not null references merchants(id),
+  decision_type text not null,
+  channel text not null,
+  choice text not null,
+  created_at timestamptz not null default now()
+);
+CREATE TABLE IF NOT EXISTS escrow_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES orders(id),
+    merchant_id UUID NOT NULL REFERENCES merchants(id),
+    customer_id VARCHAR(255) NOT NULL,
+    amount NUMERIC(10, 2) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'held',
+    held_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    auto_release_at TIMESTAMP WITH TIME ZONE,
+    released_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_escrow_order_id ON escrow_accounts(order_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_merchant_id ON escrow_accounts(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_status ON escrow_accounts(status);
+CREATE TABLE IF NOT EXISTS merchant_integrations (
+  merchant_id UUID REFERENCES merchants(id),
+  provider VARCHAR(50) NOT NULL,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  expires_at TIMESTAMP,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  PRIMARY KEY (merchant_id, provider)
+);

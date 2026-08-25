@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // shared/src/data-intelligence/engine.ts
 //
 // Role: Centralized Data-Intelligence Fixture for telemetry and analytical processing.
@@ -83,7 +84,7 @@ export class DataIntelligenceEngine {
    */
   public async logNegotiationTrace(trace: NegotiationTrace): Promise<void> {
     // TODO: Write to ClickHouse `negotiation_analytics` or publish to Kafka `negotiations.traces`
-    console.log(`[DataIntel] 📈 NegotiationTrace Logged: Session ${trace.sessionId} | Outcome: ${trace.outcome} | Elasticity: ${trace.priceElasticitySignal.toFixed(2)}`);
+    logger.log(`[DataIntel] 📈 NegotiationTrace Logged: Session ${trace.sessionId} | Outcome: ${trace.outcome} | Elasticity: ${trace.priceElasticitySignal.toFixed(2)}`);
     
     // Pattern Detection: Identify aggressive downward elasticity
     if (trace.priceElasticitySignal < 0.7) {
@@ -96,7 +97,7 @@ export class DataIntelligenceEngine {
    * Feeds the TrustScore API product for banks.
    */
   public async captureOrderStateChange(metrics: OrderMetricsPayload): Promise<void> {
-    console.log(`[DataIntel] 🔄 OrderStateChange: Order ${metrics.orderId} [${metrics.fromState} -> ${metrics.toState}]`);
+    logger.log(`[DataIntel] 🔄 OrderStateChange: Order ${metrics.orderId} [${metrics.fromState} -> ${metrics.toState}]`);
     
     // Feature extraction: Delivery speed
     if (metrics.toState === 'delivered') {
@@ -115,7 +116,7 @@ export class DataIntelligenceEngine {
     };
     
     // TODO: Write to cold storage / Elastic
-    console.log(`[DataIntel] 🔒 Audit [${log.service}]: ${log.merchantId} - ${log.action}`);
+    logger.log(`[DataIntel] 🔒 Audit [${log.service}]: ${log.merchantId} - ${log.action}`);
   }
 
   /**
@@ -175,7 +176,7 @@ export class DataIntelligenceEngine {
    * Internal mechanism to flag behavioral anomalies across the network.
    */
   private flagAnomaly(merchantId: string, anomalyType: string, context: unknown) {
-    console.warn(`[DataIntel] ⚠️ Anomaly Detected [${anomalyType}] for merchant: ${merchantId}`);
+    logger.warn(`[DataIntel] ⚠️ Anomaly Detected [${anomalyType}] for merchant: ${merchantId}`);
     // Emit to a specific alerting queue
   }
 }

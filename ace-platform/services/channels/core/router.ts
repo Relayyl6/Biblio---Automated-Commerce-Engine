@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 import { PlatformChannel, UnifiedMessage } from "@ace/shared/types";
 
 /**
@@ -53,8 +54,8 @@ import { delegateToStateEngine } from "./orchestrator";
 async function dispatchToIdentityResolution(msg: UnifiedMessage): Promise<void> {
   const identity = await resolveGlobalBuyerId(msg.channel, msg.senderId);
   
-  console.log(`[Router] Normalised message from ${msg.channel} (Sender: ${msg.senderId})`);
-  console.log(`[Router] Resolved to Global Buyer ID: ${identity.globalBuyerId}`);
+  logger.log(`[Router] Normalised message from ${msg.channel} (Sender: ${msg.senderId})`);
+  logger.log(`[Router] Resolved to Global Buyer ID: ${identity.globalBuyerId}`);
   
   // Hand off to Phase 4: Intent Parsing & Autonomous State Engine Routing
   await dispatchToAutonomousStateEngine(msg, identity.globalBuyerId);

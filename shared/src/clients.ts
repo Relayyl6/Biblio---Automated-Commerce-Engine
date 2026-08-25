@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // shared/src/clients.ts
 //
 // Two infrastructure decisions worth explaining:
@@ -51,11 +52,21 @@ export function jsonb(value: unknown): ReturnType<typeof sql.json> {
 }
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-export const redis = new Redis(redisUrl);
+export const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: 3,
+  retryStrategy(times) {
+    // Stop retrying after 5 times
+    if (times > 5) {
+      logger.error("[redis] exhausted retries, stopping reconnection attempts.");
+      return null;
+    }
+    // Exponential backoff: 500ms, 1000ms, 2000ms...
+    const delay = Math.min(times * 500, 5000);
+    return delay;
+  },
+});
 
-// Fail fast on connection errors rather than silently retrying forever —
-// during local dev this saves you from staring at a hung request wondering
-// why nothing happens.
+// We still listen to errors to know when it drops, but we won't get spammed 11,000 times.
 redis.on("error", (err) => {
-  console.error("[redis] connection error:", err.message);
+  logger.error("[redis] connection error:", err.message);
 });

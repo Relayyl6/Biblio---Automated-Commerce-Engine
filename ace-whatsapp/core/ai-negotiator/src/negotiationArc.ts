@@ -47,7 +47,8 @@ export type ArcStage =
   | "close"       // Deal terms agreed — moving to checkout
   | "pivot"       // Customer below floor — attempting bundle or credit
   | "escalate"    // All tactics exhausted — escalated to merchant
-  | "abandoned";  // Customer stopped responding
+  | "abandoned"   // Customer stopped responding
+  | "awaiting_source"; // Waiting for a supplier/source to reply with a price
 
 export type NegotiationTactic =
   | "relationship_anchor"
@@ -100,6 +101,16 @@ export interface NegotiationArc {
   outcome?: "closed" | "below_floor_escalated" | "bundle_closed" | "abandoned";
   finalPrice?: number;
 
+  // ── Supplier Sourcing ──────────────────────────────────────────────────────
+  // Populated when stage = "awaiting_source". Cleared when source replies.
+  sourceQuoteRequest?: {
+    productQuery: string;        // What the customer asked about
+    sourcesContacted: string[];  // source IDs already messaged (to avoid re-sending)
+    quoteIds: string[];          // source_quotes row IDs to track replies
+    sentAt: number;              // Unix ms — to enforce reply timeout
+    timeoutAt: number;           // Unix ms — when to escalate if no reply
+  };
+
   createdAt: number;
   updatedAt: number;
 }
@@ -125,7 +136,9 @@ export type ArcEvent =
   | { type: "BUNDLE_PIVOTED"; agentOffer: number }
   | { type: "CREDIT_OFFERED"; creditAmount: number }
   | { type: "ESCALATED_TO_MERCHANT" }
-  | { type: "CUSTOMER_ABANDONED" };
+  | { type: "CUSTOMER_ABANDONED" }
+  | { type: "SOURCE_QUERIED"; productQuery: string; quoteIds: string[]; timeoutAt: number }
+  | { type: "SOURCE_REPLIED"; customerPrice: number; sourceName: string };
 
 export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc {
   const now = Date.now();
@@ -227,6 +240,34 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
             timestamp: now,
           },
         ],
+        updatedAt: now,
+      };
+    }
+
+    case "SOURCE_QUERIED": {
+      return {
+        ...arc,
+        stage: "awaiting_source",
+        sourceQuoteRequest: {
+          productQuery: event.productQuery,
+          sourcesContacted: [], // Will populate via tool
+          quoteIds: event.quoteIds,
+          sentAt: now,
+          timeoutAt: event.timeoutAt,
+        },
+        updatedAt: now,
+      };
+    }
+
+    case "SOURCE_REPLIED": {
+      if (arc.stage !== "awaiting_source") {
+        throw new ArcTransitionError(arc.stage, event.type, "can only receive source reply when awaiting source");
+      }
+      return {
+        ...arc,
+        stage: "anchor", // Or "counter" depending on where we were, default to anchor for new flow
+        agentLastOffer: event.customerPrice,
+        sourceQuoteRequest: undefined, // Clear the hold
         updatedAt: now,
       };
     }

@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 import { OutboundMessage } from "@ace/shared/types";
 import { sendWhatsAppMessage } from "../../../../ace-whatsapp/core/comms-router/src/whatsapp";
 
@@ -12,5 +13,5 @@ export async function send(msg: OutboundMessage): Promise<void> {
   }
   
   await sendWhatsAppMessage({ toPhone, text: msg.text, buttons: msg.buttons }, phoneNumberId);
-  console.log(`[WhatsApp Sender] Dispatched message to ${toPhone}`);
+  logger.log(`[WhatsApp Sender] Dispatched message to ${toPhone}`);
 }

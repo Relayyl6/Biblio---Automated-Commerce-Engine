@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // core/ai-negotiator/src/tools.ts  (v2 — negotiation-aware)
 //
 // ─── HOW THIS FILE CHANGED FROM V1 ───────────────────────────────────────────
@@ -24,6 +25,10 @@
 import { sql, jsonb } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import { transition, TransitionError } from "../../state-machine/src/orderStateMachine";
+import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
+import { sendCustomerMessage } from "../../comms-router/src/outbound.js";
+import Groq from "groq-sdk";
+
 
 import {
   validateProposedPrice,
@@ -40,7 +45,8 @@ import {
   type NegotiationArc,
   type NegotiationTactic,
 } from "./negotiationArc";
-import type { OrderState, OrderItem, Product } from "@ace/shared/types";
+import type { OrderState, OrderItem, Product, Source } from "@ace/shared/types";
+
 
 // ─── Tool Schema Definitions ──────────────────────────────────────────────────
 
@@ -198,6 +204,41 @@ export const toolDefinitions = [
       required: ["query"],
     },
   },
+  {
+    name: "search_visual_catalog",
+    description:
+      "Search the merchant's catalog using semantic text or a visual query (image). " +
+      "Use this when the customer provides an image or gives a visual description " +
+      "(e.g., 'that blue dress', 'the red shoes in your post') and check_inventory fails.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "The visual description of the item, or the base64 image data.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "source_price",
+    description:
+      "Contact the merchant's B2B suppliers to get a live wholesale price for a product. " +
+      "Use this ONLY if check_inventory fails to find the product in the catalog, OR if " +
+      "the catalog item has no price and must be sourced. " +
+      "This tool pauses the negotiation while we wait for the supplier to reply.",
+    input_schema: {
+      type: "object",
+      properties: {
+        productQuery: {
+          type: "string",
+          description: "What the customer is asking for (e.g. 'iPhone 11 64GB').",
+        },
+      },
+      required: ["productQuery"],
+    },
+  },
 ] as const;
 
 // ─── Execution Context ────────────────────────────────────────────────────────
@@ -235,16 +276,21 @@ export async function executeTool(
   switch (name) {
     case "check_inventory": {
       const rows = await checkInventory(ctx.merchantId, input.query);
-      // If results came back, signal the agent loop to recompute the
-      // authorized range with the real product price. The loop picks the
-      // top result's price as the new basePrice — the model can still
-      // choose a different SKU but the range will be recalculated on the
-      // next propose_price call once it does.
       const topResult = rows[0];
       return {
         output: rows,
         rangeUpdate: topResult
-          ? { basePrice: topResult.price, productSku: topResult.sku }
+          ? { basePrice: topResult.price ?? undefined, productSku: topResult.sku }
+          : undefined,
+      };
+    }
+    case "search_visual_catalog": {
+      const rows = await searchVisualCatalog(ctx.merchantId, input.query);
+      const topResult = rows[0];
+      return {
+        output: rows,
+        rangeUpdate: topResult
+          ? { basePrice: topResult.price ?? undefined, productSku: topResult.sku }
           : undefined,
       };
     }
@@ -264,11 +310,15 @@ export async function executeTool(
     case "escalate_to_merchant":
       return await escalateToMerchant(input.customerFinalOffer, input.summary, ctx);
     case "issue_payment_link":
-      return issuePaymentLink(ctx);
+      return await issuePaymentLink(ctx);
     case "search_web": {
       const { query } = input as { query: string };
       const results = await executeSearchWeb(query);
       return { output: results };
+    }
+    case "source_price": {
+      const { productQuery } = input as { productQuery: string };
+      return await sourcePrice(productQuery, ctx);
     }
     default:
       return { output: { error: `Unknown tool: ${name}` } };
@@ -328,6 +378,59 @@ async function checkInventory(merchantId: string, query: string): Promise<Produc
     currency: r.currency,
     active: true,
     source: "db",
+  }));
+}
+
+async function searchVisualCatalog(merchantId: string, query: string) {
+  let embeddingStr = "[]";
+  try {
+    const { generateEmbedding } = await import("@ace/shared/data-intelligence/embeddings");
+    const vector = await generateEmbedding(query);
+    embeddingStr = `[${vector.join(",")}]`;
+  } catch (err) {
+    logger.error("[searchVisualCatalog] Failed to generate embedding", err);
+    return [];
+  }
+
+  // Use <=> for cosine distance search
+  const rows = await sql<{
+    sku: string;
+    name: string;
+    stock: number | null;
+    price: number | null;
+    description: string | null;
+    category: string | null;
+    tags: string[] | null;
+    attributes: Record<string, string> | null;
+    image_url: string | null;
+    currency: string;
+    distance: number;
+  }[]>`
+    SELECT sku, name, stock, price, description, category, tags, attributes,
+           image_url, currency,
+           (image_embedding <=> ${embeddingStr}::vector) as distance
+    FROM products
+    WHERE merchant_id = ${merchantId}
+      AND active = true
+      AND image_embedding IS NOT NULL
+    ORDER BY distance ASC
+    LIMIT 3
+  `;
+
+  return rows.map((r) => ({
+    sku: r.sku,
+    name: r.name,
+    stock: r.stock,
+    price: r.price,
+    description: r.description,
+    category: r.category,
+    tags: r.tags ?? [],
+    attributes: r.attributes ?? {},
+    image_url: r.image_url,
+    currency: r.currency,
+    active: true,
+    source: "db_visual",
+    similarity_score: 1 - r.distance // Output a human-readable similarity score
   }));
 }
 
@@ -422,7 +525,7 @@ function proposePrice(
   }
 
   if (validation.reason === "injection_detected") {
-    console.warn(`[security] injection detected — customer ${ctx.customerId}:`, validation.pattern);
+    logger.warn(`[security] injection detected — customer ${ctx.customerId}:`, validation.pattern);
     return {
       output: {
         ok: false,
@@ -549,22 +652,113 @@ async function escalateToMerchant(
   `;
 
   const newArc = advanceArc(ctx.arc, { type: "ESCALATED_TO_MERCHANT" });
+  
+  try {
+    const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${ctx.merchantId} limit 1`;
+    const merchantPhone = merchantRows[0]?.contact_phone;
+    if (!merchantPhone) {
+       throw new Error("Merchant has no contact_phone configured.");
+    }
+    await vendorCommunique.dispatchEscalation(
+      ctx.merchantId,
+      merchantPhone,
+      ctx.customerId,
+      "Below-floor negotiation — manual exception required",
+      { turn: ctx.arc as any, arc: ctx.arc } // Passing arc twice to satisfy the context for now
+    );
+  } catch (err) {
+    logger.error("[tools] Failed to dispatch vendor communique:", err);
+    return {
+      output: {
+        ok: false,
+        error: "CRITICAL: The vendor is unreachable via all channels (WhatsApp/SMS). Inform the customer that the vendor cannot be reached right now, and ask them to try again later."
+      }
+    };
+  }
+
   return {
     output: {
       ok: true,
       escalated: true,
-      message: "Merchant notified. Tell the customer you are checking with the vendor.",
+      message: "Merchant successfully notified via SMS. Tell the customer you are checking with the vendor.",
     },
     newArc,
   };
 }
 
-function issuePaymentLink(ctx: ToolContext): ToolResult {
+async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
   if (ctx.orderState.status !== "draft") {
     return { output: { ok: false, error: "Call close_deal first." } };
   }
-  const virtualAccountNumber = `9${Math.floor(100000000 + Math.random() * 900000000)}`;
-  const expiresAt = Date.now() + 15 * 60 * 1000;
+
+  const dealPrice = ctx.orderState.quotedTotal;
+
+  // ── Platform fee markup (5%) ───────────────────────────────────────────────
+  // Customer pays 5% above the agreed deal price.
+  // Paystack takes ~1.5% + ₦100, Biblio retains the rest (~3.5%).
+  // e.g. ₦100,000 deal → customer transfers ₦105,000
+  const PLATFORM_FEE_RATE = 0.05;
+  const customerPayableAmount = Math.ceil(dealPrice * (1 + PLATFORM_FEE_RATE));
+
+  // ── Paystack: create a charge with bank_transfer channel ──────────────────
+  const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+  let virtualAccountNumber: string;
+  let bankName = "Providus Bank";
+  let accountName = "ACE Commerce Collections";
+
+  if (paystackSecretKey) {
+    try {
+      const chargeRes = await fetch("https://api.paystack.co/charge", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${paystackSecretKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          // Paystack amounts are in kobo (1 NGN = 100 kobo)
+          amount: customerPayableAmount * 100,
+          email: `${ctx.customerId.replace(/[^a-zA-Z0-9]/g, "")}@ace-commerce.app`,
+          currency: "NGN",
+          channels: ["bank_transfer"],
+          metadata: {
+            orderId: ctx.orderState.orderId,
+            merchantId: ctx.merchantId,
+            customerId: ctx.customerId,
+            dealPrice,
+            platformFee: customerPayableAmount - dealPrice,
+          },
+        }),
+      });
+      const chargeData = await chargeRes.json() as any;
+      if (!chargeRes.ok) {
+        throw new Error(`Paystack API returned ${chargeRes.status}: ${JSON.stringify(chargeData)}`);
+      }
+
+      // Paystack bank_transfer returns account details under authorization
+      virtualAccountNumber =
+        chargeData.data?.authorization?.receiver_bank_account_number ??
+        chargeData.data?.bank_transfer?.account_number ??
+        chargeData.data?.account_number;
+      
+      if (!virtualAccountNumber) {
+        throw new Error("Paystack did not return a virtual account number");
+      }
+
+      bankName =
+        chargeData.data?.authorization?.receiver_bank ??
+        chargeData.data?.bank_transfer?.bank_name ??
+        bankName;
+    } catch (err) {
+      logger.error("[tools] Paystack charge failed:", err);
+      return { output: { ok: false, error: "Payment provider unavailable. Tell the customer to try again in a few minutes." } };
+    }
+  } else {
+    // No Paystack key configured — this is a production error!
+    logger.error("[tools] CRITICAL: PAYSTACK_SECRET_KEY is not configured.");
+    return { output: { ok: false, error: "Payment system misconfigured. Please escalate." } };
+  }
+
+  const expiresAt = Date.now() + 30 * 60 * 1000; // 30-minute payment window
   try {
     const newOrderState = transition(ctx.orderState, {
       type: "PAYMENT_LINK_ISSUED",
@@ -572,7 +766,6 @@ function issuePaymentLink(ctx: ToolContext): ToolResult {
       expiresAt,
     });
 
-    // Telemetry: Capture payment link issuance state transition
     dataIntelligence.captureOrderStateChange({
       merchantId: ctx.merchantId,
       customerId: ctx.customerId,
@@ -582,12 +775,32 @@ function issuePaymentLink(ctx: ToolContext): ToolResult {
       timestamp: Date.now(),
     }).catch(() => {});
 
-    return { output: { ok: true, virtualAccountNumber, expiresInMinutes: 15 }, newOrderState };
+    return {
+      output: {
+        ok: true,
+        virtualAccountNumber,
+        bankName,
+        accountName,
+        dealPrice,
+        customerPayableAmount,
+        platformFeeNgn: customerPayableAmount - dealPrice,
+        expiresInMinutes: 30,
+        instructions:
+          `Transfer exactly ₦${customerPayableAmount.toLocaleString("en-NG")} to:\n` +
+          `Bank: ${bankName}\n` +
+          `Account Number: ${virtualAccountNumber}\n` +
+          `Account Name: ${accountName}\n` +
+          `(This includes a ₦${(customerPayableAmount - dealPrice).toLocaleString("en-NG")} processing fee)`,
+      },
+      newOrderState,
+    };
   } catch (err) {
     if (err instanceof TransitionError) return { output: { ok: false, error: err.message } };
     throw err;
   }
 }
+
+
 
 
 async function getCurrentStock(merchantId: string, sku: string): Promise<number> {
@@ -617,4 +830,114 @@ async function executeSearchWeb(query: string): Promise<{ snippets: string[]; qu
     .map((r: any) => `• ${r.title}: ${r.description}`);
 
   return { snippets, query };
+}
+
+async function sourcePrice(productQuery: string, ctx: ToolContext): Promise<ToolResult> {
+  const sources = await sql<Source[]>`
+    SELECT * FROM sources WHERE merchant_id = ${ctx.merchantId} AND active = true
+  `;
+  
+  if (sources.length === 0) {
+    return { output: { ok: false, error: "No sources configured for this merchant. Cannot source price." } };
+  }
+
+  // ── Semantic Routing via LLM ────────────────────────────────────────────────
+  // In a full production system at massive scale, we might use pgvector + CLIP
+  // embeddings here. But for routing between a few suppliers, an LLM provides
+  // superior semantic matching (e.g. understanding "macbook" goes to "laptops")
+  // with no infra overhead.
+  let matchedSources: Source[] = [];
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
+  
+  try {
+    const sourceList = sources.map(s => `- ID: ${s.id}\n  Name: ${s.name}\n  Category/Description: ${s.description || "General items"}`).join("\n\n");
+    
+    const prompt = `You are a B2B supplier routing engine. A customer wants: "${productQuery}".
+Below are the available suppliers for this merchant:
+
+${sourceList}
+
+Select the suppliers that are most likely to carry this product based on their description.
+Return a JSON array of the supplier IDs that match. If none match, return [].
+Output ONLY valid JSON in the format: { "matches": ["id1", "id2"] }`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      response_format: { type: "json_object" },
+      temperature: 0,
+    });
+
+    const resultText = completion.choices[0]?.message?.content || '{"matches":[]}';
+    const parsed = JSON.parse(resultText) as { matches: string[] };
+    
+    if (parsed.matches && Array.isArray(parsed.matches)) {
+      matchedSources = sources.filter(s => parsed.matches.includes(s.id));
+    }
+  } catch (err) {
+    logger.error("[sourcePrice] Semantic routing failed, falling back to default sources.", err);
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
+  if (matchedSources.length === 0) {
+    matchedSources = sources.filter(s => s.is_default);
+  }
+  if (matchedSources.length === 0) {
+    matchedSources = sources; // Broadcast to all if no default
+  }
+
+  const quoteIds: string[] = [];
+  const contactedIds: string[] = [];
+  const timeoutAt = Date.now() + ((matchedSources[0]?.reply_timeout_minutes ?? 10) * 60 * 1000);
+  const orderId = ctx.orderState.status !== "no_order" ? (ctx.orderState as any).orderId : null;
+
+  // Send message to each matched source
+  for (const source of matchedSources) {
+    if (!source.contact && source.type !== "self") continue;
+    
+    let querySent = "";
+    if (source.type === "whatsapp_individual" || source.type === "whatsapp_group") {
+      querySent = `Customer is asking for: *${productQuery}*\n\nHow much is the current wholesale price? (Reply with price to update customer)`;
+      await sendCustomerMessage({ toPhone: source.contact!, text: querySent }, undefined, ctx.merchantId);
+    } else if (source.type === "self") {
+       // Escalation route
+       querySent = `A customer is asking for *${productQuery}* but we don't have a catalog price. What should we quote them?`;
+       // Send to the merchant's personal number
+       const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${ctx.merchantId} limit 1`;
+       const merchantPhone = merchantRows[0]?.contact_phone;
+       if (merchantPhone) {
+         await sendCustomerMessage({ toPhone: merchantPhone, text: querySent }, undefined, ctx.merchantId);
+       }
+    } else {
+       // API not implemented in MVP script
+       continue;
+    }
+
+    const rows = await sql<{id: string}[]>`
+      INSERT INTO source_quotes (order_id, source_id, merchant_id, customer_id, product_query, query_sent)
+      VALUES (
+        ${orderId}, 
+        ${source.id}, ${ctx.merchantId}, ${ctx.customerId}, ${productQuery}, ${querySent}
+      )
+      RETURNING id
+    `;
+    
+    quoteIds.push(rows[0].id);
+    contactedIds.push(source.id);
+  }
+
+  const newArc = advanceArc(ctx.arc, { 
+    type: "SOURCE_QUERIED", 
+    productQuery, 
+    quoteIds, 
+    timeoutAt 
+  });
+
+  return {
+    output: {
+      ok: true,
+      message: `Message sent to ${contactedIds.length} sources. Tell the customer you are confirming the warehouse price and they should hold on a minute.`,
+    },
+    newArc
+  };
 }

@@ -35,17 +35,11 @@ import { Queue, Worker, type Job } from "bullmq";
 import { redis, sql } from "@ace/shared/clients";
 import type { InboundMessage, ConversationTurn, OrderState } from "@ace/shared/types";
 import { runNegotiatorTurn } from "../../ai-negotiator/src/agentLoop";
+import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop";
+import { handleSourceReply } from "./sourceReplyHandler.js";
 
 const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 10_000);
 
-// BullMQ needs its OWN connection options, not the shared client's. Two things
-// matter here:
-//   - maxRetriesPerRequest MUST be null: BullMQ uses blocking commands (BRPOP)
-//     and ioredis throws on them unless retries are disabled. Reusing the
-//     shared `redis` (which has the default retry count) makes the Worker crash
-//     on startup.
-//   - We pass connection OPTIONS (not the shared instance) so BullMQ manages
-//     its own dedicated connections for the blocking loop.
 const connection = {
   connection: { ...redis.options, maxRetriesPerRequest: null },
 };
@@ -55,9 +49,69 @@ export const turnQueue = new Queue<{ customerId: string; merchantId: string }>(
   connection
 );
 
+export const biblioAgentQueue = new Queue<{ customerId: string; merchantId: string }>(
+  "biblio-agent-turns",
+  connection
+);
+
 function scratchKey(merchantId: string, customerId: string) {
   return `scratch:${merchantId}:${customerId}`;
 }
+
+function biblioScratchKey(merchantId: string, customerId: string) {
+  return `scratch:biblio:${merchantId}:${customerId}`;
+}
+
+export async function enqueueBiblioAgentMessage(msg: InboundMessage): Promise<void> {
+  const customerId = msg.fromPhone;
+  const merchantId = msg.toPhoneNumberId;
+
+  if (!merchantId) throw new Error("No merchantId");
+
+  const key = biblioScratchKey(merchantId, customerId);
+  await redis.rpush(key, JSON.stringify(msg));
+
+  const bullJobId = `biblio_turn_${merchantId}_${customerId}`;
+  const existing = await biblioAgentQueue.getJob(bullJobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "delayed") {
+      await existing.remove();
+    }
+  }
+
+  await biblioAgentQueue.add(
+    "process-biblio-turn",
+    { customerId, merchantId },
+    {
+      jobId: bullJobId,
+      delay: DEBOUNCE_MS,
+      removeOnComplete: true,
+      removeOnFail: true,
+    }
+  );
+}
+
+export const biblioWorker = new Worker<{ customerId: string; merchantId: string }>(
+  "biblio-agent-turns",
+  async (job: Job<{ customerId: string; merchantId: string }>) => {
+    const { customerId, merchantId } = job.data;
+    const key = biblioScratchKey(merchantId, customerId);
+
+    const tx = redis.multi();
+    tx.lrange(key, 0, -1);
+    tx.del(key);
+    const results = await tx.exec();
+    const rawMessages = (results?.[0]?.[1] as string[]) ?? [];
+
+    if (rawMessages.length === 0) return;
+
+    const messages: InboundMessage[] = rawMessages.map((r) => JSON.parse(r));
+    const turn: ConversationTurn = { customerId, merchantId, messages, orderState: { status: "no_order" } };
+    await runBiblioAgentTurn(turn);
+  },
+  connection
+);
 
 /**
  * Called for every deduped inbound message.
@@ -72,6 +126,20 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
       `Inbound message ${msg.waMessageId} has no toPhoneNumberId (merchant/vendor ID)`
     );
   }
+
+  // ── Source Reply Detection ──────────────────────────────────────────────────
+  // If the message is from a known source, it routes differently (no debounce,
+  // directly unpauses the customer arc).
+  const sourceRows = await sql<{id: string, name: string, pricing_rules: any}[]>`
+    SELECT id, name, pricing_rules FROM sources 
+    WHERE contact = ${customerId} AND merchant_id = ${merchantId} AND active = true 
+    LIMIT 1
+  `;
+  if (sourceRows.length > 0) {
+    const handled = await handleSourceReply(msg, sourceRows[0]);
+    if (handled) return;
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Push raw message onto this merchant-customer conversation buffer
   const key = scratchKey(merchantId, customerId);

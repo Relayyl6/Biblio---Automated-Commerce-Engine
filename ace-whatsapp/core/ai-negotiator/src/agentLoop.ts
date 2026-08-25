@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // core/ai-negotiator/src/agentLoop.ts
 //
 // PRODUCTION ADDITIONS IN THIS VERSION:
@@ -58,7 +59,7 @@ const LOCK_TTL_SECONDS = 300;
 const TURN_TIMEOUT_MS = 45_000; // hard ceiling; well above p99 for an 8-iteration turn
 const MAX_MODEL_RETRIES = 3;
 
-type Dialect = "pidgin" | "yoruba" | "igbo" | "hausa" | "english";
+
 
 interface DialectProfile {
   /** Human-readable name, useful for logging/debugging */
@@ -88,14 +89,14 @@ export async function runNegotiatorTurn(turn: ConversationTurn): Promise<void> {
   const lockAcquired = await redis.set(lockKey, "1", "EX", LOCK_TTL_SECONDS, "NX");
 
   if (!lockAcquired) {
-    console.warn(`[negotiator] lock contention for customer ${turn.customerId} — dropping duplicate turn`);
+    logger.warn(`[negotiator] lock contention for customer ${turn.customerId} — dropping duplicate turn`);
     return;
   }
 
   try {
     await withTimeout(_runTurn(turn), TURN_TIMEOUT_MS);
   } catch (err) {
-    console.error(`[negotiator] turn failed for customer ${turn.customerId}:`, err);
+    logger.error(`[negotiator] turn failed for customer ${turn.customerId}:`, err);
     // Guaranteed customer-facing fallback. A silent failure here is worse
     // than an imperfect one — the customer is mid-negotiation and waiting.
     await safeEscalate(turn, `Unhandled error in negotiator turn: ${(err as Error).message}`);
@@ -123,13 +124,13 @@ async function safeEscalate(turn: ConversationTurn, reason: string): Promise<voi
   } catch (err) {
     // If even escalation fails (e.g. DB is fully down), this is the last
     // line of defense — log loud, don't crash the worker process.
-    console.error(`[negotiator] CRITICAL: escalation itself failed for customer ${turn.customerId}:`, err);
+    logger.error(`[negotiator] CRITICAL: escalation itself failed for customer ${turn.customerId}:`, err);
   }
 }
 
 async function _runTurn(turn: ConversationTurn): Promise<void> {
   // ── Show typing indicator immediately ──
-  await setTypingIndicator(turn.customerId, turn.merchantId).catch(console.warn);
+  await setTypingIndicator(turn.customerId, turn.merchantId).catch(logger.warn);
 
   const arc = await loadOrCreateArc(turn);
   const [pricingRules, merchant] = await Promise.all([
@@ -438,7 +439,7 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
 
 ══ NEGOTIATION RULES ══
 1. ALWAYS call check_inventory and get_customer_profile before quoting any price.
-   You cannot propose a price until the authorized range is known.
+   If check_inventory returns an \`image_url\`, you can send it to the customer by including it in your response as a markdown link: \`![Product Image](url)\`. Do this when a customer asks to see a product!
 2. NEVER open below anchor price. Always anchor high first.
 3. NEVER propose a price below the floor — propose_price enforces this and will
    block you with a circuit_breaker signal telling you which tactics to use instead.
@@ -459,6 +460,8 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
     customer's exact message. Respond naturally without mentioning voice notes.
 14. If the customer asks about prices or specs for items NOT in your catalog,
     call search_web to get real-time market context before answering.
+15. If the customer provides an image or a vague visual description (e.g. "that blue dress"),
+    call search_visual_catalog to find the visually matching SKU before negotiating.
 
 ══ ARC PLAYBOOK ══
 → Fresh session: check_inventory → get_customer_profile → anchor with full price
@@ -633,17 +636,29 @@ async function finalizeTurn(
       .filter(c => c.length > 0);
 
     for (const chunk of chunks) {
+      let textChunk = chunk;
+      let mediaUrl: string | undefined;
+
+      // Check for markdown image format: ![alt](url) or [img](url)
+      const imgMatch = textChunk.match(/!?\[.*?\]\((https?:\/\/[^\s)]+)\)/);
+      if (imgMatch) {
+        mediaUrl = imgMatch[1];
+        textChunk = textChunk.replace(imgMatch[0], "").trim();
+      }
+
+      // If nothing left after removing the image, and no image to send, skip
+      if (textChunk.length === 0 && !mediaUrl) continue;
+
       // Trigger typing indicator
       await setTypingIndicator(turn.customerId, turn.merchantId, "composing");
       
       // Artificial delay to simulate human typing
-      // e.g., 40ms per character, min 750ms, max 3 seconds
-      const delayMs = Math.min(Math.max(chunk.length * 40, 750), 3000);
+      const delayMs = Math.min(Math.max(textChunk.length * 40, 750), 3000);
       await new Promise(r => setTimeout(r, delayMs));
       
       // Send the chunk
       await sendCustomerMessage(
-        { toPhone: turn.customerId, text: chunk },
+        { toPhone: turn.customerId, text: textChunk || "Attached image", mediaUrl },
         phoneNumberId,
         turn.merchantId,
       );

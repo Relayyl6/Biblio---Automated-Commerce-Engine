@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // shared/src/env.ts
 //
 // Every service in this repo imports its config from HERE, not from raw
@@ -40,8 +41,8 @@ const commsSchema = sharedSchema.extend({
 function loadEnv<T extends z.ZodTypeAny>(schema: T, serviceName: string): z.infer<T> {
   const result = schema.safeParse(process.env);
   if (!result.success) {
-    console.error(`[${serviceName}] invalid environment config:`);
-    console.error(result.error.format());
+    logger.error(`[${serviceName}] invalid environment config:`);
+    logger.error("Config error", result.error.format());
     process.exit(1);
   }
   return result.data;

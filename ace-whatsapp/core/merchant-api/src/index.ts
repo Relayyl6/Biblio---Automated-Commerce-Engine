@@ -180,6 +180,69 @@ app.patch("/merchants/:id", async (req, reply) => {
   return { ok: true };
 });
 
+// ─── Bank Onboarding (Escrow/Transfer Setup) ─────────────────────────────────
+
+app.post("/merchants/:id/bank-account", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { accountNumber, bankCode, accountName } = req.body as {
+    accountNumber: string;
+    bankCode: string;
+    accountName: string;
+  };
+
+  if (!accountNumber || !bankCode || !accountName) {
+    return reply.code(400).send({ error: "accountNumber, bankCode, and accountName are required" });
+  }
+
+  const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+  if (!paystackSecretKey) {
+    return reply.code(500).send({ error: "Paystack is not configured" });
+  }
+
+  // 1. Create a Transfer Recipient on Paystack
+  let recipientCode: string;
+  try {
+    const res = await fetch("https://api.paystack.co/transferrecipient", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${paystackSecretKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "nuban",
+        name: accountName,
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: "NGN",
+      }),
+    });
+    
+    if (!res.ok) {
+      const errText = await res.text();
+      req.log.error({ errText }, "Paystack recipient creation failed");
+      return reply.code(400).send({ error: "Failed to verify bank account with Paystack" });
+    }
+    const data = await res.json() as any;
+    recipientCode = data.data.recipient_code;
+  } catch (err) {
+    req.log.error(err, "Failed to call Paystack");
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+
+  // 2. Save to database
+  const rows = await sql`
+    update merchants set
+      bank_account_number = ${accountNumber},
+      bank_code = ${bankCode},
+      paystack_recipient_code = ${recipientCode}
+    where id = ${id}
+    returning id
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "merchant not found" });
+
+  return { ok: true, recipientCode };
+});
+
 // ─── Pricing rules (the negotiation authority) ───────────────────────────────
 
 app.put("/merchants/:id/pricing-rules", async (req, reply) => {

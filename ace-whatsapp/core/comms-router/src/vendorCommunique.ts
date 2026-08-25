@@ -20,12 +20,14 @@
 import { redis, sql } from "@ace/shared/clients";
 import { sendWhatsAppMessage } from "./whatsapp.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
+import { logger } from "@ace/shared/logger";
 import type { ConversationTurn } from "@ace/shared/types";
 import type { NegotiationArc } from "../../ai-negotiator/src/negotiationArc.js";
 
 // Lazy-import the Baileys adapter so this file doesn't hard-depend on the
 // baileys-gateway package at startup (the gateway is an optional service).
 async function getBaileysAdapter() {
+  if (process.env.USE_BAILEYS !== "true") return null;
   try {
     return await import("../../baileys-gateway/src/outboundAdapter.js");
   } catch {
@@ -70,13 +72,11 @@ export class VendorCommuniqueEngine {
       `*2* — Hold firm at your floor\n` +
       `*3* — Offer a bundle pivot`;
 
-    // ── Try Baileys first ───────────────────────────────────────────────────
+    // ── Try Baileys first (Biblio Agent) ───────────────────────────────────────────────────
     let sentViaBaileys = false;
     const adapter = await getBaileysAdapter();
 
     if (adapter) {
-      // Look up the vendor record for this merchant — the vendorId is the
-      // session key in the Baileys gateway's session registry.
       const vendorRows = await sql<{ id: string }[]>`
         SELECT id FROM vendors
         WHERE merchant_id = ${merchantId}
@@ -94,20 +94,26 @@ export class VendorCommuniqueEngine {
           );
           sentViaBaileys = true;
         } catch (err) {
-          console.warn(
-            `[VendorCommunique] Baileys send failed for merchant ${merchantId}, falling back to Graph API:`,
-            err
+          logger.warn(
+            `[VendorCommunique] Baileys send failed for merchant ${merchantId}, falling back to SMS:`
           );
         }
       }
     }
 
-    // ── Graph API fallback ──────────────────────────────────────────────────
     if (!sentViaBaileys) {
-      await sendWhatsAppMessage(
-        { toPhone: merchantPhone, text },
-        "default_phone_id",
-        merchantId
+      // Send SMS immediately if Baileys is offline
+      await this.sendSms(merchantId, merchantPhone, text);
+    } else {
+      // Schedule an SMS fallback job in 5 minutes
+      const { Queue } = await import("bullmq");
+      const smsQueue = new Queue("sms-fallback", {
+        connection: { ...redis.options, maxRetriesPerRequest: null }
+      });
+      await smsQueue.add(
+        "fallback-sms",
+        { merchantId, merchantPhone, text },
+        { delay: 5 * 60 * 1000 }
       );
     }
 
@@ -121,7 +127,7 @@ export class VendorCommuniqueEngine {
         customerId,
         arcSessionId: arc.sessionId,
         pendingReason: reason,
-        channel: sentViaBaileys ? "baileys" : "graph_api",
+        channel: sentViaBaileys ? "baileys" : "sms",
       })
     );
 
@@ -132,9 +138,41 @@ export class VendorCommuniqueEngine {
       metadata: {
         customerId,
         reason,
-        channel: sentViaBaileys ? "baileys" : "graph_api",
+        channel: sentViaBaileys ? "baileys" : "sms",
       },
     });
+  }
+
+  public async sendSms(merchantId: string, merchantPhone: string, text: string) {
+    if (!process.env.AT_API_KEY) {
+      logger.warn("[VendorCommunique] AT_API_KEY missing, skipping real SMS send.");
+      return;
+    }
+
+    try {
+      const africastalking = (await import("africastalking")).default;
+      const at = africastalking({
+        apiKey: process.env.AT_API_KEY,
+        username: process.env.AT_USERNAME || "sandbox"
+      });
+      const sms = at.SMS;
+      
+      const formattedPhone = merchantPhone.startsWith("+") 
+        ? merchantPhone 
+        : `+${merchantPhone}`;
+        
+      await logger.log(`[VendorCommunique] Sending SMS to ${formattedPhone} via Africa's Talking Sandbox...`, { merchantId });
+      
+      const response = await sms.send({
+        to: [formattedPhone],
+        message: text
+      });
+      
+      await logger.log(`[VendorCommunique] SMS sent successfully:`, { merchantId, response });
+    } catch (err) {
+      await logger.error(`[VendorCommunique] Africa's Talking SMS failed:`, { merchantId, err });
+      throw new Error("Failed to deliver escalation to vendor via SMS.");
+    }
   }
 
   /**
@@ -180,10 +218,21 @@ export class VendorCommuniqueEngine {
 
     await redis.del(sessionKey);
 
-    // TODO (Phase 2): Resume the AI negotiator loop with new constraints.
-    // The arc sessionId is in session.arcSessionId — look up the BullMQ job
-    // and re-enqueue with the merchant's decision as context.
-    console.log(
+    // Resume the AI negotiator loop with new constraints.
+    // We inject a SYSTEM message acting as the customer, so the AI sees the decision.
+    const { enqueueInboundMessage } = await import("./debounce.js");
+    await enqueueInboundMessage({
+      waMessageId: `sys_${Date.now()}`,
+      fromPhone: session.customerId,
+      toPhoneNumberId: merchantId,
+      timestamp: Date.now(),
+      content: {
+        type: "text",
+        text: `[SYSTEM: The merchant responded to your escalation. Decision: ${decision}. Use this to inform your next reply to the customer.]`
+      }
+    });
+
+    logger.log(
       `[VendorCommunique] Merchant ${merchantId} resolved escalation ` +
         `for ${session.customerId} with: ${decision}`
     );
@@ -200,3 +249,21 @@ export class VendorCommuniqueEngine {
 }
 
 export const vendorCommunique = new VendorCommuniqueEngine();
+
+import { Worker, type Job } from "bullmq";
+export const smsFallbackWorker = new Worker<{ merchantId: string, merchantPhone: string, text: string }>(
+  "sms-fallback",
+  async (job: Job<{ merchantId: string, merchantPhone: string, text: string }>) => {
+    const { merchantId, merchantPhone, text } = job.data;
+    const sessionKey = `communique:${merchantId}:active`;
+    const isActive = await redis.exists(sessionKey);
+    
+      if (isActive) {
+      logger.log(`[VendorCommunique] WhatsApp timeout reached for ${merchantId}. Dispatching SMS fallback.`);
+      await vendorCommunique.sendSms(merchantId, merchantPhone, text);
+    } else {
+      logger.log(`[VendorCommunique] Skipping SMS fallback for ${merchantId} — already resolved via WhatsApp.`);
+    }
+  },
+  { connection: { ...redis.options, maxRetriesPerRequest: null } }
+);

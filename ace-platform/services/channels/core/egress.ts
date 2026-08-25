@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 import { PlatformChannel, OutboundMessage } from "@ace/shared/types";
 
 /**
@@ -14,7 +15,7 @@ export async function dispatchEgressMessage(msg: OutboundMessage): Promise<void>
     throw new Error("OutboundMessage missing recipient (toSenderId or toPhone).");
   }
 
-  console.log(`[Egress] Dispatching message to ${recipient} via ${targetChannel}`);
+  logger.log(`[Egress] Dispatching message to ${recipient} via ${targetChannel}`);
 
   switch (targetChannel) {
     case "whatsapp":

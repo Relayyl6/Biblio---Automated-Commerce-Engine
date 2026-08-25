@@ -181,3 +181,42 @@ export function transition(
       return assertNever(state);
   }
 }
+import { redis, sql } from "@ace/shared/clients.js";
+
+/**
+ * Wraps the pure transition function to automatically save to DB and emit to Redis Pub/Sub.
+ */
+export async function transitionAndEmit(
+  merchantId: string, 
+  customerId: string, 
+  orderId: string,
+  currentState: OrderState, 
+  event: OrderEvent
+): Promise<OrderState | TransitionError> {
+  const result = transition(currentState, event);
+  
+  if (!("code" in result)) {
+    // It's a successful transition
+    await sql`
+      UPDATE orders 
+      SET state = ${sql.json(result as any)}, updated_at = NOW() 
+      WHERE id = ${orderId}
+    `;
+
+    // Emit event
+    if (event.type === "PAYMENT_CONFIRMED") {
+      await redis.publish("events:payment_confirmed", JSON.stringify({
+        merchantId, customerId, orderId, timestamp: Date.now()
+      }));
+    } else if (event.type as string === "ORDER_COMPLETED") {
+      await redis.publish("events:order_completed", JSON.stringify({
+        merchantId, customerId, orderId, timestamp: Date.now()
+      }));
+    } else if (event.type as string === "MARK_SHIPPED") {
+       // Just as an example, this might trigger inventory deductions 
+       // but typically those are explicit tool actions. 
+    }
+  }
+  
+  return result;
+}

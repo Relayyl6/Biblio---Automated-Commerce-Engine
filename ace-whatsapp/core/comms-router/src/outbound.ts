@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // core/comms-router/src/outbound.ts
 //
 // BIBLO Flaw 1 (the WhatsApp API Margin Death Spiral): every business-initiated
@@ -36,8 +37,8 @@ export type SendClass = "free_session" | "billable_business_initiated";
 
 const GATEWAY_URL = process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
 
-function windowKey(phone: string) {
-  return `conv:${phone}:window`;
+function windowKey(merchantId: string, phone: string) {
+  return `conv:${merchantId}:${phone}:window`;
 }
 
 /**
@@ -82,10 +83,14 @@ async function tryBaileysHttpSend(msg: OutboundMessage, merchantId: string): Pro
       throw new Error(`Gateway /send returned ${res.status}: ${body.error ?? "unknown error"}`);
     }
     return true;
-  } catch (err) {
+  } catch (err: any) {
     // If the gateway is down entirely, fall through to Graph API rather than silently dropping
-    if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
-      console.warn("[outbound] Baileys gateway unreachable — falling back to Graph API");
+    if (
+      err.code === "ECONNREFUSED" || 
+      (err.cause && err.cause.code === "ECONNREFUSED") ||
+      (err.cause && err.cause instanceof AggregateError && err.cause.errors.some((e: any) => e.code === "ECONNREFUSED"))
+    ) {
+      logger.warn("[outbound] Baileys gateway unreachable — falling back to Graph API");
       return false;
     }
     throw err;
@@ -121,7 +126,7 @@ export async function sendCustomerMessage(
   }
 
   // ── Meta Graph API path ──────────────────────────────────────────────────
-  const raw = await redis.get(windowKey(toPhone));
+  const raw = await redis.get(windowKey(merchantId ?? "", toPhone));
   const expiresAt = raw ? Number(raw) : null;
   const sendClass = classifyWindow(expiresAt, Date.now());
 
@@ -132,7 +137,11 @@ export async function sendCustomerMessage(
     );
   }
 
-  await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
+  try {
+    await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
+  } catch (err: any) {
+    logger.error(`[outbound] Failed to send WhatsApp message to ${toPhone}:`, err.message);
+  }
   return sendClass;
 }
 
@@ -152,9 +161,9 @@ export async function setTypingIndicator(
       body: JSON.stringify({ merchantId, toJid, presence }),
     });
     if (!res.ok) {
-      console.warn(`[outbound] failed to set typing indicator: ${res.status}`);
+      logger.warn(`[outbound] failed to set typing indicator: ${res.status}`);
     }
   } catch (err) {
-    console.warn("[outbound] error setting typing indicator:", err);
+    logger.warn("[outbound] error setting typing indicator:", err);
   }
 }

@@ -220,6 +220,38 @@ function extractMessages(body: unknown): InboundMessage[] {
   return out;
 }
 
+// ─── Vendor SMS Webhook (Communiqué Engine) ──────────────────────────────────
+import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
+
+app.post("/sms/webhook", async (req, reply) => {
+  // Simulating Africa's Talking / Twilio payload
+  // Typically they send: { from: '+234800...', text: '1', to: '...' }
+  const b = req.body as { from: string; text: string };
+  if (!b.from || !b.text) return reply.send({ ok: false });
+
+  // Resolve merchant by phone (using mocked logic or real lookup)
+  // For this MVP, we assume the from phone number is the merchant's contact phone
+  // But wait, the simulated phone is a random number we mocked as merchant_id in the test?
+  // Actually, we'll just require the `merchantId` to be passed in the payload for this test API,
+  // or look it up. Let's just look it up.
+  const rows = await sql<{ id: string }[]>`
+    select id from merchants where phone_number_id = ${b.from} limit 1
+  `;
+  if (!rows[0]) {
+    app.log.warn({ phone: b.from }, "SMS received from unknown merchant phone");
+    return reply.send({ ok: true }); // Ack provider
+  }
+
+  const merchantId = rows[0].id;
+  const handled = await vendorCommunique.handleMerchantReply(merchantId, b.text);
+  
+  if (handled) {
+    app.log.info({ merchantId, text: b.text }, "Processed Vendor Communique SMS reply");
+  }
+
+  return reply.send({ ok: true });
+});
+
 // ─── Boot + graceful shutdown ───────────────────────────────────────────────
 app.listen({ port: env.PORT, host: "0.0.0.0" }).then(() => {
   app.log.info(`ingestion-service listening on :${env.PORT}`);

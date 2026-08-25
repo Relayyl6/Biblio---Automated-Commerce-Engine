@@ -364,11 +364,36 @@ export async function createSession(vendorId: string, isPairing = false): Promis
         sessions.set(vendorCfg.merchant_id, sock);
         logger.info({ vendorId, merchantId: vendorCfg.merchant_id }, "Session registered under merchantId for outbound routing");
       }
+      
+      // Check previous status to send welcome message once
+      const prevStatusRows = await sql<{ session_status: string }[]>`
+        SELECT session_status FROM vendors WHERE id = ${vendorId}
+      `.catch(() => []);
+      
+      const isFirstTime = prevStatusRows[0]?.session_status === "pending";
+
       await sql`
         UPDATE vendors SET session_status = 'connected', updated_at = now()
         WHERE id = ${vendorId}
       `.catch(() => {});
       logger.info({ vendorId }, "Baileys session connected");
+
+      // Send the onboarding trigger
+      if (isFirstTime && vendorCfg?.personal_number) {
+        const merchantRows = await sql<{ name: string }[]>`
+          SELECT name FROM merchants WHERE id = ${vendorCfg.merchant_id}
+        `.catch(() => []);
+        const businessName = merchantRows[0]?.name || "your store";
+        
+        try {
+          await sock.sendMessage(`${vendorCfg.personal_number}@s.whatsapp.net`, {
+            text: `Hi ${businessName}, I'm Biblio. Nice call linking me — you'll never lose a client again! You can chat with me here to manage your inventory, approve customer offers, and track sales.`
+          });
+          logger.info({ vendorId }, "Sent Biblio Agent welcome message to vendor");
+        } catch (err) {
+          logger.error({ err, vendorId }, "Failed to send welcome message");
+        }
+      }
     }
   });
 

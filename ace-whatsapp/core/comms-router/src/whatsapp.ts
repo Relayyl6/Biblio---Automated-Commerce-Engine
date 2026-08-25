@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // core/comms-router/src/whatsapp.ts
 //
 // PRODUCTION ADDITIONS IN THIS VERSION:
@@ -181,14 +182,25 @@ async function sendWithRetry(
   accessToken: string,
   attempt = 1,
 ): Promise<void> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err: any) {
+    if (attempt < MAX_RETRIES) {
+      const backoffMs = 500 * 2 ** (attempt - 1) + Math.random() * 250;
+      await new Promise((r) => setTimeout(r, backoffMs));
+      return sendWithRetry(url, body, accessToken, attempt + 1);
+    }
+    logger.warn("[whatsapp] Failed to reach Meta Graph API:", err.message);
+    return; // Don't crash the caller, just log
+  }
 
   if (res.ok) return;
 
@@ -222,6 +234,6 @@ async function deadLetter(
     `;
   } catch (dlqErr) {
     // If even the dead-letter write fails, at minimum this must hit logs/alerts.
-    console.error(`[whatsapp] CRITICAL: failed to dead-letter a failed send for merchant ${merchantId}:`, dlqErr);
+    logger.error(`[whatsapp] CRITICAL: failed to dead-letter a failed send for merchant ${merchantId}:`, dlqErr);
   }
 }

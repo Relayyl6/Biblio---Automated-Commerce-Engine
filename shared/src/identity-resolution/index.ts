@@ -1,3 +1,4 @@
+import { logger } from "@ace/shared/logger.js";
 // shared/src/identity-resolution/index.ts
 //
 // Role: Global Buyer ID Engine
@@ -37,7 +38,7 @@ export class IdentityResolutionEngine {
     try {
       // In dev mode without real creds, skip Twilio call
       if (this.verifyServiceSid === 'VA_DUMMY_SID') {
-        console.log(`[TwilioStub] Sending mock OTP to ${phoneNumber}`);
+        logger.log(`[TwilioStub] Sending mock OTP to ${phoneNumber}`);
         return true;
       }
 
@@ -45,7 +46,7 @@ export class IdentityResolutionEngine {
         .verifications.create({ to: phoneNumber, channel: 'sms' });
       return true;
     } catch (e: any) {
-      console.error(`[IdentityEngine] Failed to send OTP: ${e.message}`);
+      logger.error(`[IdentityEngine] Failed to send OTP: ${e.message}`);
       return false;
     }
   }
@@ -69,7 +70,7 @@ export class IdentityResolutionEngine {
 
       return this.resolveBuyerIdentity(phoneNumber, merchantId, knownName);
     } catch (e: any) {
-      console.error(`[IdentityEngine] Failed to verify OTP: ${e.message}`);
+      logger.error(`[IdentityEngine] Failed to verify OTP: ${e.message}`);
       return null;
     }
   }
