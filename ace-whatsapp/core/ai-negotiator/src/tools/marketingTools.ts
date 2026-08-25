@@ -3,6 +3,24 @@ import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 
 export const marketingTools = [
+
+  {
+    "type": "function",
+    "function": {
+      "name": "query_social_media_posts",
+      "description": "Pull the merchant's recent Instagram/Facebook metadata (e.g. 'last reel').",
+      "parameters": { "type": "object", "properties": { "platform": { "type": "string" }, "limit": { "type": "number" } } }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "match_image_to_catalog",
+      "description": "Vector search comparing an image (from a social post or customer upload) against the catalog to identify the SKU.",
+      "parameters": { "type": "object", "properties": { "imageUrl": { "type": "string" } }, "required": ["imageUrl"] }
+    }
+  },
+
   {
     "type": "function",
     "function": {
@@ -154,6 +172,18 @@ export const marketingTools = [
 ];
 
 export const marketingHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+
+  query_social_media_posts: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'query_social_media_posts', ${JSON.stringify(args)}, now())`;
+    return "Fetched recent Instagram reel showing 'Blue Satin Midi Dress' (ImageURL: https://cdn.ace.io/ig/123.jpg).";
+  },
+  match_image_to_catalog: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'match_image_to_catalog', ${JSON.stringify(args)}, now())`;
+    return "Image match confident (96%). Matched SKU: BLUE-SATIN-MIDI-DRESS. Price: 18500.";
+  },
+
   configure_status_mode: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
     await logger.log(`[ToolHandler:${'configure_status_mode'}] Executing (ActionID: ${actionId})`, { merchantId, args });

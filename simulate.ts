@@ -1,89 +1,86 @@
 import { logger } from "@ace/shared/logger.js";
 import { sql, redis } from "@ace/shared/clients";
+
+// Mock fetch
 const originalFetch = global.fetch;
 global.fetch = async (url, options) => {
-  const urlStr = url.toString();
+  let urlStr = "";
+  if (typeof url === "string") urlStr = url;
+  else if (url instanceof URL) urlStr = url.toString();
+  else if (url && (url as any).url) urlStr = (url as any).url;
+
   if (!urlStr.includes("api.groq.com")) {
-    logger.log(`[Mocked fetch] Intercepted ${urlStr}`);
-    return { 
-      ok: true, 
-      status: 200, 
-      text: async () => "{}",
-      json: async () => ({}),
-      headers: { get: () => null }
-    } as any;
+    return { ok: true, status: 200, text: async () => "{}", json: async () => ({}), headers: { get: () => null } } as any;
   }
   return originalFetch(url, options);
 };
-import { vendorCommunique } from "./ace-whatsapp/core/comms-router/src/vendorCommunique.ts";
+
 import { runBiblioAgentTurn } from "./ace-whatsapp/core/ai-negotiator/src/biblioAgentLoop.ts";
-import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
+import { runNegotiatorTurn } from "./ace-whatsapp/core/ai-negotiator/src/agentLoop.ts";
 
 async function simulate() {
-  logger.log("=== STARTING BIBLIO AGENT & COMMUNIQUE SIMULATION ===\n");
+  logger.log("=== STARTING SERVICE BOOKING SIMULATION ===\n");
 
-  const vendor = await sql`SELECT * FROM vendors WHERE session_status = 'connected' LIMIT 1`;
-  if (!vendor[0]) {
-    logger.error("No connected vendor found!");
-    process.exit(1);
-  }
-  
-  const merchantId = vendor[0].merchant_id;
-  const merchantPhone = vendor[0].business_line_number;
-  const customerId = "2348000000001";
+  const merchantRes = await sql`SELECT id, contact_phone, name FROM merchants LIMIT 1`;
+  const merchant = merchantRes[0];
+  const merchantId = merchant.id;
+  const merchantPhone = merchant.contact_phone;
+  const customerId = "2348000000002"; 
 
-  logger.log(`Using existing merchant: ${merchantId}, phone: ${merchantPhone}`);
-  // Set the 24h window for the simulation
-  await redis.set(`conv:${merchantId}:${merchantPhone}:window`, Date.now() + 86400000);
+  logger.log(`1. Using Merchant: ${merchant.name} (${merchantId})`);
 
-  logger.log("\n2. Triggering an Escalation (simulating AI Negotiator hitting the floor limit)...");
-  await vendorCommunique.dispatchEscalation(
-    merchantId,
-    merchantPhone,
-    customerId,
-    "Customer offered 15k, floor is 18k",
-    {
-      turn: { customerId, merchantId, messages: [] },
-      arc: { sessionId: "sim-session-1", customerLastOffer: 15000, floor: 18000, productSku: "PROD-123", targetPrice: 20000 } as any
-    }
-  );
+  await sql`DELETE FROM appointments WHERE merchant_id = ${merchantId} AND customer_id = ${customerId}`;
+  await sql`DELETE FROM services WHERE merchant_id = ${merchantId} AND name ILIKE '%Hair Consultation%'`;
 
-  logger.log("\n3. Checking Redis for active Communiqué session...");
-  const sessionKey = `communique:${merchantId}:active`;
-  const session = await redis.get(sessionKey);
-  logger.log("Session in Redis:", session);
-
-  logger.log("\n4. Simulating an SMS Webhook reply ('1' - Approve Exception)...");
-  const handled = await vendorCommunique.handleMerchantReply(merchantId, "1");
-  logger.log("Was reply handled successfully?", handled);
-
-  logger.log("\n5. Checking Database for recorded vendor decision...");
-  const decisions = await sql`SELECT * FROM vendor_decisions WHERE merchant_id = ${merchantId} ORDER BY created_at DESC LIMIT 1`;
-  
-  // 6. Simulating a direct Customer Chat (Booking a Service)...
-  logger.log("\n6. Simulating a direct Customer Chat (Booking a Service)...");
-  
-  const turn: any = {
-    customerId: "2348000000001",
-    merchantId: vendor[0].id,
+  logger.log("\n2. Simulating Vendor adding a service via Biblio Agent...");
+  const vendorTurn: any = {
+    customerId: merchantPhone,
+    merchantId: merchantId,
     orderState: { status: "no_order", items: [], quotedTotal: 0 },
-    messages: [
-      { role: "customer", content: "I want to book a hair consultation for tomorrow", timestamp: Date.now() }
-    ]
+    messages: [{ role: "customer", content: "Add a new service: Hair Consultation, duration 45 minutes, price 10000 NGN.", timestamp: Date.now() }]
   };
 
-  try {
-    const { runNegotiatorTurn } = await import("./ace-whatsapp/core/ai-negotiator/src/agentLoop.ts");
-    await runNegotiatorTurn(turn);
-  } catch (err) {
-    logger.error("[Negotiator] Error running negotiator turn:", err);
+  await runBiblioAgentTurn(vendorTurn);
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  logger.log("\n3. Verifying service in Database...");
+  const services = await sql`SELECT id, name, duration_minutes, price FROM services WHERE merchant_id = ${merchantId} AND name ILIKE '%Hair Consultation%' ORDER BY name DESC LIMIT 1`;
+  if (services.length > 0) logger.log("✅ Service created successfully:", services[0]);
+  else logger.error("❌ Service was NOT created.");
+
+  logger.log("\n4. Simulating Customer booking the service via AI Negotiator...");
+  // Manually ensure the service exists for the customer test
+  const existingService = await sql`SELECT id FROM services WHERE merchant_id = ${merchantId} AND name ILIKE '%Hair Consultation%'`;
+  if (existingService.length === 0) {
+    logger.log("Manually seeding 'Hair Consultation' service for customer test...");
+    await sql`
+      INSERT INTO services (merchant_id, name, description, duration_minutes, price)
+      VALUES (${merchantId}, 'Hair Consultation', 'Professional hair consultation', 45, 10000)
+    `;
   }
 
-  logger.log("\n7. Checking Database for newly added inventory...");
-  const products = await sql`SELECT sku, name, price, image_url, last_posted_at FROM products WHERE merchant_id = ${merchantId} ORDER BY updated_at DESC LIMIT 1`;
-  logger.log("Products in DB:", products[0]);
+  const customerTurn: any = {
+    customerId: customerId,
+    merchantId: merchantId,
+    orderState: { status: "no_order", items: [], quotedTotal: 0 },
+    messages: [{ role: "customer", content: "Hi, I'd like to book a Hair Consultation for tomorrow at 10:00 AM.", timestamp: Date.now() }]
+  };
 
-  logger.log("\n=== SIMULATION COMPLETE ===");
+  await runNegotiatorTurn(customerTurn);
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  logger.log("\n5. Checking Database for recorded appointment...");
+  const appointments = await sql`
+    SELECT a.id, a.status, a.start_time, a.end_time, s.name as service_name
+    FROM appointments a
+    JOIN services s ON a.service_id = s.id
+    WHERE a.merchant_id = ${merchantId} AND a.customer_id = ${customerId}
+    ORDER BY a.created_at DESC LIMIT 1
+  `;
+  
+  if (appointments.length > 0) logger.log("✅ Appointment booked successfully:", appointments[0]);
+  else logger.error("❌ Appointment was NOT booked. (Note: The agent might have replied asking for a specific time).");
+
   process.exit(0);
 }
 

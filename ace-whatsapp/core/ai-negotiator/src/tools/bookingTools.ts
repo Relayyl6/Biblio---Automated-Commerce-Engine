@@ -39,7 +39,6 @@ export const bookingTools = [
       }
     }
   },
-
   {
     "type": "function",
     "function": {

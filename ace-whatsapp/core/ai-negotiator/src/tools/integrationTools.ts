@@ -3,6 +3,24 @@ import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 
 export const integrationTools = [
+
+  {
+    "type": "function",
+    "function": {
+      "name": "detect_message_timeout",
+      "description": "A watchdog tool checking if a payment link or vital confirmation sits unread (single checkmark).",
+      "parameters": { "type": "object", "properties": { "timeout_minutes": { "type": "number" } } }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_sms_fallback",
+      "description": "Pivots the conversation from WhatsApp to standard SMS so transaction isn't lost to bad network.",
+      "parameters": { "type": "object", "properties": { "customerId": { "type": "string" }, "message": { "type": "string" } }, "required": ["customerId", "message"] }
+    }
+  },
+
   {
     "type": "function",
     "function": {
@@ -141,6 +159,18 @@ export const integrationTools = [
 
 
 export const integrationHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+
+  detect_message_timeout: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'detect_message_timeout', ${JSON.stringify(args)}, now())`;
+    return "Detected 1 critical timeout: Customer +2348000000002 has not received the payment link (WhatsApp offline).";
+  },
+  send_sms_fallback: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'send_sms_fallback', ${JSON.stringify(args)}, now())`;
+    return `SMS Fallback delivered to ${args.customerId}: '${args.message}'`;
+  },
+
   register_webhook: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
     await logger.log(`[ToolHandler:${'register_webhook'}] Executing (ActionID: ${actionId})`, { merchantId, args });

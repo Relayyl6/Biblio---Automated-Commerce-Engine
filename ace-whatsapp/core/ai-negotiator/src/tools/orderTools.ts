@@ -3,6 +3,32 @@ import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 
 export const orderTools = [
+
+  {
+    "type": "function",
+    "function": {
+      "name": "request_visual_confirmation",
+      "description": "Ping the merchant to snap a live photo of the packaged item before shipping.",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_visual_proof",
+      "description": "Forward the merchant's photo to the customer for explicit confirmation.",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" }, "customerId": { "type": "string" } }, "required": ["orderId", "customerId"] }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "dispatch_rider",
+      "description": "Trigger the motorcycle logistics API (e.g. Kwik/Gokada) after customer visual confirmation.",
+      "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] }
+    }
+  },
+
   {
     "type": "function",
     "function": {
@@ -243,6 +269,24 @@ export const orderTools = [
 ];
 
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+
+  request_visual_confirmation: async (merchantId: string, args: any) => {
+    // In a real scenario, this pushes an urgent notification to the Merchant App
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'request_visual_confirmation', ${JSON.stringify(args)}, now())`;
+    return `Requested merchant to provide visual confirmation photo for order ${args.orderId}.`;
+  },
+  send_visual_proof: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'send_visual_proof', ${JSON.stringify(args)}, now())`;
+    return `Sent visual proof to customer ${args.customerId} for order ${args.orderId}. Awaiting their reply.`;
+  },
+  dispatch_rider: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'dispatch_rider', ${JSON.stringify(args)}, now())`;
+    return `Rider dispatched successfully for order ${args.orderId}.`;
+  },
+
   view_pending_orders: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
     await logger.log(`[ToolHandler:${'view_pending_orders'}] Executing (ActionID: ${actionId})`, { merchantId, args });

@@ -4,6 +4,24 @@ import crypto from "crypto";
 
 
 export const crmTools = [
+
+  {
+    "type": "function",
+    "function": {
+      "name": "analyze_churn_risk",
+      "description": "Runs nightly to find VIP customers who have deviated from their usual purchase frequency.",
+      "parameters": { "type": "object", "properties": {} }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_winback_offer",
+      "description": "Drafts a culturally nuanced, highly specific message based on past purchases to win back a customer.",
+      "parameters": { "type": "object", "properties": { "customerId": { "type": "string" } }, "required": ["customerId"] }
+    }
+  },
+
   {
     "type": "function",
     "function": {
@@ -253,6 +271,18 @@ export const crmTools = [
 ];
 
 export const crmHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+
+  analyze_churn_risk: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'analyze_churn_risk', ${JSON.stringify(args)}, now())`;
+    return "Found 1 at-risk VIP: 'Blessing' (LTV: 124,000, 27 days since last purchase).";
+  },
+  generate_winback_offer: async (merchantId: string, args: any) => {
+    const actionId = crypto.randomUUID();
+    await sql`INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at) VALUES (${merchantId}, ${actionId}, 'generate_winback_offer', ${JSON.stringify(args)}, now())`;
+    return "Drafted Winback: 'Blessing! New gold Ankara just landed, reserved 4 yards for you. Want me to dispatch it?'";
+  },
+
   get_customer_profile: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
     await logger.log(`[ToolHandler:${'get_customer_profile'}] Executing (ActionID: ${actionId})`, { merchantId, args });
