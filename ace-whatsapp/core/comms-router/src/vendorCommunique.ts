@@ -82,7 +82,7 @@ export class VendorCommuniqueEngine {
         WHERE merchant_id = ${merchantId}
           AND session_status = 'connected'
         LIMIT 1
-      `.catch(() => []);
+      `.catch((err) => { console.error('[VendorCommunique] DB error:', err); return []; });
 
       const vendorId = vendorRows[0]?.id;
 
@@ -120,16 +120,12 @@ export class VendorCommuniqueEngine {
     // ── Store the active decision session in Redis ───────────────────────────
     // TTL: 4 hours — merchant has 4 hours to reply before the session expires.
     const sessionKey = `communique:${merchantId}:active`;
-    await redis.setex(
-      sessionKey,
-      60 * 60 * 4,
-      JSON.stringify({
+    try { await redis.setex(sessionKey, 60 * 60 * 4, JSON.stringify({
         customerId,
         arcSessionId: arc.sessionId,
         pendingReason: reason,
         channel: sentViaBaileys ? "baileys" : "sms",
-      })
-    );
+      })); } catch (err) { console.error('[VendorCommunique] Redis setex error:', err); }
 
     await dataIntelligence.auditLog({
       service: "vendor-communique",
@@ -187,7 +183,8 @@ export class VendorCommuniqueEngine {
     replyText: string
   ): Promise<boolean> {
     const sessionKey = `communique:${merchantId}:active`;
-    const sessionRaw = await redis.get(sessionKey);
+    let sessionRaw: string | null = null;
+    try { sessionRaw = await redis.get(sessionKey); } catch (err) { console.error('[VendorCommunique] Redis get error:', err); return false; }
 
     if (!sessionRaw) {
       return false; // No active communiqué — not a reply we own

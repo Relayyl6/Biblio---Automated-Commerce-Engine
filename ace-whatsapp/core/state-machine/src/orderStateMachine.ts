@@ -197,14 +197,15 @@ export async function transitionAndEmit(
   
   if (!("code" in result)) {
     // It's a successful transition
-    await sql`
-      UPDATE orders 
-      SET state = ${sql.json(result as any)}, updated_at = NOW() 
-      WHERE id = ${orderId}
-    `;
+    try {
+      await sql`UPDATE orders SET state = ${sql.json(result as any)}, updated_at = NOW() WHERE id = ${orderId}`;
+    } catch (err) {
+      throw new Error(`Failed to update order state in DB: ${err}`);
+    }
 
     // Emit event
-    if (event.type === "PAYMENT_CONFIRMED") {
+    try {
+      if (event.type === "PAYMENT_CONFIRMED") {
       await redis.publish("events:payment_confirmed", JSON.stringify({
         merchantId, customerId, orderId, timestamp: Date.now()
       }));
@@ -215,6 +216,9 @@ export async function transitionAndEmit(
     } else if (event.type as string === "MARK_SHIPPED") {
        // Just as an example, this might trigger inventory deductions 
        // but typically those are explicit tool actions. 
+    }
+    } catch (err) {
+      console.error(`[orderStateMachine] Redis publish failed for event ${event.type}:`, err);
     }
   }
   

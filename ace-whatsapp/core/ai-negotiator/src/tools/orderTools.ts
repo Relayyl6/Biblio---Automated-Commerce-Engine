@@ -269,7 +269,6 @@ export const orderTools = [
 ];
 
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
-
   request_visual_confirmation: async (merchantId: string, args: any) => {
     // In a real scenario, this pushes an urgent notification to the Merchant App
     const actionId = crypto.randomUUID();

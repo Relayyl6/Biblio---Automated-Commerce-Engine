@@ -182,7 +182,9 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   ];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await createMessageWithRetry({
+    let response;
+    try {
+      response = await createMessageWithRetry({
       model: MODEL,
       max_tokens: 1024,
       temperature: 0.3,
@@ -190,6 +192,11 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
       tools: groqTools,
       tool_choice: "auto",
     });
+    } catch (err) {
+      console.error("[AgentLoop] Groq API Failed:", err);
+      await safeEscalate(turn, "AI service temporarily unavailable. Escalating to human.");
+      return;
+    }
 
     logTokenUsage(turn.merchantId, response.usage);
 
