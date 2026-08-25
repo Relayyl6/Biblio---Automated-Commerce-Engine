@@ -6,6 +6,43 @@ export const bookingTools = [
   {
     "type": "function",
     "function": {
+      "name": "add_service",
+      "description": "Add a new service that customers can book",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "duration_minutes": { "type": "number" },
+          "price": { "type": "number" }
+        },
+        "required": ["name", "duration_minutes", "price"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_service",
+      "description": "Update an existing service's details",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "serviceId": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "duration_minutes": { "type": "number" },
+          "price": { "type": "number" },
+          "active": { "type": "boolean" }
+        },
+        "required": ["serviceId"]
+      }
+    }
+  },
+
+  {
+    "type": "function",
+    "function": {
       "name": "book_appointment",
       "description": "Book a time slot for a service",
       "parameters": {
@@ -155,6 +192,42 @@ async function sendCalendarInvite(email: string, title: string, startTime: strin
     return true;
 }
 export const bookingHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+  add_service: async (merchantId: string, args: any) => {
+    const { name, description, duration_minutes, price } = args;
+    const inserted = await sql`
+        INSERT INTO services (merchant_id, name, description, duration_minutes, price)
+        VALUES (${merchantId}, ${name}, ${description}, ${duration_minutes}, ${price})
+        RETURNING id
+    `;
+    return `Service "${name}" added successfully with ID ${inserted[0].id}.`;
+  },
+  update_service: async (merchantId: string, args: any) => {
+    const { serviceId, name, description, duration_minutes, price, active } = args;
+    
+    // Build dynamic update
+    const updates = [];
+    if (name !== undefined) updates.push(sql`name = ${name}`);
+    if (description !== undefined) updates.push(sql`description = ${description}`);
+    if (duration_minutes !== undefined) updates.push(sql`duration_minutes = ${duration_minutes}`);
+    if (price !== undefined) updates.push(sql`price = ${price}`);
+    if (active !== undefined) updates.push(sql`active = ${active}`);
+    
+    if (updates.length === 0) return "No fields provided to update.";
+    
+    // We do a raw query here just for simplicity since postgres.js dynamic updates can be tricky manually
+    // For safety, we just rely on system_actions logging for now if dynamic fails, or we can just run sequential
+    // A simpler way:
+    try {
+        if (name !== undefined) await sql`UPDATE services SET name = ${name} WHERE id = ${serviceId} AND merchant_id = ${merchantId}`;
+        if (description !== undefined) await sql`UPDATE services SET description = ${description} WHERE id = ${serviceId} AND merchant_id = ${merchantId}`;
+        if (duration_minutes !== undefined) await sql`UPDATE services SET duration_minutes = ${duration_minutes} WHERE id = ${serviceId} AND merchant_id = ${merchantId}`;
+        if (price !== undefined) await sql`UPDATE services SET price = ${price} WHERE id = ${serviceId} AND merchant_id = ${merchantId}`;
+        if (active !== undefined) await sql`UPDATE services SET active = ${active} WHERE id = ${serviceId} AND merchant_id = ${merchantId}`;
+    } catch(e) { return "Failed to update service: " + e; }
+    
+    return `Service ${serviceId} updated successfully.`;
+  },
+
   book_appointment: async (merchantId: string, args: any) => {
     if (!args.time || !args.serviceId) return "Time and Service ID are required.";
     const aptId = 'APT-' + crypto.randomBytes(3).toString('hex').toUpperCase();
