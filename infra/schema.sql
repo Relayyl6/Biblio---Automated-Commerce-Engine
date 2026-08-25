@@ -280,10 +280,23 @@ CREATE TABLE IF NOT EXISTS merchant_integrations (
 );
 
 -- ─── [Hardening] Missing tables for Biblio Agent tool handlers ────────────────
+
+CREATE TABLE IF NOT EXISTS services (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  name text NOT NULL,
+  description text,
+  duration_minutes integer NOT NULL,
+  price numeric NOT NULL,
+  active boolean NOT NULL DEFAULT true
+);
+
 CREATE TABLE IF NOT EXISTS appointments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id uuid NOT NULL REFERENCES merchants(id),
   customer_id text NOT NULL,
+    service_id uuid REFERENCES services(id),
+    status text NOT NULL DEFAULT 'confirmed',
   title text NOT NULL,
   description text,
   start_time timestamptz NOT NULL,

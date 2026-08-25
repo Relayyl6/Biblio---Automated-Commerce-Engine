@@ -1,9 +1,19 @@
 import { logger } from "@ace/shared/logger.js";
 import { sql, redis } from "@ace/shared/clients";
-// Mock global fetch to intercept Meta Graph API calls
-global.fetch = async (url) => {
-  logger.log(`[Mocked fetch] Called with ${url.toString()}`);
-  return { ok: true, status: 200, text: async () => "{}" } as any;
+const originalFetch = global.fetch;
+global.fetch = async (url, options) => {
+  const urlStr = url.toString();
+  if (!urlStr.includes("api.groq.com")) {
+    logger.log(`[Mocked fetch] Intercepted ${urlStr}`);
+    return { 
+      ok: true, 
+      status: 200, 
+      text: async () => "{}",
+      json: async () => ({}),
+      headers: { get: () => null }
+    } as any;
+  }
+  return originalFetch(url, options);
 };
 import { vendorCommunique } from "./ace-whatsapp/core/comms-router/src/vendorCommunique.ts";
 import { runBiblioAgentTurn } from "./ace-whatsapp/core/ai-negotiator/src/biblioAgentLoop.ts";
@@ -49,25 +59,25 @@ async function simulate() {
 
   logger.log("\n5. Checking Database for recorded vendor decision...");
   const decisions = await sql`SELECT * FROM vendor_decisions WHERE merchant_id = ${merchantId} ORDER BY created_at DESC LIMIT 1`;
-  logger.log("Vendor Decision Record:", decisions[0]);
-
-  logger.log("\n6. Simulating a direct Biblio Agent chat (Upload Inventory)...");
-  const turn = {
-    customerId: merchantPhone,
-    merchantId: merchantId,
+  
+  // 6. Simulating a direct Customer Chat (Booking a Service)...
+  logger.log("\n6. Simulating a direct Customer Chat (Booking a Service)...");
+  
+  const turn: any = {
+    customerId: "2348000000001",
+    merchantId: vendor[0].id,
+    orderState: { status: "no_order", items: [], quotedTotal: 0 },
     messages: [
-      {
-        id: "msg1",
-        timestamp: Date.now(),
-        fromMe: false,
-        content: {
-          text: "Add these to my store: Nike Air Max for 45k, and post it to my status. [Image: https://s3.amazonaws.com/sim/nike.jpg]"
-        }
-      }
+      { role: "customer", content: "I want to book a hair consultation for tomorrow", timestamp: Date.now() }
     ]
   };
-  
-  await runBiblioAgentTurn(turn);
+
+  try {
+    const { runNegotiatorTurn } = await import("./ace-whatsapp/core/ai-negotiator/src/agentLoop.ts");
+    await runNegotiatorTurn(turn);
+  } catch (err) {
+    logger.error("[Negotiator] Error running negotiator turn:", err);
+  }
 
   logger.log("\n7. Checking Database for newly added inventory...");
   const products = await sql`SELECT sku, name, price, image_url, last_posted_at FROM products WHERE merchant_id = ${merchantId} ORDER BY updated_at DESC LIMIT 1`;

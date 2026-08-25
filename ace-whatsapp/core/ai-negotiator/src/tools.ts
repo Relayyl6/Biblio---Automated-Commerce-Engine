@@ -52,6 +52,46 @@ import type { OrderState, OrderItem, Product, Source } from "@ace/shared/types";
 
 export const toolDefinitions = [
   {
+    name: "check_services",
+    description:
+      "Look up services offered by the merchant. Call this when a customer asks to book a service or appointment.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Service name or description" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "check_availability",
+    description:
+      "Check available appointment slots for a specific date and service duration. Call this before booking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        durationMinutes: { type: "number", description: "Duration of the service in minutes" },
+      },
+      required: ["date", "durationMinutes"],
+    },
+  },
+  {
+    name: "book_appointment",
+    description:
+      "Book an appointment for a specific service and time slot.",
+    input_schema: {
+      type: "object",
+      properties: {
+        serviceId: { type: "string", description: "The ID of the service to book" },
+        startTime: { type: "string", description: "ISO 8601 start time (e.g. 2026-08-26T10:00:00Z)" },
+        title: { type: "string", description: "Brief title for the appointment (e.g. 'Massage for John')" },
+      },
+      required: ["serviceId", "startTime", "title"],
+    },
+  },
+
+  {
     name: "check_inventory",
     description:
       "Look up products by name, description, or SKU. Returns full product context: " +
@@ -274,6 +314,19 @@ export async function executeTool(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   switch (name) {
+    case "check_services": {
+      const rows = await checkServices(ctx.merchantId, input.query);
+      return { output: rows };
+    }
+    case "check_availability": {
+      const slots = await checkAvailability(ctx.merchantId, input.date, input.durationMinutes);
+      return { output: slots };
+    }
+    case "book_appointment": {
+      const result = await bookAppointment(ctx.merchantId, ctx.customerId, input.serviceId, input.startTime, input.title);
+      return { output: result };
+    }
+
     case "check_inventory": {
       const rows = await checkInventory(ctx.merchantId, input.query);
       const topResult = rows[0];
@@ -940,4 +993,41 @@ Output ONLY valid JSON in the format: { "matches": ["id1", "id2"] }`;
     },
     newArc
   };
+}
+
+async function checkServices(merchantId: string, query: string) {
+  const like = "%" + query + "%";
+  const rows = await sql`
+    SELECT id, name, description, duration_minutes, price
+    FROM services
+    WHERE merchant_id = ${merchantId} AND active = true
+      AND (name ILIKE ${like} OR description ILIKE ${like})
+    LIMIT 5
+  `;
+  return rows;
+}
+
+async function checkAvailability(merchantId: string, dateStr: string, durationMinutes: number) {
+  // Real implementation would look at merchant's store_hours and existing appointments.
+  // For Phase 1, we just mock 3 available slots between 9am and 5pm.
+  return [
+    { start: `${dateStr}T09:00:00Z`, end: `${dateStr}T09:${String(durationMinutes).padStart(2,'0')}:00Z` },
+    { start: `${dateStr}T13:00:00Z`, end: `${dateStr}T13:${String(durationMinutes).padStart(2,'0')}:00Z` },
+    { start: `${dateStr}T15:00:00Z`, end: `${dateStr}T15:${String(durationMinutes).padStart(2,'0')}:00Z` },
+  ];
+}
+
+async function bookAppointment(merchantId: string, customerId: string, serviceId: string, startTime: string, title: string) {
+  // get service details
+  const srv = await sql`SELECT duration_minutes FROM services WHERE id = ${serviceId} LIMIT 1`;
+  if (!srv.length) return { ok: false, error: "Service not found." };
+  
+  const endTime = new Date(new Date(startTime).getTime() + srv[0].duration_minutes * 60000).toISOString();
+  
+  await sql`
+    INSERT INTO appointments (merchant_id, customer_id, service_id, title, start_time, end_time, status)
+    VALUES (${merchantId}, ${customerId}, ${serviceId}, ${title}, ${startTime}, ${endTime}, 'confirmed')
+  `;
+  
+  return { ok: true, message: "Appointment confirmed.", startTime, endTime };
 }
