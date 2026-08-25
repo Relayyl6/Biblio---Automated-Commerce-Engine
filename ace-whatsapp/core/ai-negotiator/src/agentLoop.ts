@@ -558,21 +558,6 @@ function arcKey(customerId: string, merchantId: string) {
   return `arc:${merchantId}:${customerId}`;
 }
 
-async function loadOrCreateArc(turn: ConversationTurn): Promise<NegotiationArc> {
-  const key = arcKey(turn.customerId, turn.merchantId);
-  const raw = await redis.get(key);
-
-  if (raw) {
-    const existing = JSON.parse(raw) as NegotiationArc;
-    if (["close", "escalate", "abandoned"].includes(existing.stage)) {
-      return createFreshArc(turn);
-    }
-    return existing;
-  }
-
-  return createFreshArc(turn);
-}
-
 function createFreshArc(turn: ConversationTurn): NegotiationArc {
   const now = Date.now();
   return {
@@ -596,7 +581,46 @@ function createFreshArc(turn: ConversationTurn): NegotiationArc {
 
 async function saveArc(arc: NegotiationArc): Promise<void> {
   const key = arcKey(arc.customerId, arc.merchantId);
+  // Redis: fast path (24h TTL)
   await redis.setex(key, 60 * 60 * 24, JSON.stringify(arc));
+
+  // #9 FIX: Persist to Postgres as durable backup so arcs survive beyond 24h
+  await sql`
+    INSERT INTO negotiation_arcs (session_id, merchant_id, customer_id, arc, updated_at)
+    VALUES (${arc.sessionId}, ${arc.merchantId}, ${arc.customerId}, ${jsonb(arc)}, now())
+    ON CONFLICT (session_id) DO UPDATE
+    SET arc = EXCLUDED.arc, updated_at = now()
+  `.catch(err => logger.warn('[negotiator] Arc Postgres persist failed (non-fatal):', err));
+}
+
+async function loadOrCreateArc(turn: ConversationTurn): Promise<NegotiationArc> {
+  const key = arcKey(turn.customerId, turn.merchantId);
+  const raw = await redis.get(key);
+
+  if (raw) {
+    const existing = JSON.parse(raw) as NegotiationArc;
+    if (["close", "escalate", "abandoned"].includes(existing.stage)) {
+      return createFreshArc(turn);
+    }
+    return existing;
+  }
+
+  // #9 FIX: Redis miss — fall back to Postgres for arcs older than 24h
+  const pgRows = await sql<{arc: NegotiationArc}[]>`
+    SELECT arc FROM negotiation_arcs
+    WHERE merchant_id = ${turn.merchantId} AND customer_id = ${turn.customerId}
+    ORDER BY updated_at DESC LIMIT 1
+  `.catch(() => []);
+  if (pgRows[0]?.arc) {
+    const existing = pgRows[0].arc;
+    if (!["close", "escalate", "abandoned"].includes(existing.stage)) {
+      // Re-warm Redis cache
+      await redis.setex(key, 60 * 60 * 24, JSON.stringify(existing));
+      return existing;
+    }
+  }
+
+  return createFreshArc(turn);
 }
 
 // ─── Finalization ─────────────────────────────────────────────────────────────

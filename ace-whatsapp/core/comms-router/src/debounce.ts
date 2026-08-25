@@ -38,7 +38,7 @@ import { runNegotiatorTurn } from "../../ai-negotiator/src/agentLoop";
 import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop";
 import { handleSourceReply } from "./sourceReplyHandler.js";
 
-const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 10_000);
+const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 5_000); // 5s default — tune per merchant
 
 const connection = {
   connection: { ...redis.options, maxRetriesPerRequest: null },

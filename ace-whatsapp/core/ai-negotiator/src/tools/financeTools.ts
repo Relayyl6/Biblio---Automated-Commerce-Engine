@@ -321,26 +321,79 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     return `Action ${'download_tax_report'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   sync_quickbooks_invoices: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'sync_quickbooks_invoices'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    const integrations = await sql`SELECT access_token, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'quickbooks'`;
+    if (integrations.length === 0) return "QuickBooks is not connected.";
+    
+    const invoices = await sql`SELECT id, invoice_number, total_amount, status FROM invoices WHERE merchant_id = ${merchantId}`;
+    if (invoices.length === 0) return "No invoices to sync.";
+    
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'sync_quickbooks_invoices'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'sync_quickbooks_invoices'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        const fetch = (await import('node-fetch')).default;
+        const realmId = integrations[0].metadata.realmId;
+        const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/invoice`;
+        
+        let syncedCount = 0;
+        for (const inv of invoices) {
+            const payload = {
+                "Line": [{
+                    "Amount": inv.total_amount,
+                    "DetailType": "SalesItemLineDetail",
+                    "SalesItemLineDetail": { "ItemRef": { "name": "Services", "value": "1" } }
+                }],
+                "CustomerRef": { "value": "1" },
+                "DocNumber": inv.invoice_number
+            };
+            
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${integrations[0].access_token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            
+            if (res.ok) syncedCount++;
+        }
+        
+        return `Successfully synced ${syncedCount} invoices to QuickBooks.`;
+    } catch(e) {
+        await logger.error("[QuickBooks Sync Error]", e);
+        return "Failed to sync to QuickBooks due to API error.";
+    }
   },
   sync_xero_transactions: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'sync_xero_transactions'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    const integrations = await sql`SELECT access_token, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'xero'`;
+    if (integrations.length === 0) return "Xero is not connected.";
+    
+    const invoices = await sql`SELECT id, invoice_number, total_amount, status FROM invoices WHERE merchant_id = ${merchantId}`;
+    if (invoices.length === 0) return "No transactions to sync.";
+    
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'sync_xero_transactions'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'sync_xero_transactions'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        const { XeroClient } = await import('xero-node');
+        const xero = new XeroClient({
+            clientId: process.env.XERO_CLIENT_ID || 'dummy',
+            clientSecret: process.env.XERO_CLIENT_SECRET || 'dummy'
+        });
+        await xero.setTokenSet({ access_token: integrations[0].access_token });
+        const tenantId = integrations[0].metadata.tenantId;
+        
+        // This is a mocked structure for the payload to Xero
+        const invoicesPayload = invoices.map(inv => ({
+            Type: 'ACCREC',
+            Contact: { ContactID: '00000000-0000-0000-0000-000000000000' },
+            LineItems: [{ Description: 'ACE WhatsApp Order', Quantity: 1, UnitAmount: inv.total_amount }],
+            InvoiceNumber: inv.invoice_number,
+            Status: 'DRAFT'
+        }));
+        
+        await xero.accountingApi.createInvoices(tenantId, { invoices: invoicesPayload as any });
+        return `Successfully exported ${invoices.length} transactions to Xero.`;
+    } catch(e) {
+        await logger.error("[Xero Sync Error]", e);
+        return "Failed to sync to Xero due to API error.";
+    }
   },
   analyze_profit_margins: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

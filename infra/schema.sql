@@ -278,3 +278,88 @@ CREATE TABLE IF NOT EXISTS merchant_integrations (
   metadata JSONB DEFAULT '{}'::jsonb,
   PRIMARY KEY (merchant_id, provider)
 );
+
+-- ─── [Hardening] Missing tables for Biblio Agent tool handlers ────────────────
+CREATE TABLE IF NOT EXISTS appointments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+  title text NOT NULL,
+  description text,
+  start_time timestamptz NOT NULL,
+  end_time timestamptz NOT NULL,
+  location text,
+  attendee_email text,
+  google_event_id text,
+  status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_appointments_merchant ON appointments(merchant_id, start_time);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+  order_id uuid REFERENCES orders(id),
+  amount numeric NOT NULL,
+  currency text NOT NULL DEFAULT 'NGN',
+  status text NOT NULL DEFAULT 'pending',
+  due_date date,
+  provider text,
+  provider_ref text,
+  line_items jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_merchant ON invoices(merchant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS active_promotions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  code text NOT NULL,
+  discount_pct numeric,
+  discount_flat numeric,
+  applies_to jsonb DEFAULT '[]',
+  max_uses integer,
+  uses integer NOT NULL DEFAULT 0,
+  starts_at timestamptz,
+  expires_at timestamptz,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(merchant_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS system_actions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  action_id text NOT NULL,
+  action_name text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_system_actions_merchant ON system_actions(merchant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS customers (
+  id text PRIMARY KEY,
+  name text,
+  email text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS negotiation_arcs (
+  session_id uuid PRIMARY KEY,
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+  arc jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_negotiation_arcs_lookup ON negotiation_arcs(merchant_id, customer_id, updated_at DESC);
+
+-- ─── [Hardening] Merchant missing columns ─────────────────────────────────────
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS bank_account_number text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS bank_code text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS paystack_recipient_code text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS contact_phone text;
+
+-- ─── [Hardening] Add customer_id to vendor_decisions (issue #8) ──────────────
+ALTER TABLE vendor_decisions ADD COLUMN IF NOT EXISTS customer_id text;

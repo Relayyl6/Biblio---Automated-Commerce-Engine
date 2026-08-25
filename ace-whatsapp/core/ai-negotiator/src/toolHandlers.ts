@@ -11,12 +11,6 @@ import { negotiationHandlers } from "./tools/negotiationTools.js";
 import { orderHandlers } from "./tools/orderTools.js";
 import { settingsHandlers } from "./tools/settingsTools.js";
 
-// Generic Third Party Request util
-export async function makeThirdPartyRequest(integration: string, endpoint: string, payload: any, headers?: any): Promise<any> {
-    await logger.log(`[ThirdParty:${integration}] Request to ${endpoint}`, payload);
-    return { success: true, ref: crypto.randomUUID(), timestamp: Date.now(), eventId: "mock-event-id", slots: [], ok: true };
-}
-
 export const toolHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   ...analyticsHandlers,
   ...bookingHandlers,

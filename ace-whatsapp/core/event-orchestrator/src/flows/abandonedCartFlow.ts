@@ -17,26 +17,62 @@ export async function setupAbandonedCartFlow() {
 }
 
 async function handleCartRecovery(orderId: string, merchantId: string, customerId: string) {
-  const orderRows = await sql<any[]>`SELECT state FROM orders WHERE id = ${orderId}`;
+  // #5 Idempotency: never fire twice for the same order
+  const dedupe = `idempotency:cart:${orderId}`;
+  const isNew = await redis.set(dedupe, "1", "EX", 86400, "NX");
+  if (!isNew) return;
+
+  const orderRows = await sql`SELECT state FROM orders WHERE id = ${orderId}`;
   const order = orderRows[0];
   if (!order) return;
 
   const status = order.state.status;
-  if (status === "awaiting_payment" || status === "negotiating") {
-    const text = `Hi! You left some items in your cart.\n\nComplete your purchase in the next hour and get an extra 5% off! Reply to this message to continue.`;
+  if (status !== "awaiting_payment" && status !== "negotiating") {
+    logger.log(`[AbandonedCartFlow] Order ${orderId} is ${status}, ignoring recovery.`);
+    return;
+  }
 
+  // 1. Fetch the customer's first name so the message feels personal
+  const customerRows = await sql`SELECT name FROM customers WHERE id = ${customerId} OR phone = ${customerId} LIMIT 1`;
+  const customerName = customerRows[0]?.name?.split(" ")[0] || "there";
+
+  // 2. Fetch the item names in the abandoned cart
+  const itemRows = await sql`
+    SELECT p.name FROM order_items oi
+    JOIN products p ON p.id = oi.product_id
+    WHERE oi.order_id = ${orderId}
+    LIMIT 3
+  `;
+  const itemNames = itemRows.map((r: any) => r.name);
+  const itemList = itemNames.length > 1
+    ? `${itemNames.slice(0, -1).join(", ")} and ${itemNames.slice(-1)}`
+    : itemNames[0] || "your selected items";
+
+  // 3. Notify the merchant (informational only — no discount, no action required)
+  const merchantRows = await sql`SELECT contact_phone FROM merchants WHERE id = ${merchantId} LIMIT 1`;
+  const merchantPhone = merchantRows[0]?.contact_phone;
+  if (merchantPhone) {
     const outboundQueue = new Queue("outbound-messages", {
       connection: { ...redis.options, maxRetriesPerRequest: null }
     });
-
     await outboundQueue.add("send-whatsapp", {
       merchantId,
-      customerId,
-      text
+      customerId: merchantPhone,
+      text: `🛒 *Abandoned Cart*\n\n${customerName} left ${itemList} in their cart (Order: ${orderId}). Sending them a gentle follow-up now.`
     });
-    
-    logger.log(`[AbandonedCartFlow] Recovery message sent for order ${orderId}`);
-  } else {
-    logger.log(`[AbandonedCartFlow] Order ${orderId} is ${status}, ignoring recovery.`);
   }
+
+  // 4. Message the customer directly — warm, personal, zero pressure
+  const outboundQueue = new Queue("outbound-messages", {
+    connection: { ...redis.options, maxRetriesPerRequest: null }
+  });
+  const customerText = `Hey ${customerName}! 👋 Are you still interested in the ${itemList}? Your cart is still saved — just reply here and I'll pick up right where you left off.`;
+
+  await outboundQueue.add("send-whatsapp", {
+    merchantId,
+    customerId,
+    text: customerText
+  });
+
+  logger.log(`[AbandonedCartFlow] Follow-up sent to customer ${customerId} for order ${orderId}`);
 }

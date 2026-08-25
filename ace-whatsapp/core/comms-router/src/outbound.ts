@@ -141,6 +141,18 @@ export async function sendCustomerMessage(
     await sendWhatsAppMessage(msg, phoneNumberId ?? "", merchantId ?? "");
   } catch (err: any) {
     logger.error(`[outbound] Failed to send WhatsApp message to ${toPhone}:`, err.message);
+    // #14 FIX: Push to retry queue instead of silently dropping the message
+    try {
+      const { Queue } = await import("bullmq");
+      const retryQ = new Queue("outbound-retry", { connection: { ...redis.options, maxRetriesPerRequest: null } });
+      await retryQ.add("retry-send", { msg, phoneNumberId, merchantId }, {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2000 },
+      });
+      logger.warn(`[outbound] Message to ${toPhone} queued for retry`);
+    } catch (qErr: any) {
+      logger.error(`[outbound] CRITICAL: could not queue retry for ${toPhone}:`, qErr.message);
+    }
   }
   return sendClass;
 }

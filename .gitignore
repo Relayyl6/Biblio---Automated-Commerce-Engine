@@ -32,3 +32,6 @@ Thumbs.db
 tmp/
 temp/
 .audit_tmp
+
+scratch/
+test_negotiator.ts

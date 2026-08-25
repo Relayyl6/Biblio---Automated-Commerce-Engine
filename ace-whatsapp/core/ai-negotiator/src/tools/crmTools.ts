@@ -1,7 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
-import { makeThirdPartyRequest } from "../toolHandlers.js"
+
 
 export const crmTools = [
   {
@@ -309,28 +309,55 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     return `Action ${'send_broadcast_message'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   sync_hubspot_contacts: async (merchantId: string, args: any) => {
+    const integrations = await sql`SELECT access_token FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'hubspot'`;
+    if (integrations.length === 0) return "HubSpot is not connected. Please connect it in the Dashboard first.";
+    
     const customers = await sql`SELECT id, name, phone, email, lifetime_value FROM customers WHERE merchant_id = ${merchantId}`;
     if (customers.length === 0) return "No customers to sync.";
     
-    // Batch payload for HubSpot CRM
     const hubspotPayload = customers.map(c => ({
         email: c.email || `${c.phone}@wa.me`,
-        properties: { firstname: c.name?.split(' ')[0], phone: c.phone, ltv: c.lifetime_value }
+        properties: { firstname: c.name?.split(' ')[0], phone: c.phone, ltv: c.lifetime_value?.toString() }
     }));
     
-    const resp = await makeThirdPartyRequest('HubSpot', '/crm/v3/objects/contacts/batch/create', { inputs: hubspotPayload });
-    return `Synced ${customers.length} contacts to HubSpot (Ref: ${resp.ref}).`;
+    try {
+        // @ts-ignore
+        const { Client } = await import('@hubspot/api-client');
+        const hubspotClient = new Client({ accessToken: integrations[0].access_token });
+        const apiResponse = await hubspotClient.crm.contacts.batchApi.create({ inputs: hubspotPayload });
+        return `Successfully synced ${customers.length} contacts to HubSpot (Batch ID: ${apiResponse.status}).`;
+    } catch(e) {
+        await logger.error("[HubSpot Sync Error]", e);
+        return "Failed to sync to HubSpot due to API error.";
+    }
   },
   sync_salesforce_leads: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'sync_salesforce_leads'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    const integrations = await sql`SELECT access_token, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'salesforce'`;
+    if (integrations.length === 0) return "Salesforce is not connected.";
+    
+    const customers = await sql`SELECT id, name, phone, email FROM customers WHERE merchant_id = ${merchantId}`;
+    if (customers.length === 0) return "No leads to sync.";
+    
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'sync_salesforce_leads'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'sync_salesforce_leads'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        const jsforce = await import('jsforce');
+        const conn = new jsforce.Connection({
+            instanceUrl: integrations[0].metadata.instanceUrl,
+            accessToken: integrations[0].access_token
+        });
+        
+        const leads = customers.map(c => ({
+            LastName: c.name || 'Unknown',
+            Phone: c.phone,
+            Email: c.email || `${c.phone}@wa.me`,
+            Company: 'ACE Merchant'
+        }));
+        
+        const res = await conn.sobject("Lead").create(leads);
+        return `Successfully exported ${leads.length} leads to Salesforce.`;
+    } catch(e) {
+        await logger.error("[Salesforce Sync Error]", e);
+        return "Failed to sync to Salesforce due to API error.";
+    }
   },
   create_hubspot_ticket: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

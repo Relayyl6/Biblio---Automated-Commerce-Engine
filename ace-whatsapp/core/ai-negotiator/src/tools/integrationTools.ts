@@ -186,26 +186,48 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
     return `Action ${'connect_zapier'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   connect_slack: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'connect_slack'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    if (!args.webhookUrl) return "Webhook URL is required.";
+    
     try {
+        const fetch = (await import('node-fetch')).default;
+        await fetch(args.webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: "ACE Agent successfully connected to this channel!" })
+        });
+        
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'connect_slack'}, ${JSON.stringify(args)}, now())
+            INSERT INTO merchant_integrations (merchant_id, provider, access_token, metadata)
+            VALUES (${merchantId}, 'slack', ${args.webhookUrl}, ${JSON.stringify({ channel: 'default' })}::jsonb)
+            ON CONFLICT (merchant_id, provider) DO UPDATE SET access_token = ${args.webhookUrl}
         `;
-    } catch(e) { }
-    return `Action ${'connect_slack'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        
+        return "Successfully connected to Slack via webhook. You will now receive escalation alerts here.";
+    } catch(e) {
+        return "Failed to connect to Slack webhook. Please verify the URL.";
+    }
   },
   connect_discord: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'connect_discord'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    if (!args.webhookUrl) return "Webhook URL is required.";
+    
     try {
+        const fetch = (await import('node-fetch')).default;
+        await fetch(args.webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: "ACE Agent successfully connected to this channel!" })
+        });
+        
         await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_name, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'connect_discord'}, ${JSON.stringify(args)}, now())
+            INSERT INTO merchant_integrations (merchant_id, provider, access_token, metadata)
+            VALUES (${merchantId}, 'discord', ${args.webhookUrl}, ${JSON.stringify({})}::jsonb)
+            ON CONFLICT (merchant_id, provider) DO UPDATE SET access_token = ${args.webhookUrl}
         `;
-    } catch(e) { }
-    return `Action ${'connect_discord'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        
+        return "Successfully connected to Discord via webhook. You will now receive escalation alerts here.";
+    } catch(e) {
+        return "Failed to connect to Discord webhook. Please verify the URL.";
+    }
   },
   sync_google_sheets: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

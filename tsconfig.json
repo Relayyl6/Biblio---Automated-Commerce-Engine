@@ -22,6 +22,10 @@
     "node_modules",
     "ace-platform",
     "data-intelligence",
-    "ace-whatsapp/apps"
+    "ace-whatsapp/apps",
+    "test-orchestrator.ts",
+    "test_negotiator.ts",
+    "scratch",
+    "ace-whatsapp/test-orchestrator.ts"
   ]
 }

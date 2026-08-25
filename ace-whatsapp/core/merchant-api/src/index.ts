@@ -28,8 +28,19 @@ const BAILEYS_GATEWAY_URL =
 
 const app = Fastify({ logger: true });
 
+// #1 FIX: Restrict CORS to known origins. Wildcard allows any site to call this API.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:5173")
+  .split(",")
+  .map(o => o.trim());
 app.register(cors, {
-  origin: "*", // allow React dev server to communicate
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === "development") {
+      cb(null, true);
+    } else {
+      cb(new Error(`Origin ${origin} not allowed`), false);
+    }
+  },
+  credentials: true,
 });
 
 // ─── Auth gate (SharedAuthEngine) ────────────────────────────────────────────
@@ -37,8 +48,13 @@ app.addHook("onRequest", authEngine.getFastifyHook());
 
 // ─── Auth & Identity Routes (Open) ───────────────────────────────────────────
 
-// Dev/Test hook to generate a dummy JWT
+// #2 FIX: /auth/token is a backdoor — gate behind ADMIN_API_KEY, refuse in production without it
 app.post("/auth/token", async (req, reply) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  const providedKey = req.headers["x-admin-key"] as string | undefined;
+  if (!adminKey || providedKey !== adminKey) {
+    return reply.code(403).send({ error: "Forbidden: admin key required" });
+  }
   const { merchantId, role } = req.body as { merchantId: string, role?: 'merchant'|'admin' };
   if (!merchantId) return reply.code(400).send({ error: "merchantId required" });
   const token = await authEngine.issueToken(merchantId, role || 'merchant');
@@ -88,26 +104,41 @@ app.post("/telemetry", async (req, reply) => {
 });
 
 app.get("/telemetry/dashboard", async (req, reply) => {
-  // Return aggregated metrics for the Admin Portal Recharts Dashboard
-  // This stubs the ClickHouse connection from Phase 3 Data Intelligence Engine
-  const data = {
-    elasticity: [
-      { name: "Mon", score: 0.82 },
-      { name: "Tue", score: 0.85 },
-      { name: "Wed", score: 0.79 },
-      { name: "Thu", score: 0.91 },
-      { name: "Fri", score: 0.88 },
-      { name: "Sat", score: 0.95 },
-      { name: "Sun", score: 0.89 },
-    ],
-    outcomes: [
-      { name: "Closed", value: 420 },
-      { name: "Bundle Pivot", value: 135 },
-      { name: "Escalated", value: 85 },
-      { name: "Abandoned", value: 210 },
-    ]
-  };
-  return reply.send(data);
+  // #3 FIX: Real queries from negotiation_traces and orders tables
+  // @ts-ignore — Fastify hook injects merchantId
+  const merchantId = (req as any).merchantId;
+
+  const [outcomeRows, elasticityRows, revenueRows] = await Promise.all([
+    sql<{outcome: string, count: number}[]>`
+      SELECT outcome, COUNT(*) as count
+      FROM negotiation_traces
+      WHERE merchant_id = ${merchantId}
+        AND created_at > now() - interval '30 days'
+      GROUP BY outcome
+    `,
+    sql<{day: string, avg_elasticity: number}[]>`
+      SELECT to_char(created_at, 'Dy') as day,
+             ROUND(AVG(COALESCE(price_elasticity_signal, 0))::numeric, 2) as avg_elasticity
+      FROM negotiation_traces
+      WHERE merchant_id = ${merchantId}
+        AND created_at > now() - interval '7 days'
+      GROUP BY to_char(created_at, 'Dy'), DATE_TRUNC('day', created_at)
+      ORDER BY DATE_TRUNC('day', created_at)
+    `,
+    sql<{total: number, count: number}[]>`
+      SELECT SUM(amount) as total, COUNT(*) as count
+      FROM transactions
+      WHERE merchant_id = ${merchantId}
+        AND status = 'confirmed'
+        AND created_at > now() - interval '30 days'
+    `,
+  ]);
+
+  const outcomes = outcomeRows.map(r => ({ name: r.outcome, value: Number(r.count) }));
+  const elasticity = elasticityRows.map(r => ({ name: r.day, score: Number(r.avg_elasticity) }));
+  const revenue = { total: Number(revenueRows[0]?.total ?? 0), orders: Number(revenueRows[0]?.count ?? 0) };
+
+  return reply.send({ outcomes, elasticity, revenue });
 });
 
 const DIALECTS: Dialect[] = ["pidgin", "yoruba", "igbo", "hausa", "english"];
@@ -278,11 +309,15 @@ app.put("/merchants/:id/pricing-rules", async (req, reply) => {
 
 app.get("/merchants/:id/products", async (req, reply) => {
   const { id } = req.params as { id: string };
+  // #21: pagination to prevent OOM on large catalogs
+  const limit = Math.min(num((req.query as any).limit) ?? 50, 200);
+  const offset = num((req.query as any).offset) ?? 0;
   return sql`
     select sku, name, stock, price, description, category, tags, attributes,
            image_url, currency, active, source, updated_at
     from products where merchant_id = ${id}
     order by updated_at desc
+    limit ${limit} offset ${offset}
   `;
 });
 

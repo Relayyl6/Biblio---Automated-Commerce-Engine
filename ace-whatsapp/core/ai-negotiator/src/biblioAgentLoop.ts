@@ -10,6 +10,8 @@ import { toolHandlers } from "./toolHandlers.js";
 const env = loadNegotiatorEnv();
 const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
 const MODEL = env.GROQ_MODEL || process.env.GROQ_MODEL || "llama3-70b-8192";
+const MAX_BIBLIO_ITERATIONS = 10;
+const LOCK_TTL_SECONDS = 120;
 
 export async function runBiblioAgentTurn(turn: ConversationTurn): Promise<void> {
   const { customerId: merchantPhone, merchantId, messages } = turn;

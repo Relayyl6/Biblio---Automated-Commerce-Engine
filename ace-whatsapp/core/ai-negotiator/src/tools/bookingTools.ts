@@ -157,15 +157,11 @@ async function sendCalendarInvite(email: string, title: string, startTime: strin
 export const bookingHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   book_appointment: async (merchantId: string, args: any) => {
     if (!args.time || !args.serviceId) return "Time and Service ID are required.";
-    
-    // 1. Generate Unique Booking ID
     const aptId = 'APT-' + crypto.randomBytes(3).toString('hex').toUpperCase();
     
-    // 2. Verify no overlapping slots
     const overlap = await sql`SELECT id FROM appointments WHERE merchant_id = ${merchantId} AND scheduled_time = ${args.time}::timestamp`;
     if (overlap.length > 0) return "Time slot is already booked! Please suggest another time.";
     
-    // 3. Insert into Database
     try {
         await sql`
             INSERT INTO appointments (merchant_id, appointment_id, service_id, scheduled_time, customer_id, status)
@@ -173,14 +169,35 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
         `;
     } catch(e) {}
     
-    // 4. Fetch Merchant Google Calendar Email
-    const vendorSettings = await sql`SELECT metadata->>'google_calendar_email' as email FROM vendors WHERE merchant_id = ${merchantId}`;
-    const email = vendorSettings[0]?.email || 'merchant@example.com';
+    const integrations = await sql`SELECT access_token, refresh_token FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'google_calendar'`;
     
-    // 5. Push to Google Calendar API with reminders
-    await sendCalendarInvite(email, `Booking ${aptId} - Service ${args.serviceId}`, args.time);
+    if (integrations.length > 0) {
+        try {
+            const { google } = await import('googleapis');
+            const oauth2Client = new google.auth.OAuth2();
+            oauth2Client.setCredentials({
+                access_token: integrations[0].access_token,
+                refresh_token: integrations[0].refresh_token
+            });
+            const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+            
+            await calendar.events.insert({
+                calendarId: 'primary',
+                requestBody: {
+                    summary: `Booking ${aptId} - Service ${args.serviceId}`,
+                    start: { dateTime: args.time, timeZone: "Africa/Lagos" },
+                    end: { dateTime: new Date(new Date(args.time).getTime() + 3600000).toISOString(), timeZone: "Africa/Lagos" },
+                    reminders: { useDefault: false, overrides: [{ method: 'email', minutes: 24 * 60 }, { method: 'popup', minutes: 30 }] }
+                }
+            });
+            return `Appointment ${aptId} booked for ${args.time}! Google Calendar event created via API.`;
+        } catch(e) {
+            await logger.error("[Google Calendar Error]", e);
+            return `Appointment ${aptId} booked for ${args.time} but failed to sync to Google Calendar.`;
+        }
+    }
     
-    return `Appointment ${aptId} successfully booked for ${args.time}! Google Calendar invite and 30-min reminders have been sent to the merchant.`;
+    return `Appointment ${aptId} booked for ${args.time}! (Google Calendar not connected).`;
   },
   check_calendar_availability: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
