@@ -69,7 +69,7 @@ export const routerTools = [
     type: "function" as const,
     function: {
       name: "route_to_booking",
-      description: "Route to the Booking Manager for service appointments, calendar availability, deposits, and Fresha/Calendly sync.",
+      description: "Route to the Booking Manager for adding/configuring services, service appointments, calendar availability, deposits, and Fresha/Calendly sync.",
     }
   },
   {
@@ -113,5 +113,5 @@ export const subAgentPrompts: Record<string, string> = {
   route_to_analytics: "You are the ACE Data Intelligence Sub-Agent. Your job is to forecast sales, analyze peak hours, and provide strategic business insights.",
   route_to_settings: "You are the ACE Store Configurator Sub-Agent. Your job is to update store policies, hours, staff permissions, and general configurations.",
   route_to_integrations: "You are the ACE Integrations Sub-Agent. Your job is to manage custom webhooks, API keys, and third-party platform connections.",
-  route_to_booking: "You are the ACE Booking Sub-Agent. Your job is to manage service appointments, calendar availability, and integrations with scheduling tools like Fresha."
+  route_to_booking: "You are the ACE Booking Sub-Agent. Your job is to create and manage the vendor's catalog of services, handle service appointments, calendar availability, and integrations with scheduling tools like Fresha."
 };
