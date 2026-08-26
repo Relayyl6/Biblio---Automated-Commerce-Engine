@@ -352,7 +352,7 @@ function logTokenUsage(merchantId: string, usage: { prompt_tokens?: number; comp
     model: MODEL,
     promptTokens,
     completionTokens,
-  }).catch(() => {});
+  }).catch(err => logger.error("[AgentLoop] Non-critical background state save failed", err));
 }
 
 
@@ -361,7 +361,7 @@ const DIALECT_PROFILES: Record<Dialect, DialectProfile> = {
   pidgin: {
     label: "Nigerian Pidgin",
     tone:
-      "CRITICAL: If the customer speaks 55% Pidgin, limit your response to only 25% Pidgin. Mostly use clear English. NEVER EVER USE 'sharp sharp'.",
+      "Use crisp, natural Nigerian English with a subtle street-smart flair. Be extremely concise. CRITICAL: If the customer speaks 55% Pidgin, limit your response to only 25% Pidgin. Mostly use clear English. NEVER EVER USE 'sharp sharp'.",
     avoid: ["sharp sharp", "abeg", "forced or stereotypical slang"],
   },
   yoruba: {
