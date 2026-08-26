@@ -8,26 +8,31 @@ import { setupLoyaltyMilestoneFlow } from "./flows/loyaltyMilestoneFlow.js";
 async function main() {
   logger.log("[EventOrchestrator] Starting event orchestrator...");
 
-  // Initialize all flows (which now return BullMQ Workers)
-  const paymentWorker = await setupPostPaymentFlow();
-  const cartWorker = await setupAbandonedCartFlow();
-  const restockWorker = await setupInventoryRestockFlow();
-  const reviewWorker = await setupPostServiceReviewFlow();
-  const loyaltyWorker = await setupLoyaltyMilestoneFlow();
+  // Initialize all flows — each returns its BullMQ Worker for graceful shutdown
+  const paymentWorker    = await setupPostPaymentFlow();
+  const cartWorker       = await setupAbandonedCartFlow();
+  const restockWorker    = await setupInventoryRestockFlow();
+  const reviewWorker     = await setupPostServiceReviewFlow();
+  const loyaltyWorker    = await setupLoyaltyMilestoneFlow();
+
+  const allWorkers = [paymentWorker, cartWorker, restockWorker, reviewWorker, loyaltyWorker];
 
   logger.log("[EventOrchestrator] All flows initialized and listening.");
 
   const gracefulShutdown = async (signal: string) => {
     logger.log(`[EventOrchestrator] Received ${signal}. Shutting down gracefully...`);
-    
-    // Close workers to stop accepting new jobs and finish active ones safely
-    if (cartWorker) await cartWorker.close();
-    if (reviewWorker) await reviewWorker.close();
+    // Close all workers concurrently — stops accepting new jobs and waits for active ones
+    await Promise.allSettled(allWorkers.map(w => w?.close()));
     process.exit(0);
   };
 
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
+
+  // Catch any unhandled promise rejections at the process level
+  process.on("unhandledRejection", (reason) => {
+    logger.error("[EventOrchestrator] Unhandled rejection:", reason);
+  });
 }
 
 main().catch(err => {

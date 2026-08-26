@@ -29,7 +29,8 @@ import Groq from "groq-sdk";
 import type { WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { downloadMediaMessage } from "@whiskeysockets/baileys";
 import P from "pino";
-import { sql } from "@ace/shared/clients";
+import { Queue } from "bullmq";
+import { sql, redis } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import type { VendorConfig } from "./sessionManager.js";
 import { postProductToStatus } from "./statusPoster.js";
@@ -356,7 +357,7 @@ async function processGroupedVendorSubmission(
     price: parsed.price,
     stock: parsed.stock ?? 1,
     source: combinedTranscripts ? "whatsapp_voice" : "whatsapp_image",
-  }).catch(() => {});
+  }).catch(err => logger.error({ err }, "[InventoryParser] Non-critical status notification failed"));
 
   // ── Handle post instruction ───────────────────────────────────────────────
   const statusNote = await scheduleOrSendPost(
@@ -400,19 +401,23 @@ async function scheduleOrSendPost(
 
     case "delayed": {
       const { delayMs, label } = instruction;
-      // Schedule via setTimeout — for MVP this is fine. For production, use BullMQ
-      // with a delayed job so it survives process restarts.
-      setTimeout(async () => {
-        try {
-          await postProductToStatus(sock, product, vendor.id);
-          // Notify vendor when the scheduled post fires
-          await sock.sendMessage(sock.authState.creds.me?.id.split(":")[0] + "@s.whatsapp.net", {
-            text: `⏰ Scheduled post fired: *${product.product_name}* posted to your Status.`,
-          }).catch(() => {});
-        } catch (err) {
-          logger.error({ err, vendorId: vendor.id, sku: product.sku }, "Scheduled Status post failed");
+      // Production-grade: push a delayed BullMQ job instead of setTimeout.
+      // This survives process restarts and guarantees the post fires even if
+      // the pod crashes between now and the scheduled time.
+      const statusPostQueue = new Queue("status-posts", {
+        connection: { ...redis.options, maxRetriesPerRequest: null }
+      });
+      await statusPostQueue.add(
+        "delayed-status-post",
+        { vendorId: vendor.id, sku: product.sku },
+        {
+          delay: delayMs,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: false, // keep failed jobs for inspection
         }
-      }, delayMs);
+      );
       return `⏰ Scheduled to post to your Status in ${label}`;
     }
 

@@ -140,7 +140,7 @@ async function handlePaymentEvent(fields: string[]) {
         customerId,
         "Logistics Booking Failed",
         { turn: null as any, arc: { sessionId: "LOGISTICS_FAIL", stage: "logistics" } as any } // Mock arc
-      ).catch(() => {});
+      ).catch(err => logger.error({ err }, "[Logistics] Non-critical telemetry emit failed"));
     }
 
     // Alert the customer

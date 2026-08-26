@@ -38,6 +38,7 @@
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import crypto from "node:crypto";
+import { Queue, Worker } from "bullmq";
 import { redis, sql } from "@ace/shared/clients";
 import { loadIngestionEnv } from "@ace/shared/env";
 import type { InboundMessage } from "@ace/shared/types";
@@ -54,6 +55,23 @@ const app = Fastify({
 // Raw bytes are required for HMAC verification — a re-serialized JSON body
 // would not match what Meta signed. Registered per-route via `config: { rawBody: true }`.
 await app.register(rawBody, { global: false, runFirst: true });
+
+// ── Inbound Webhook Durable Queue ─────────────────────────────────────
+// Instead of processing in-memory (which risks data loss if the DB is
+// cold/sleeping or the pod crashes), we push raw webhooks into BullMQ.
+const webhookQueue = new Queue("inbound-webhooks", {
+  connection: { ...redis.options, maxRetriesPerRequest: null }
+});
+
+const webhookWorker = new Worker("inbound-webhooks", async (job) => {
+  await processMessage(job.data as InboundMessage);
+}, { 
+  connection: { ...redis.options, maxRetriesPerRequest: null },
+  concurrency: 5
+});
+
+webhookWorker.on("error", (err) => app.log.error(err, "Webhook worker Redis error"));
+webhookWorker.on("failed", (job, err) => app.log.error({ jobId: job?.id, err }, "Webhook processing failed, will retry"));
 
 // ─── Merchant resolution cache ─────────────────────────────────────────────
 // phone_number_id -> merchantId rarely changes (only on merchant onboarding
@@ -129,16 +147,20 @@ app.post(
     // must not be able to make Meta wait, even if a merchant lookup or
     // Redis call is slow.
     reply.code(200).send();
-
+  
+    // Push raw payloads to durable queue immediately. 
+    // This safely decouples the webhook from Postgres cold-starts WITHOUT risking data loss.
     for (const msg of messages) {
-      try {
-        await processMessage(msg);
-      } catch (err) {
-        // One bad message must not take down the batch. Log with enough
-        // context to replay/debug, then move on.
-        app.log.error({ err, waMessageId: msg.waMessageId }, "failed to process inbound message");
-      }
+      webhookQueue.add("process-webhook", msg, {
+        attempts: 5,
+        backoff: { type: "exponential", delay: 2000 },
+        removeOnComplete: true
+      }).catch(err => {
+        app.log.error({ err, msg }, "CRITICAL: failed to enqueue inbound message");
+      });
     }
+
+    return reply;
   },
 );
 
@@ -260,6 +282,7 @@ app.listen({ port: env.PORT, host: "0.0.0.0" }).then(() => {
 async function shutdown(signal: string) {
   app.log.info(`received ${signal}, shutting down gracefully`);
   await app.close(); // stops accepting new connections, drains in-flight requests
+  await webhookWorker.close();
   await redis.quit();
   process.exit(0);
 }

@@ -131,11 +131,17 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
 
     // Persist the verified state, write the ledger row, and clear the payment
     // countdown timer — all in one transaction so the order and ledger agree.
+    // IDEMPOTENCY: The WHERE clause guards against a duplicate webhook firing;
+    // if the order is already paid, zero rows are returned and we bail out.
+    let updatedRows: { id: string }[] = [];
     await sql.begin(async (tx) => {
-      await tx`
+      updatedRows = await tx<{ id: string }[]>`
         update orders set state = ${jsonb(newState)}, updated_at = now()
         where id = ${order.orderId}
+          and (state->>'status' != 'payment_verified' and state->>'status' != 'paid')
+        returning id
       `;
+      if (updatedRows.length === 0) return; // already processed — skip rest of tx
       await tx`
         insert into transactions
           (order_id, merchant_id, customer_id, amount, virtual_account, provider_ref, status)
@@ -159,6 +165,11 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
         )
       `;
     });
+
+    if (updatedRows.length === 0) {
+      app.log.warn({ orderId: order.orderId }, "Duplicate payment webhook — order already marked paid, skipping");
+      return;
+    }
     await redis.del(`order:${order.orderId}:timer`);
 
     await sendCustomerMessage(
@@ -182,7 +193,7 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
       fromState: "awaiting_payment",
       toState: "payment_verified",
       timestamp: Date.now(),
-    }).catch(() => {});
+    }).catch(err => app.log.error({ err, merchantId: order.merchantId, orderId: order.orderId }, "Telemetry captureOrderStateChange failed"));
 
     // Publish to Redis Stream so logistics-coordination can auto-book a rider
     await redis.xadd("stream:payments.verified", "*",
@@ -224,7 +235,7 @@ async function handleUnderpayment(order: MatchedOrder, payment: NormalizedPaymen
       received: payment.amountNgn,
       balance,
     },
-  }).catch(() => {});
+  }).catch(err => app.log.error({ err, orderId: order.orderId, merchantId: order.merchantId }, "Telemetry auditLog for underpayment failed"));
 
   // Order stays in awaiting_payment — the customer still owes the balance.
   await sendCustomerMessage(
@@ -259,7 +270,7 @@ async function recordUnmatchedTransaction(payment: NormalizedPayment): Promise<v
       virtualAccount: payment.virtualAccount,
       amount: payment.amountNgn,
     },
-  }).catch(() => {});
+  }).catch(err => app.log.error({ err, providerRef: payment.providerRef }, "Telemetry auditLog for unmatched payment failed"));
 }
 
 

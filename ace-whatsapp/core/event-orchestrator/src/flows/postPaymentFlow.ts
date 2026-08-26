@@ -3,7 +3,7 @@ import { redis, sql } from "@ace/shared/clients.js";
 
 // Uses Redis Pub/Sub to listen for PAYMENT_CONFIRMED events
 export async function setupPostPaymentFlow() {
-  const { Worker, Queue } = require("bullmq");
+  const { Worker, Queue } = await import("bullmq");
 
   const worker = new Worker("domain-events", async (job: any) => {
     if (job.name === "payment_confirmed") {

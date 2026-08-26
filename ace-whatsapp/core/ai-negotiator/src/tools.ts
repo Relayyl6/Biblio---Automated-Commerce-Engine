@@ -667,7 +667,7 @@ function closeDeal(finalPrice: number, items: OrderItem[], ctx: ToolContext): To
       fromState: ctx.orderState.status,
       toState: newOrderState.status,
       timestamp: Date.now(),
-    }).catch(() => {});
+    }).catch(err => logger.error("[Tools] Non-critical telemetry emit failed", err));
 
     return { output: { ok: true, orderId, finalPrice }, newOrderState, newArc };
   } catch (err) {

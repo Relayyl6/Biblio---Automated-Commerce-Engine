@@ -151,7 +151,7 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
     INSERT INTO customer_merchant_links (customer_id, merchant_id)
     VALUES (${customerId}, ${merchantId})
     ON CONFLICT DO NOTHING
-  `.catch(() => {});
+  `.catch(err => logger.error("[Debounce] Non-critical telemetry emit failed", err));
 
   // Sliding debounce: unique per (merchantId, customerId)
   const bullJobId = `turn_${merchantId}_${customerId}`;

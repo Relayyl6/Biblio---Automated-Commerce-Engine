@@ -118,7 +118,7 @@ export async function sendCustomerMessage(
   // The gateway holds live Baileys sockets in its own process memory.
   // We reach them via HTTP — never via direct function import.
   if (merchantId) {
-    const sent = await tryBaileysHttpSend(msg, merchantId);
+    const sent = await tryBaileysHttpSend(msg, merchantId!);
     if (sent) return "free_session";
   }
 

@@ -10,10 +10,12 @@ export async function setupPostServiceReviewFlow() {
     connection: { ...redis.options, maxRetriesPerRequest: null }
   });
 
+  worker.on("error", (err) => logger.error(`[PostServiceReview] Redis error:`, err));
   worker.on("completed", job => logger.log(`[PostServiceReview] Processed job ${job.id}`));
   worker.on("failed", (job, err) => logger.error(`[PostServiceReview] Job ${job?.id} failed:`, err));
 
   logger.log("[PostServiceReview] Listening for post_service_review jobs...");
+  return worker;
 }
 
 async function handleReviewRequest(appointmentId: string, merchantId: string, customerId: string) {

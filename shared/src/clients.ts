@@ -34,11 +34,10 @@ if (!connectionString) {
 
 export const sql = postgres(connectionString, {
   // Neon's pooled connection string already handles pooling at the proxy
-  // level, so keep this client-side pool small — it's just for local
-  // connection reuse within a single service instance.
+  // level, so keep this client-side pool small.
   max: 10,
-  idle_timeout: 20,
-  connect_timeout: 30,
+  idle_timeout: 30,
+  connect_timeout: 30, // Survive Neon cold-start (~5-15s wake-up delay)
 });
 
 /**

@@ -153,7 +153,7 @@ async function routeToNegotiator(
   const windowExpiresAt = timestamp + 24 * 60 * 60 * 1000;
   await redis
     .set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25)
-    .catch(() => {});
+    .catch(err => logger.error("[MessageClassifier] Non-critical audit log failed", err));
 
   await enqueueInboundMessage(inbound);
 }

@@ -3,7 +3,7 @@ import { redis, sql } from "@ace/shared/clients.js";
 import { Queue } from "bullmq";
 
 export async function setupInventoryRestockFlow() {
-  const { Worker, Queue } = require("bullmq");
+  const { Worker, Queue } = await import("bullmq");
 
   const worker = new Worker("domain-events", async (job: any) => {
     if (job.name === "inventory_deducted") {

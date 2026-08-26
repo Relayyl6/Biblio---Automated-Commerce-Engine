@@ -10,10 +10,12 @@ export async function setupAbandonedCartFlow() {
     connection: { ...redis.options, maxRetriesPerRequest: null }
   });
 
+  worker.on("error", (err) => logger.error(`[AbandonedCartFlow] Redis error:`, err));
   worker.on("completed", job => logger.log(`[AbandonedCartFlow] Processed job ${job.id}`));
   worker.on("failed", (job, err) => logger.error(`[AbandonedCartFlow] Job ${job?.id} failed:`, err));
 
   logger.log("[AbandonedCartFlow] Listening for delayed_cart_recovery jobs...");
+  return worker;
 }
 
 async function handleCartRecovery(orderId: string, merchantId: string, customerId: string) {

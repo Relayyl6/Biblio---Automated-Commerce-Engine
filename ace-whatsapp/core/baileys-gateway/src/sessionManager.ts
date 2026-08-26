@@ -325,13 +325,13 @@ export async function createSession(vendorId: string, isPairing = false): Promis
         SET session_status = ${isLoggedOut ? "logged_out" : "reconnecting"},
             updated_at = now()
         WHERE id = ${vendorId}
-      `.catch(() => {}); // Don't crash the handler if DB is briefly unavailable
+      `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical DB update failed, continuing"));
 
       if (isLoggedOut || isBadSession) {
         // Vendor needs to re-provision. Clear old creds so the next pairing starts fresh.
         await redis.del(`baileys:creds:${vendorId}`);
         reconnectAttempts.delete(vendorId);
-        await alertVendorReprovision(vendorId).catch(() => {});
+        await alertVendorReprovision(vendorId).catch(err => logger.warn({ err, vendorId }, "[SessionManager] alertVendorReprovision failed"));
         return;
       }
 
@@ -375,7 +375,7 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       await sql`
         UPDATE vendors SET session_status = 'connected', updated_at = now()
         WHERE id = ${vendorId}
-      `.catch(() => {});
+      `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
       logger.info({ vendorId }, "Baileys session connected");
 
       // Send the onboarding trigger
@@ -432,7 +432,7 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       if (msg.key.id && msg.message) {
         await redis
           .setex(`msg_cache:${msg.key.id}`, 3600, JSON.stringify(msg.message, BufferJSON.replacer))
-          .catch(() => {});
+          .catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
       }
 
       // Deduplicate — Baileys can re-deliver the same message ID on reconnect
@@ -493,7 +493,7 @@ export async function pairVendorNumber(phoneNumber: string, vendorId?: string): 
     UPDATE vendors 
     SET business_line_number = ${normalised}, updated_at = now()
     WHERE id = ${effectiveVendorId}
-  `.catch(() => {});
+  `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
 
   // Destroy any existing dead/zombie session to ensure fresh pairing code
   if (sessions.has(effectiveVendorId)) {
