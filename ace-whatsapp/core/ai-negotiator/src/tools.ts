@@ -1134,7 +1134,21 @@ async function bookAppointment(merchantId: string, customerId: string, serviceId
       }, { delay });
     }
     
-    // 7. Return
+    // 7. Return with OAuth fallback check if needed
+    if (!calEventId) {
+      try {
+        const vendor = await sql<{contact_phone: string}[]>`SELECT contact_phone FROM merchants WHERE id = ${merchantId} LIMIT 1`;
+        if (vendor.length && vendor[0].contact_phone) {
+           const oauthLink = `https://biblio.com/oauth/google?merchantId=${merchantId}`;
+           const alertText = `⚠️ *Biblio Alert:* A customer just booked an appointment (*${serviceName}* on *${formattedDateTime}*), but your Google Calendar isn't connected!\n\nPlease link your calendar to sync this and future bookings automatically: ${oauthLink}`;
+           await sendCustomerMessage({ toPhone: vendor[0].contact_phone, text: alertText }, undefined, merchantId);
+        }
+      } catch (alertErr) {
+         logger.error(`[bookAppointment] Failed to alert vendor about missing OAuth:`, alertErr);
+      }
+      return { ok: true, appointmentId, calEventId, calLink, message: 'Appointment confirmed, calendar sync pending.' };
+    }
+
     return { ok: true, appointmentId, calEventId, calLink, message: 'Appointment confirmed and synced to calendar.' };
   } catch (error) {
     logger.error(`[bookAppointment] Error:`, error);
