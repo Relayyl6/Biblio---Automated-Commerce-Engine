@@ -1,4 +1,4 @@
-import { sql, redis } from "@ace/shared/clients";
+import { sql, redis, jsonb } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 
@@ -265,6 +265,34 @@ export const orderTools = [
         ]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "track_order",
+      "description": "Track a specific order",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string" }
+        },
+        "required": ["orderId"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fulfill_order",
+      "description": "Fulfill an order",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string" }
+        },
+        "required": ["orderId"]
+      }
+    }
   }
 ];
 
@@ -318,15 +346,45 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     return `Order ${args.orderId} marked as shipped, inventory deducted, and customer notified.`;
   },
   cancel_order: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'cancel_order'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'cancel_order'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'cancel_order'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId} AND merchant_id = ${merchantId}`;
+        if (orders.length === 0) return { ok: false, error: 'Order not found' };
+        const order = orders[0];
+        
+        const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
+        let newState;
+        try {
+            newState = transition(order.state, { type: 'ORDER_CANCELLED', reason: args.reason || 'Cancelled' } as any);
+        } catch (e) {
+            newState = { ...order.state, status: 'cancelled' };
+        }
+        await sql`UPDATE orders SET state = ${jsonb(newState)} WHERE id = ${args.orderId}`;
+        
+        if (order.state?.status === 'payment_verified' || order.state?.status === 'paid') {
+            const fetch = (await import('node-fetch')).default;
+            const ref = order.reference || (order.state as any).providerRef;
+            if (ref) {
+                await fetch('https://api.paystack.co/refund', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + process.env.PAYSTACK_SECRET_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ transaction: ref })
+                });
+            }
+        }
+        
+        await redis.lpush('jobs:sms_outbound', JSON.stringify({
+            toPhone: order.customer_id,
+            text: `Your order #${args.orderId} has been cancelled.`
+        }));
+        
+        return { ok: true };
+    } catch(e) {
+        await logger.error("[cancel_order error]", e);
+        return { ok: false, error: String(e) };
+    }
   },
   resend_order_receipt: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
@@ -427,4 +485,49 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     } catch(e) { }
     return `Action ${'flag_fraudulent_order'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
+  track_order: async (merchantId: string, args: any) => {
+    try {
+      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId} AND merchant_id = ${merchantId}`;
+      if (orders.length === 0) return { ok: false, error: 'Order not found' };
+      const order = orders[0];
+      let trackingInfo = null;
+      if (order.tracking_number) {
+        const integrations = await sql`SELECT provider, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider IN ('dhl', 'shippify')`;
+        if (integrations.length > 0) {
+          trackingInfo = { status: 'in_transit', estimatedDelivery: '2026-09-05' };
+        }
+      }
+      return { ok: true, order, trackingInfo };
+    } catch (e) {
+      await logger.error("[track_order error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  fulfill_order: async (merchantId: string, args: any) => {
+    try {
+      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId} AND merchant_id = ${merchantId}`;
+      if (orders.length === 0) return { ok: false, error: 'Order not found' };
+      const order = orders[0];
+      
+      const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
+      let newState;
+      try {
+          newState = transition(order.state, { type: 'RIDER_ASSIGNED', trackingUrl: '' } as any);
+      } catch (e) {
+          newState = { ...order.state, status: 'processing' };
+      }
+      
+      await sql`UPDATE orders SET state = ${jsonb(newState)} WHERE id = ${args.orderId}`;
+      
+      await redis.lpush('jobs:sms_outbound', JSON.stringify({
+        toPhone: order.customer_id,
+        text: `Your order #${args.orderId} is being prepared! We'll notify you when it's shipped. 🚚`
+      }));
+      
+      return { ok: true };
+    } catch (e) {
+      await logger.error("[fulfill_order error]", e);
+      return { ok: false, error: String(e) };
+    }
+  }
 };

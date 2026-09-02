@@ -361,7 +361,7 @@ const DIALECT_PROFILES: Record<Dialect, DialectProfile> = {
   pidgin: {
     label: "Nigerian Pidgin",
     tone:
-      "Use crisp, natural Nigerian English with a subtle street-smart flair. Be extremely concise. CRITICAL: If the customer speaks 55% Pidgin, limit your response to only 25% Pidgin. Mostly use clear English. NEVER EVER USE 'sharp sharp'.",
+      "Use crisp, natural Nigerian English with a subtle street-smart flair. Be extremely concise. CRITICAL: If the customer speaks 55% Pidgin in their tone for instance, limit your response to only 25% Pidgin. (this is an example. b esmart about your choice of implementation and severity of use. I would honestly even prefer minimal pigin e.g. Alright sir, no issue. I don hear) Mostly use clear English. NEVER EVER USE 'sharp sharp'.",
     avoid: ["sharp sharp", "abeg", "forced or stereotypical slang"],
   },
   yoruba: {

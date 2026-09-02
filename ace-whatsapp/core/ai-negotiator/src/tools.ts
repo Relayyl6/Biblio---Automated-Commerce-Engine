@@ -72,8 +72,9 @@ export const toolDefinitions = [
       properties: {
         date: { type: "string", description: "YYYY-MM-DD" },
         durationMinutes: { type: "number", description: "Duration of the service in minutes" },
+        serviceId: { type: "string", description: "Optional service ID to auto-derive duration" },
       },
-      required: ["date", "durationMinutes"],
+      required: ["date"],
     },
   },
   {
@@ -319,7 +320,7 @@ export async function executeTool(
       return { output: rows };
     }
     case "check_availability": {
-      const slots = await checkAvailability(ctx.merchantId, input.date, input.durationMinutes);
+      const slots = await checkAvailability(ctx.merchantId, input.date, input.durationMinutes, input.serviceId);
       return { output: slots };
     }
     case "book_appointment": {
@@ -1007,27 +1008,136 @@ async function checkServices(merchantId: string, query: string) {
   return rows;
 }
 
-async function checkAvailability(merchantId: string, dateStr: string, durationMinutes: number) {
-  // Real implementation would look at merchant's store_hours and existing appointments.
-  // For Phase 1, we just mock 3 available slots between 9am and 5pm.
-  return [
-    { start: `${dateStr}T09:00:00Z`, end: `${dateStr}T09:${String(durationMinutes).padStart(2,'0')}:00Z` },
-    { start: `${dateStr}T13:00:00Z`, end: `${dateStr}T13:${String(durationMinutes).padStart(2,'0')}:00Z` },
-    { start: `${dateStr}T15:00:00Z`, end: `${dateStr}T15:${String(durationMinutes).padStart(2,'0')}:00Z` },
-  ];
+async function checkAvailability(merchantId: string, dateStr: string, durationMinutes?: number, serviceId?: string) {
+  try {
+    const { checkFreeBusy } = await import("@ace/shared/integrations/googleCalendar");
+    let durMins = durationMinutes || 30;
+
+    if (!durationMinutes && serviceId) {
+      const srv = await sql<{duration_minutes: number}[]>`SELECT duration_minutes FROM services WHERE id = ${serviceId} LIMIT 1`;
+      if (srv.length) durMins = srv[0].duration_minutes;
+    }
+
+    // 1. Query existing appointments
+    const dateStart = `${dateStr}T00:00:00Z`;
+    const dateEnd = `${dateStr}T23:59:59Z`;
+    const appointments = await sql<{ start_time: Date; end_time: Date }[]>`
+      SELECT start_time, end_time
+      FROM appointments
+      WHERE merchant_id = ${merchantId}
+        AND status IN ('confirmed', 'pending')
+        AND start_time >= ${dateStart}
+        AND start_time <= ${dateEnd}
+    `;
+
+    // 2. Query Google Calendar freebusy
+    let gcBusy: Array<{ start: string; end: string }> = [];
+    try {
+       gcBusy = await checkFreeBusy(merchantId, dateStart, dateEnd);
+    } catch (err) {
+       logger.error(`[checkAvailability] Error checking Google Calendar:`, err);
+    }
+
+    // 3. Merge conflicts
+    const conflicts = [
+      ...appointments.map(a => ({ start: new Date(a.start_time).getTime(), end: new Date(a.end_time).getTime() })),
+      ...gcBusy.map(b => ({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() }))
+    ];
+
+    // 4. Generate slots 9am to 5pm WAT (UTC+1) -> 08:00 to 16:00 UTC
+    const slots: Array<{ start: string; end: string }> = [];
+    let currentSlotStart = new Date(`${dateStr}T08:00:00Z`).getTime();
+    const endOfDay = new Date(`${dateStr}T16:00:00Z`).getTime();
+    const durationMs = durMins * 60000;
+
+    while (currentSlotStart + durationMs <= endOfDay && slots.length < 6) {
+      const currentSlotEnd = currentSlotStart + durationMs;
+      
+      const hasConflict = conflicts.some(c => 
+        (currentSlotStart >= c.start && currentSlotStart < c.end) || 
+        (currentSlotEnd > c.start && currentSlotEnd <= c.end) ||
+        (currentSlotStart <= c.start && currentSlotEnd >= c.end)
+      );
+
+      if (!hasConflict) {
+        slots.push({
+          start: new Date(currentSlotStart).toISOString(),
+          end: new Date(currentSlotEnd).toISOString()
+        });
+      }
+      
+      currentSlotStart += 30 * 60000;
+    }
+    
+    return slots;
+  } catch (error) {
+    logger.error(`[checkAvailability] Error generating slots for ${merchantId}:`, error);
+    return [];
+  }
 }
 
 async function bookAppointment(merchantId: string, customerId: string, serviceId: string, startTime: string, title: string) {
-  // get service details
-  const srv = await sql`SELECT duration_minutes FROM services WHERE id = ${serviceId} LIMIT 1`;
-  if (!srv.length) return { ok: false, error: "Service not found." };
-  
-  const endTime = new Date(new Date(startTime).getTime() + srv[0].duration_minutes * 60000).toISOString();
-  
-  await sql`
-    INSERT INTO appointments (merchant_id, customer_id, service_id, title, start_time, end_time, status)
-    VALUES (${merchantId}, ${customerId}, ${serviceId}, ${title}, ${startTime}, ${endTime}, 'confirmed')
-  `;
-  
-  return { ok: true, message: "Appointment confirmed.", startTime, endTime };
+  try {
+    const { createCalendarEvent } = await import("@ace/shared/integrations/googleCalendar");
+    const { Queue } = await import("bullmq");
+    const { redis } = await import("@ace/shared/clients");
+    const crypto = await import("crypto");
+    
+    // 1. Fetch service details
+    const srv = await sql<{name: string; duration_minutes: number; price: number}[]>`
+      SELECT name, duration_minutes, price FROM services WHERE id = ${serviceId} LIMIT 1
+    `;
+    if (!srv.length) return { ok: false, error: "Service not found." };
+    const serviceName = srv[0].name;
+    
+    // 2. Compute endTime
+    const endTime = new Date(new Date(startTime).getTime() + srv[0].duration_minutes * 60000).toISOString();
+    
+    // 3. INSERT into appointments table
+    const appointmentId = crypto.randomUUID();
+    await sql`
+      INSERT INTO appointments (id, merchant_id, customer_id, service_id, title, start_time, end_time, status)
+      VALUES (${appointmentId}, ${merchantId}, ${customerId}, ${serviceId}, ${title}, ${startTime}, ${endTime}, 'confirmed')
+    `;
+    
+    // 4. Call createCalendarEvent
+    let calEventId: string | null = null;
+    let calLink: string | null = null;
+    try {
+      const calRes = await createCalendarEvent(merchantId, {
+        title,
+        startTime,
+        endTime,
+      });
+      calEventId = calRes.calEventId;
+      calLink = calRes.calLink;
+    } catch (err) {
+      logger.error(`[bookAppointment] Failed to create calendar event:`, err);
+    }
+    
+    // 5. Send WhatsApp confirmation
+    const shortId = appointmentId.split("-")[0];
+    const formattedDateTime = new Date(startTime).toLocaleString("en-GB", { timeZone: "Africa/Lagos", dateStyle: "medium", timeStyle: "short" });
+    const msgText = `✅ *Appointment Confirmed!*\n\n📅 *${serviceName}*\n🕐 ${formattedDateTime}\n🔖 Ref: ${shortId}\n\nWe'll send you a reminder 30 minutes before. See you then! 🙌`;
+    
+    const cust = await sql<{phone: string}[]>`SELECT phone FROM customers WHERE id = ${customerId} LIMIT 1`;
+    if (cust.length && cust[0].phone) {
+       await sendCustomerMessage({ toPhone: cust[0].phone, text: msgText }, undefined, merchantId);
+    }
+
+    // 6. BullMQ delayed job
+    const delay = new Date(startTime).getTime() - Date.now() - 30 * 60000;
+    if (delay > 0) {
+      const q = new Queue("appointment-reminders", { connection: redis.options });
+      await q.add("remind", {
+        merchantId, customerId, serviceId, appointmentId, startTime, serviceName
+      }, { delay });
+    }
+    
+    // 7. Return
+    return { ok: true, appointmentId, calEventId, calLink, message: 'Appointment confirmed and synced to calendar.' };
+  } catch (error) {
+    logger.error(`[bookAppointment] Error:`, error);
+    return { ok: false, error: "An error occurred while booking the appointment." };
+  }
 }

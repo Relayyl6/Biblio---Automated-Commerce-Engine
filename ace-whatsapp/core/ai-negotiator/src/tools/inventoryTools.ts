@@ -360,26 +360,35 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
 
   add_inventory: async (merchantId: string, args: any) => {
     let count = 0;
-    for (const item of (args.items || [])) {
-        const sku = "PROD-" + crypto.randomBytes(4).toString('hex').toUpperCase();
-        
-        // 1. Check if similar product exists
-        const existing = await sql`SELECT id FROM products WHERE merchant_id = ${merchantId} AND name ILIKE ${item.name}`;
-        
-        if (existing.length === 0) {
-            // 2. Insert product
-            const inserted = await sql`
-                INSERT INTO products (merchant_id, sku, name, price, stock, image_url, last_posted_at) 
-                VALUES (${merchantId}, ${sku}, ${item.name}, ${item.price}, ${item.stock || 0}, ${item.image_url || null}, ${item.post_to_status ? sql`now()` : null})
-                RETURNING id
-            `;
-            
-            // 3. Trigger smart categorization job via Redis
-            await redis.lpush('jobs:categorize_product', JSON.stringify({ productId: inserted[0].id, name: item.name }));
-            count++;
-        }
+    try {
+      for (const item of (args.items || [])) {
+          const sku = "PROD-" + crypto.randomBytes(4).toString('hex').toUpperCase();
+          
+          // 1. Check if similar product exists
+          const existing = await sql`SELECT id FROM products WHERE merchant_id = ${merchantId} AND name ILIKE ${item.name}`;
+          
+          if (existing.length === 0) {
+              // 2. Insert product
+              const inserted = await sql`
+                  INSERT INTO products (merchant_id, sku, name, price, stock, image_url, last_posted_at) 
+                  VALUES (${merchantId}, ${sku}, ${item.name}, ${item.price}, ${item.stock || 0}, ${item.image_url || null}, ${item.post_to_status ? sql`now()` : null})
+                  RETURNING id
+              `;
+              
+              // 3. Trigger smart categorization job via Redis
+              await redis.lpush('jobs:categorize_product', JSON.stringify({ productId: inserted[0].id, name: item.name }));
+              count++;
+          }
+      }
+      
+      // Trigger background sync
+      await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId }));
+      
+      return `Processed ${args.items?.length || 0} items. Added ${count} new unique items to catalog.`;
+    } catch(e) {
+      await logger.error("[add_inventory error]", e);
+      return { ok: false, error: String(e) };
     }
-    return `Processed ${args.items?.length || 0} items. Added ${count} new unique items to catalog.`;
   },
   update_inventory: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
@@ -389,7 +398,12 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
             INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
             VALUES (${merchantId}, ${actionId}, ${'update_inventory'}, ${JSON.stringify(args)}, now())
         `;
-    } catch(e) { }
+        // Trigger background sync
+        await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId, sku: args.sku, price: args.price, stock: args.stock }));
+    } catch(e) { 
+        await logger.error("[update_inventory error]", e);
+        return { ok: false, error: String(e) };
+    }
     return `Action ${'update_inventory'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   delete_inventory: async (merchantId: string, args: any) => {
@@ -404,15 +418,22 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     return `Action ${'delete_inventory'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   search_inventory: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'search_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'search_inventory'}, ${JSON.stringify(args)}, now())
+        let matchType = 'fuzzy';
+        let results = await sql`
+            SELECT * FROM products WHERE merchant_id = ${merchantId} AND name ILIKE ${'%' + args.query + '%'}
         `;
-    } catch(e) { }
-    return `Action ${'search_inventory'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        if (results.length === 0) {
+            results = await sql`
+                SELECT * FROM products WHERE merchant_id = ${merchantId} AND ${args.query} = ANY(tags)
+            `;
+            matchType = 'tag';
+        }
+        return { ok: true, results, matchType };
+    } catch(e) {
+        await logger.error("[search_inventory error]", e);
+        return { ok: false, error: String(e) };
+    }
   },
   auto_restock_alert_config: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();
@@ -459,15 +480,34 @@ export const inventoryHandlers: Record<string, (merchantId: string, args: any) =
     return `Action ${'categorize_product'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   sync_shopify_inventory: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'sync_shopify_inventory'}] Executing (ActionID: ${actionId})`, { merchantId, args });
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'sync_shopify_inventory'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'sync_shopify_inventory'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+        const integrations = await sql`SELECT metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider = 'shopify'`;
+        if (integrations.length > 0) {
+            const fetch = (await import('node-fetch')).default;
+            const shop = integrations[0].metadata.shop;
+            const apiKey = integrations[0].metadata.apiKey;
+            const productId = args.productId;
+            if (shop && apiKey && productId) {
+                const res = await fetch(`https://${shop}.myshopify.com/admin/api/2024-01/products/${productId}.json`, {
+                    method: 'PUT',
+                    headers: {
+                        'X-Shopify-Access-Token': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ product: args.productData })
+                });
+                if (!res.ok) {
+                    await logger.error("[sync_shopify_inventory failed]", await res.text());
+                } else {
+                    await logger.log("[sync_shopify_inventory success]", { merchantId, productId });
+                }
+            }
+        }
+        return { ok: true };
+    } catch(e) {
+        await logger.error("[sync_shopify_inventory error]", e);
+        return { ok: false, error: String(e) };
+    }
   },
   push_to_woocommerce: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

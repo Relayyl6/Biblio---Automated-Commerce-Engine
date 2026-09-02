@@ -197,6 +197,65 @@ export const financeTools = [
         "properties": {}
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_payment_link",
+      "description": "Create a Paystack payment link",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string" },
+          "amountInKobo": { "type": "number" },
+          "orderId": { "type": "string" },
+          "customerId": { "type": "string" }
+        },
+        "required": ["email", "amountInKobo", "orderId", "customerId"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_revenue_report",
+      "description": "Get real SQL revenue report",
+      "parameters": { "type": "object", "properties": {} }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_paystack_customer",
+      "description": "Create a Paystack customer",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string" },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" },
+          "phone": { "type": "string" }
+        },
+        "required": ["email", "first_name", "last_name", "phone"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_subaccount",
+      "description": "Create a Paystack subaccount",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "business_name": { "type": "string" },
+          "settlement_bank": { "type": "string" },
+          "account_number": { "type": "string" },
+          "percentage_charge": { "type": "number" }
+        },
+        "required": ["business_name", "settlement_bank", "account_number", "percentage_charge"]
+      }
+    }
   }
 ];
 
@@ -406,4 +465,109 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
     } catch(e) { }
     return `Action ${'analyze_profit_margins'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
+  create_payment_link: async (merchantId: string, args: any) => {
+    try {
+      const fetch = (await import('node-fetch')).default;
+      const res = await fetch('https://api.paystack.co/transaction/initialize', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + process.env.PAYSTACK_SECRET_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: args.email,
+          amount: args.amountInKobo,
+          metadata: { merchantId, orderId: args.orderId, customerId: args.customerId }
+        })
+      });
+      const data = await res.json() as any;
+      if (!data.status) throw new Error(data.message);
+      
+      const reference = data.data.reference;
+      const authorization_url = data.data.authorization_url;
+      
+      await sql`UPDATE orders SET reference = ${reference}, authorization_url = ${authorization_url} WHERE id = ${args.orderId} AND merchant_id = ${merchantId}`;
+      
+      return { ok: true, paymentLink: authorization_url, reference };
+    } catch (e) {
+      await logger.error("[create_payment_link error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  get_revenue_report: async (merchantId: string, args: any) => {
+    try {
+      const rows = await sql`
+        SELECT 
+          DATE_TRUNC('day', created_at) as day,
+          COUNT(*) as order_count,
+          SUM((state->>'finalPrice')::numeric) as revenue
+        FROM orders
+        WHERE merchant_id = ${merchantId}
+          AND created_at >= NOW() - INTERVAL '30 days'
+          AND state->>'status' = 'paid'
+        GROUP BY day
+        ORDER BY day DESC
+      `;
+      return { ok: true, report: rows };
+    } catch (e) {
+      await logger.error("[get_revenue_report error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  create_paystack_customer: async (merchantId: string, args: any) => {
+    try {
+      const fetch = (await import('node-fetch')).default;
+      const res = await fetch('https://api.paystack.co/customer', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + process.env.PAYSTACK_SECRET_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: args.email,
+          first_name: args.first_name,
+          last_name: args.last_name,
+          phone: args.phone
+        })
+      });
+      const data = await res.json() as any;
+      if (!data.status) throw new Error(data.message);
+      
+      const customer_code = data.data.customer_code;
+      await sql`INSERT INTO customers (merchant_id, email, customer_code) VALUES (${merchantId}, ${args.email}, ${customer_code}) ON CONFLICT DO NOTHING`;
+      
+      return { ok: true, customer_code };
+    } catch (e) {
+      await logger.error("[create_paystack_customer error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  create_subaccount: async (merchantId: string, args: any) => {
+    try {
+      const fetch = (await import('node-fetch')).default;
+      const res = await fetch('https://api.paystack.co/subaccount', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + process.env.PAYSTACK_SECRET_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          business_name: args.business_name,
+          settlement_bank: args.settlement_bank,
+          account_number: args.account_number,
+          percentage_charge: args.percentage_charge
+        })
+      });
+      const data = await res.json() as any;
+      if (!data.status) throw new Error(data.message);
+      
+      const subaccount_code = data.data.subaccount_code;
+      await sql`UPDATE merchants SET subaccount_code = ${subaccount_code} WHERE id = ${merchantId}`;
+      
+      return { ok: true, subaccount_code };
+    } catch (e) {
+      await logger.error("[create_subaccount error]", e);
+      return { ok: false, error: String(e) };
+    }
+  }
 };

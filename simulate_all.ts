@@ -75,12 +75,8 @@ async function runScenario(name: string, fn: () => Promise<void>) {
 async function main() {
   logger.log("Starting Full Simulation Suite...");
   
-  let merchantRows = await sql`SELECT id, contact_phone FROM merchants LIMIT 1`;
-  if (merchantRows.length === 0) {
-    throw new Error('No merchants found in the database. Please run seed_vendor.ts first.');
-  }
-  const merchantId = merchantRows[0].id;
-  const merchantPhone = merchantRows[0].contact_phone || '+2348000000000';
+  const merchantId = '11111111-1111-1111-1111-111111111111';
+  const merchantPhone = '+2348000000000';
 
 
 
