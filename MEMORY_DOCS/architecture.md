@@ -1,6 +1,6 @@
-# Architecture — ACE WhatsApp (Phase 1, as-built) + intended direction
+# Architecture — ACE WhatsApp (Phase 1.5, as-built) + intended direction
 
-> Last updated: 2026-06-23. Reconciles `BIBLO.docx`, `ace-whatsapp/ARCHITECTURE.md`,
+> Last updated: 2026-10-05. Reconciles `BIBLO.docx`, `ace-whatsapp/ARCHITECTURE.md`,
 > and the actual code on disk. Where the doc and code disagree, the **code is the
 > current truth** and the divergence is flagged as a roadmap item.
 
@@ -55,25 +55,30 @@ merchant-app / admin-portal ──HTTP──▶ merchant-api (CRUD merchants, pr
 catalog-sync: Meta Catalog API ──pull──▶ map ──upsert──▶ products table
 ```
 
-### Service responsibilities (as-built)
+### Service responsibilities (as-built, Phase 1.5)
 
 | Service | Role | Key exports | Status |
 |---|---|---|---|
-| `ingestion-service` | Fastify webhook; verify HMAC; dedup; normalize text/audio/image/interactive → `InboundMessage`; ack 200 fast; enqueue. | webhook handlers, `extractMessages()` | ✅ works |
-| `comms-router/debounce` | Per-customer sliding-window batch (Redis scratch buffer + delayed BullMQ job); on close, load merchant+order, call negotiator. | `enqueueInboundMessage`, `turnQueue`, `turnWorker` | ✅ works |
+| `ingestion-service` | Fastify webhook; verify HMAC; dedup; normalize → `InboundMessage`; ack 200 fast; enqueue to BullMQ `inbound-webhooks`. | webhook handlers, `extractMessages()` | ✅ works |
+| `comms-router/debounce` | Per-customer sliding-window batch (Redis + delayed BullMQ job); on close, load merchant+order, call negotiator. | `enqueueInboundMessage`, `turnQueue`, `turnWorker` | ✅ works |
 | `comms-router/outbound` | Single send chokepoint; classify service window (free vs billable); consolidate fragments. | `sendCustomerMessage`, `classifyWindow`, `consolidate` | ✅ works |
-| `comms-router/whatsapp` | Graph API sender; exponential backoff; interactive buttons (≤3, 20-char titles); `EscalationPriority`. | `sendWhatsAppMessage`, `priorityForOrderValue` | ✅ works |
-| `ai-negotiator/agentLoop` | Per-turn orchestrator; distributed lock; system prompt; Claude tool loop (≤8 iters); arc persistence (Redis 24h); flush trace on terminal arc. | `runNegotiatorTurn` | ✅ works |
-| `ai-negotiator/pricingService` | Pure rules: tier resolution, authorized range, circuit-breaker validation, injection scan. | `resolveCustomerTier`, `computeAuthorizedRange`, `validateProposedPrice`, `validateBundlePivot`, `scanForInjection` | ✅ works |
-| `ai-negotiator/negotiationArc` | Pure reducer for negotiation stage + tactic legality + rate-limit (max 3 offers). | `advanceArc`, `availableTactics`, `projectRangeOntoArc`, `discountLocked` | ✅ works |
-| `ai-negotiator/tools` | 7 Claude tools + dispatcher; reads/mutates inventory, profile, order state, arc. | `executeTool`, `toolDefinitions` | ✅ works |
-| `ai-negotiator/negotiationTrace` | Pure builder for the enterprise `negotiation_traces` row (price elasticity signal). | `buildNegotiationTrace` | ✅ works |
+| `comms-router/whatsapp` | Graph API sender; exponential backoff; interactive buttons (≤3, 20-char titles). | `sendWhatsAppMessage`, `priorityForOrderValue` | ✅ works |
+| `ai-negotiator/agentLoop` | Per-turn orchestrator; distributed lock; Groq tool loop (≤8 iters); arc persistence (Redis 24h); flush trace on terminal arc. | `runNegotiatorTurn` | ✅ works |
+| `ai-negotiator/biblioAgentLoop` | Vendor command router (two-stage: router LLM → sub-agent LLM); sends reply to vendor's WhatsApp. | `runBiblioAgentTurn` | ✅ works |
+| `ai-negotiator/tools` | 1,073-line customer-facing tool dispatcher (12 tools). `bookAppointment` now wires Google Calendar + WhatsApp confirmation + BullMQ reminder + OAuth alert to vendor. | `executeTool`, `toolDefinitions` | ✅ works |
+| `ai-negotiator/tools/` | 109 vendor-facing tools across 10 files: analytics, booking, crm, finance, integration, inventory, marketing, negotiation, order, settings. All handlers have real SQL + external API logic. | `*Tools`, `*Handlers` per file | ✅ works |
+| `ai-negotiator/pricingService` | Pure rules: tier resolution, authorized range, circuit-breaker. | `resolveCustomerTier`, `computeAuthorizedRange`, `validateProposedPrice` | ✅ works |
+| `ai-negotiator/negotiationArc` | Pure reducer for negotiation stage + tactic legality + rate-limit (max 3 offers). | `advanceArc`, `availableTactics`, `discountLocked` | ✅ works |
+| `ai-negotiator/negotiationTrace` | Pure builder for the enterprise `negotiation_traces` row. | `buildNegotiationTrace` | ✅ works |
 | `state-machine/orderStateMachine` | Pure `transition(state,event)`; 7 states; amount-match guard on PAYMENT_CONFIRMED. | `transition`, `TransitionError` | ✅ works |
-| `payment-verification/index` | Fastify webhook; verify sig; dedup; match VAN→order; lock; transition; persist state+ledger; underpayment/unmatched handling. | Fastify app | ✅ works |
-| `payment-verification/paymentService` | Pure: constant-time HMAC verify, normalize Paystack/ACE shapes, classify amount. | `verifyWebhookSignature`, `normalizePaymentEvent`, `classifyAmount` | ✅ works |
-| `catalog-sync` | Pull Meta catalog (paginated) → map → upsert products; preserves manual enrichment. | `syncMerchantCatalog`, `mapCatalogProduct`, `parsePrice` | ✅ works |
+| `payment-verification/index` | Fastify webhook; verify sig; dedup; match VAN→order; lock; transition; persist state+ledger; idempotency guard (`WHERE status != 'paid'`). | Fastify app | ✅ works |
+| `payment-verification/paymentService` | Pure: HMAC verify, normalize Paystack/ACE shapes, classify amount. | `verifyWebhookSignature`, `normalizePaymentEvent`, `classifyAmount` | ✅ works |
+| `catalog-sync` | Pull Meta catalog (paginated) → map → upsert products. | `syncMerchantCatalog`, `mapCatalogProduct` | ✅ works |
 | `merchant-api` | Fastify REST: merchants/products/pricing-rules CRUD, catalog-sync trigger, customer link. | Fastify app | ✅ works |
-| `identity-resolution` | Global Buyer ID clustering (fuzzy phone/name match). | — | 🔲 README only |
+| `event-orchestrator` | Graceful-shutdown BullMQ worker host for: abandonedCart, postPayment, postServiceReview, inventoryRestock, loyaltyMilestone. | 5 flow workers | ✅ works |
+| `baileys-gateway` | Baileys v7 edge service for vendor personal numbers. Session management, inventory parser, status poster, message classifier. | — | ✅ works |
+| `shared/src/integrations/googleCalendar.ts` | Raw-fetch Google Calendar API: create/delete events, check freebusy, auto-refresh tokens from `merchant_integrations` table. | `createCalendarEvent`, `checkFreeBusy`, `refreshGoogleTokens` | ✅ works |
+| `identity-resolution` | Global Buyer ID clustering (fuzzy phone/name match). | — | ✅ works |
 | `logistics-coordination` | Auto-book riders (Kwik/Gokada/MAX) on payment_verified. | — | 🔲 README only |
 | `supplier-integration` | Demand spike → ping supplier WhatsApp → draft PO. | — | 🔲 README only |
 | `visual-context` | Social scrape + CLIP embeddings → SKU resolution. | — | 🔲 README only |

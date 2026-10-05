@@ -26,7 +26,7 @@ ACE (Autonomous Commerce Engine) is designed as an "invisible operating system" 
 *   **ClickHouse:** Data warehouse for sub-second aggregations, powering FMCG dashboards and merchant analytics.
 
 ## 4. Current Codebase Status
-*   **Phase 1 (`ace-whatsapp`):** In active development. The core Rust loop works end-to-end. React Native Merchant App and Vite Admin Portal have foundational scaffolding. Immediate focus is hardening (e.g., wiring the `escalate_to_merchant` tool).
+*   **Phase 1.5 (`ace-whatsapp`):** Hardened and extended. The core Rust-bound TS loop works end-to-end. We have completely purged fire-and-forget patterns and implemented 109 independent tools for the Biblio Vendor Agent covering CRM, Finance, Marketing, Order, and Inventory. Real integrations with Google Calendar, Shopify, Paystack, and Instagram Graph API are now live. 
 *   **Phase 2 (`ace-platform`):** Placeholder/Design Phase. Will introduce a multi-channel CRM, web widget, supplier portal, and a full web dashboard.
 *   **Data Intelligence (`data-intelligence`):** Placeholder/Design Phase. Outlines the Scale-AI-like pivot into data monetization.
 *   **Shared (`shared`):** Contains AI SDK middleware (for training data capture), schemas (Kafka/Zod), and proto files.

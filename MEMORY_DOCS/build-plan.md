@@ -1,6 +1,6 @@
 # Build Plan — ACE / Biblio
 
-> Last updated: 2026-06-23. The prioritized roadmap. Priority order follows the
+> Last updated: 2026-10-05. The prioritized roadmap. Priority order follows the
 > directive: **(1) ace-whatsapp → (2) merchant app → (3) admin portal → (4) supporting
 > services.** Aligns with `BIBLO.docx` PART 4 (Demo-Ready MVP, May 18 → Oct 31 2026).
 > Update `progress-tracker.md` as items move; update this plan if priorities shift.
@@ -13,8 +13,9 @@ working code; close the gaps between the 4 canonical workflows and what's built.
 
 ## Status snapshot
 
-- ✅ **Workflow 1 (Order Fulfillment)** — built end-to-end **except** real rider dispatch
-  and real VAN generation. The human-escalation branch has no delivery channel.
+- ✅ **Workflow 1 (Order Fulfillment)** — built end-to-end. Payment idempotency solid. 109 vendor tools live. Real Google Calendar, Paystack, Shopify, Instagram integrations. Only remaining gaps: real VAN generation, logistics auto-dispatch, Google OAuth handler.
+- ✅ **Phase 1 Hardening** — All fire-and-forget purged, all swallowed errors logged, payment idempotency enforced, event orchestrator flows (5) built with graceful shutdown.
+- ✅ **Phase 1.5 Tool Upgrades** — 109 Biblio vendor tools fully implemented. Real external API calls in finance, inventory, order, marketing, integration tools. Simulate_all.ts: 11/11 pass.
 - 🟡 **Workflow 2 (Restocking)** — supplier-integration is README-only.
 - 🟡 **Workflow 3 (Retention)** — no nightly analyzer / re-engagement job.
 - 🟡 **Workflow 4 (Visual Resolution)** — visual-context is README-only.
@@ -23,36 +24,21 @@ working code; close the gaps between the 4 canonical workflows and what's built.
 
 Goal: the autonomous loop is correct, observable, and testable.
 
-- [ ] **A1. Test harness + pure-module unit tests.** Add `vitest`. Cover
-  `orderStateMachine.transition` (all state×event incl. guards), pricing circuit breaker &
-  injection scan, `advanceArc`/`availableTactics`, `normalizePaymentEvent`/`classifyAmount`,
-  `parsePrice`. *(Biggest risk reducer; nothing is tested today.)*
-- [ ] **A2. Close the escalation loop (Vendor Communiqué v1).** Today
-  `escalate_to_merchant` writes an `escalations` row that no one delivers. Build the
-  merchant notification channel: at minimum WhatsApp-to-merchant interactive message
-  (Approve / Counter / Decline) + a reply handler that resolves the escalation and
-  resumes the negotiation. (SMS reply-code fallback is A2b.)
-- [ ] **A3. Payment timer + reminders.** `awaiting_payment` sets a 15-min timer
-  (`order:{id}:timer`); on expiry send reminder, then expire/cancel. (Wiring exists to
-  clear it; nothing sets/fires it.)
-- [ ] **A4. Real virtual-account generation.** Replace the random VAN in
-  `tools.ts:issuePaymentLink` with the partner FinTech (Paystack/Providus) provisioning
-  call; map VAN→order for the payment webhook.
-- [ ] **A5. Structured logging + metrics.** Per-turn trace ids; track the README KPIs
-  (messages/order ≤2.3, % in free service window ≥78%, Meta cost/merchant).
-- [ ] **A6. Reconcile docs with reality.** Fix `service-gaps.md` stale "0-byte stub"
-  language (files are built). (Quick win — can do alongside A1.)
+- [ ] **A0. Google OAuth handler (NEW — HIGHEST PRIORITY).** Vendor receives an OAuth link from the Biblio agent when calendar is not connected. But `https://biblio.com/oauth/google?merchantId=...` has no live handler yet. Build in `merchant-api`: `/oauth/google` redirect → Google consent → callback stores tokens in `merchant_integrations`. Without this, all calendar sync is inert.
+- [ ] **A1. Test harness + pure-module unit tests.** Add `vitest`. Cover `orderStateMachine.transition`, pricing circuit breaker & injection scan, `advanceArc`/`availableTactics`, `normalizePaymentEvent`/`classifyAmount`. *(Biggest risk reducer; nothing is tested today.)*
+- [x] **A2. Close the escalation loop (Vendor Communiqué v1).** `escalate_to_merchant` now sends WhatsApp-to-merchant interactive message via Biblio agent; `biblioAgentLoop` delivers replies. `source_price` tool pings vendor's personal number. ✅ Done.
+- [ ] **A3. Payment timer + reminders.** `awaiting_payment` sets a 15-min timer; on expiry send reminder, then expire/cancel. (Wiring exists to clear it; nothing sets/fires it.)
+- [ ] **A4. Real virtual-account generation.** Replace the random VAN in `tools.ts:issuePaymentLink` with Paystack/Providus provisioning call.
+- [ ] **A5. Structured logging + metrics.** Per-turn trace ids; track README KPIs (messages/order ≤2.3, % in free service window ≥78%, Meta cost/merchant).
+- [x] **A6. Reconcile docs with reality.** ✅ Done — MEMORY_DOCS updated to current truth 2026-10-05.
 
 ## Phase B — Extend autonomy (PRIORITY 1 cont., ace-whatsapp)
 
-- [ ] **B1. Logistics Coordination.** On `payment_verified`, auto-book a rider (Kwik
-  first), store tracking link, `transition(DISPATCHED)`, notify customer. (Workflow 1 tail.)
-- [x] **B2. Identity Resolution v1.** Global Buyer ID deterministic mapping implemented for Omni-Channel platforms.
-- [ ] **B3. Supplier Integration (Workflow 2).** Inventory oracle (sales-velocity
-  stockout prediction) → supplier WhatsApp ping → margin calc → PO draft → merchant approve.
-- [ ] **B4. Retention engine (Workflow 3).** Nightly at-risk analyzer → drafted
-  re-engagement message → merchant approve/auto-send.
-- [x] **B5. intent-parser separation.** Moved intent classification to `orchestrator.ts` stub with visual/complaint/purchase multi-routing.
+- [ ] **B1. Logistics Coordination.** On `payment_verified`, auto-book a rider (Kwik first), store tracking link, `transition(DISPATCHED)`, notify customer.
+- [x] **B2. Identity Resolution v1.** ✅ Global Buyer ID deterministic mapping implemented.
+- [ ] **B3. Supplier Integration (Workflow 2).** Inventory oracle (sales-velocity stockout prediction) → supplier WhatsApp ping → margin calc → PO draft → merchant approve.
+- [ ] **B4. Retention engine (Workflow 3).** Nightly at-risk analyzer → drafted re-engagement message → merchant approve/auto-send.
+- [x] **B5. intent-parser separation.** ✅ Moved intent classification to `orchestrator.ts` stub with visual/complaint/purchase multi-routing.
 
 ## Phase C — Merchant App (PRIORITY 2)
 
