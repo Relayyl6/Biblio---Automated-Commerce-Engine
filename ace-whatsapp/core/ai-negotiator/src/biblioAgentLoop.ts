@@ -134,7 +134,8 @@ If you need to extract images to add to the inventory, use the image URLs provid
             await logger.error(`[BiblioAgent] Tool execution failed`, { merchantId, name, err });
           }
         } else {
-          toolResult = `Tool ${name} executed successfully (mocked).`;
+          toolResult = `Error: Tool '${name}' is not registered in this agent's toolHandlers. Please check routerConfig.`;
+          await logger.warn(`[BiblioAgent] Unregistered tool called`, { merchantId, name });
         }
 
         // --- STEP 3: SUB-AGENT FINAL RESPONSE ---

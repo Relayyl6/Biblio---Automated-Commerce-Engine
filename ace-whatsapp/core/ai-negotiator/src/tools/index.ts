@@ -8,8 +8,9 @@ export { analyticsTools } from "./analyticsTools.js";
 export { settingsTools } from "./settingsTools.js";
 export { integrationTools } from "./integrationTools.js";
 export { bookingTools } from "./bookingTools.js";
+export { adminTools } from "./adminTools.js";
 
-import { inventoryTools, orderTools, crmTools, negotiationTools, financeTools, marketingTools, analyticsTools, settingsTools, integrationTools, bookingTools } from "./index.js";
+import { inventoryTools, orderTools, crmTools, negotiationTools, financeTools, marketingTools, analyticsTools, settingsTools, integrationTools, bookingTools, adminTools } from "./index.js";
 
 export const allBiblioTools = [
   ...inventoryTools,
@@ -21,5 +22,6 @@ export const allBiblioTools = [
   ...analyticsTools,
   ...settingsTools,
   ...integrationTools,
-  ...bookingTools
+  ...bookingTools,
+  ...adminTools
 ];

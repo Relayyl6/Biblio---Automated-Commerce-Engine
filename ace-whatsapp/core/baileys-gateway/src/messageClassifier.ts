@@ -1,6 +1,6 @@
 import { logger } from "@ace/shared/logger.js";
 import { jidNormalizedUser, type WAMessage, type WASocket } from "@whiskeysockets/baileys";
-import { redis } from "@ace/shared/clients";
+import { redis, sql } from "@ace/shared/clients";
 import { enqueueInboundMessage } from "../../comms-router/src/debounce.js";
 import type { InboundMessage } from "@ace/shared/types";
 import type { VendorConfig } from "./sessionManager.js";
@@ -51,7 +51,32 @@ export async function classifyAndRoute(
   const selfJid = msg.key.remoteJid || (vendor.business_line_number ? `${vendor.business_line_number}@s.whatsapp.net` : null);
 
   if (isFromMe) {
-    return; // Ignore messages sent by the business number itself
+    // Human operator (vendor) replied via their linked WhatsApp device!
+    // We must pause the AI and log the message.
+    const receiverJid = msg.key.remoteJid;
+    if (receiverJid && !receiverJid.endsWith('@g.us') && receiverJid !== 'status@broadcast') {
+      const customerId = jidToPhone(receiverJid);
+      const merchantId = vendor.merchant_id;
+      const content = extractRawText(msg);
+      
+      sql`
+        INSERT INTO conversation_messages (merchant_id, customer_id, source, content)
+        VALUES (${merchantId}, ${customerId}, 'human_operator', ${content})
+      `.catch(e => logger.error("Log failed", e));
+      
+      const arcKey = `arc:${merchantId}:${customerId}`;
+      redis.get(arcKey).then(rawArc => {
+        if (rawArc) {
+          let arc = JSON.parse(rawArc);
+          if (arc.stage !== 'paused') {
+            arc.stage = 'paused';
+            redis.setex(arcKey, 60 * 60 * 24, JSON.stringify(arc));
+            logger.log(`[MessageClassifier] Paused AI for customer ${customerId} due to manual vendor reply.`);
+          }
+        }
+      }).catch(e => logger.error("Arc pause failed", e));
+    }
+    return;
   }
 
   const senderJid = resolveSenderJid(msg);
@@ -155,7 +180,15 @@ async function routeToNegotiator(
     .set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25)
     .catch(err => logger.error("[MessageClassifier] Non-critical audit log failed", err));
 
+  
+  // Log customer message to Expo Hub DB
+  sql`
+    INSERT INTO conversation_messages (merchant_id, customer_id, source, content)
+    VALUES (${vendor.merchant_id}, ${fromPhone}, 'customer', ${extractRawText(msg) || '[Media]'})
+  `.catch(e => logger.error("Log failed", e));
+
   await enqueueInboundMessage(inbound);
+
 }
 
 

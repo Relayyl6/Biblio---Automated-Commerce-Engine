@@ -10,6 +10,7 @@ import { marketingHandlers } from "./tools/marketingTools.js";
 import { negotiationHandlers } from "./tools/negotiationTools.js";
 import { orderHandlers } from "./tools/orderTools.js";
 import { settingsHandlers } from "./tools/settingsTools.js";
+import { adminHandlers } from "./tools/adminTools.js";
 
 export const toolHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   ...analyticsHandlers,
@@ -22,4 +23,5 @@ export const toolHandlers: Record<string, (merchantId: string, args: any) => Pro
   ...negotiationHandlers,
   ...orderHandlers,
   ...settingsHandlers,
+  ...adminHandlers,
 };

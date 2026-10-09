@@ -23,16 +23,6 @@ export async function bookRider(
   }
 
   logger.info({ orderId }, "Dispatching rider via Sendstack...");
-
-  // Allow local simulation to bypass real fetch
-  if (SENDSTACK_API_KEY === "mock") {
-    return {
-      trackingUrl: "https://track.sendstack.africa/mock-123",
-      riderName: "Mock Rider",
-      riderPhone: "08000000000"
-    };
-  }
-  
   // Real HTTP call to Sendstack (Production API)
   const response = await fetch("https://api.sendstack.africa/v1/deliveries", {
     method: "POST",

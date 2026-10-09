@@ -198,7 +198,19 @@ export const turnWorker = new Worker<{ customerId: string; merchantId: string }>
     const messages: InboundMessage[] = rawMessages.map((r) => JSON.parse(r));
     const orderState = await loadOrderState(customerId, merchantId);
 
-    const turn: ConversationTurn = { customerId, merchantId, messages, orderState };
+          const { downloadWhatsAppMedia } = await import('./whatsapp.js');
+      
+      for (const msg of messages) {
+        if (msg.content.type === 'image' && msg.content.mediaId && !msg.content.base64) {
+          const media = await downloadWhatsAppMedia(msg.content.mediaId, merchantId);
+          if (media) {
+            msg.content.base64 = media.base64;
+            msg.content.mimeType = media.mimeType;
+          }
+        }
+      }
+
+      const turn: ConversationTurn = { customerId, merchantId, messages, orderState };
     await runNegotiatorTurn(turn);
   },
   connection
@@ -219,3 +231,4 @@ biblioWorker.on("failed", (job, err) => logger.error(`[BiblioWorker] Job ${job?.
 
 turnWorker.on("error", (err) => logger.error("[TurnWorker] Redis error:", err));
 turnWorker.on("failed", (job, err) => logger.error(`[TurnWorker] Job ${job?.id} failed:`, err));
+

@@ -1,10 +1,8 @@
 import { logger } from "@ace/shared/logger.js";
-// core/comms-router/src/smsWebhook.ts
 import Fastify from "fastify";
 import fastifyRawBody from "fastify-raw-body";
 import { vendorCommunique } from "./vendorCommunique.js";
-import { sql } from "@ace/shared/clients";
-
+import { sql } from "@ace/shared/clients.js";
 import crypto from "crypto";
 
 const app = Fastify({ logger: true });
@@ -18,8 +16,6 @@ app.register(fastifyRawBody, {
 
 app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) => {
   try {
-    // ── PRODUCTION SIGNATURE VERIFICATION ──────────────────────────
-    // Africa's Talking passes an HMAC-SHA256 signature in the headers
     const signature = request.headers["africastalking-signature"] as string;
     const apiKey = process.env.AT_API_KEY;
 
@@ -39,7 +35,6 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
         .update(request.rawBody || "")
         .digest("hex");
 
-      // Use timingSafeEqual to prevent timing attacks
       const isSignatureValid = crypto.timingSafeEqual(
         Buffer.from(signature),
         Buffer.from(generatedSignature)
@@ -51,8 +46,6 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
       }
     }
 
-    // ── PAYLOAD PARSING ─────────────────────────────────────────────
-    // Africa's Talking sends data as application/x-www-form-urlencoded
     const params = new URLSearchParams(request.rawBody as string);
     const fromPhone = params.get("from")?.replace(/^\+/, "");
     const text = params.get("text")?.trim();
@@ -61,7 +54,7 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
       return reply.code(400).send({ error: "Invalid payload" });
     }
 
-    // Lookup merchant by phone
+    // 1. Check if the sender is a Vendor
     const vendorRows = await sql<{ merchant_id: string }[]>`
       SELECT merchant_id FROM vendors
       WHERE personal_number = ${fromPhone} OR business_line_number = ${fromPhone}
@@ -69,20 +62,44 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
     `;
     
     const merchantId = vendorRows[0]?.merchant_id;
-    if (!merchantId) {
-      request.log.warn(`[SMS Webhook] Unregistered phone number: ${fromPhone}`);
-      return reply.send({ success: false, reason: "Unregistered phone number" });
+    if (merchantId) {
+      // It's a Vendor Reply
+      const handled = await vendorCommunique.handleMerchantReply(merchantId, text);
+      if (handled) {
+        await vendorCommunique.sendSms(merchantId, fromPhone, "Decision recorded. Continuing negotiation.");
+      }
+      return reply.send({ success: true, handled });
     }
 
-    const handled = await vendorCommunique.handleMerchantReply(merchantId, text);
-    
-    if (handled) {
-      // Idempotent success response to Africa's Talking
-      // You can also trigger an outbound SMS back to the merchant confirming receipt
-      await vendorCommunique.sendSms(merchantId, fromPhone, "Decision recorded. Continuing negotiation.");
+    // 2. Check if the sender is a Customer (Phase 2 Offline Escalation)
+    const customerRows = await sql<{ id: string, merchant_id: string }[]>`
+      SELECT id, merchant_id FROM customers 
+      WHERE phone = ${fromPhone}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `;
+
+    const customerMatch = customerRows[0];
+    if (customerMatch) {
+      request.log.info(`[SMS Webhook] Customer ${fromPhone} replied via SMS. Routing to Inbox...`);
+      
+      // Inject into the standard Omni-Channel Debouncer so the AI Negotiator processes it natively!
+      const { enqueueInboundMessage } = await import("./debounce.js");
+      await enqueueInboundMessage({
+        id: crypto.randomUUID(),
+        merchantId: customerMatch.merchant_id,
+        customerId: customerMatch.id,
+        platform: "sms",
+        type: "text",
+        text: text,
+        timestamp: Date.now()
+      });
+
+      return reply.send({ success: true, routedToCustomerInbox: true });
     }
 
-    return reply.send({ success: true, handled });
+    request.log.warn(`[SMS Webhook] Unregistered phone number (neither vendor nor customer): ${fromPhone}`);
+    return reply.send({ success: false, reason: "Unregistered phone number" });
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: "Internal Server Error" });
@@ -97,3 +114,4 @@ app.listen({ port, host: "0.0.0.0" }, (err, address) => {
   }
   logger.log(`[smsWebhook] Server listening at ${address}`);
 });
+

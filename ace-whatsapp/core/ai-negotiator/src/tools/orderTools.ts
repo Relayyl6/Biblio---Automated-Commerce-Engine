@@ -298,7 +298,7 @@ export const orderTools = [
 
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   request_visual_confirmation: async (merchantId: string, args: any) => {
-    // In a real scenario, this pushes an urgent notification to the Merchant App
+    // Inserts a pending action into system_actions for the Merchant App inbox to surface
     const actionId = crypto.randomUUID();
     await sql`INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at) VALUES (${merchantId}, ${actionId}, 'request_visual_confirmation', ${JSON.stringify(args)}, now())`;
     return `Requested merchant to provide visual confirmation photo for order ${args.orderId}.`;

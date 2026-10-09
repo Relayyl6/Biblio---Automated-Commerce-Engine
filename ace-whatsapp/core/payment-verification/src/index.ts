@@ -84,12 +84,8 @@ app.post(
 async function handlePayment(payment: NormalizedPayment): Promise<void> {
   // Fast idempotency gate — webhooks get redelivered. The DB unique constraint
   // on transactions.provider_ref is the durable backstop.
-  const dedupeKey = `idempotency:payment:${payment.providerRef}`;
-  const isNew = await redis.set(dedupeKey, "1", "EX", 60 * 60 * 24, "NX");
-  if (!isNew) {
-    app.log.info({ providerRef: payment.providerRef }, "duplicate payment, skipping");
-    return;
-  }
+  // Fast idempotency gate removed to prevent ghost drops on crash. 
+  // We now rely solely on the DB's unique constraint on provider_ref.
 
   const order = await findOrderByVirtualAccount(payment.virtualAccount);
 
@@ -212,7 +208,6 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
 // ─── Underpayment & unmatched ────────────────────────────────────────────────────
 
 async function handleUnderpayment(order: MatchedOrder, payment: NormalizedPayment): Promise<void> {
-  const balance = order.total - payment.amountNgn;
   await sql`
     insert into transactions
       (order_id, merchant_id, customer_id, amount, virtual_account, provider_ref, status)
@@ -222,6 +217,12 @@ async function handleUnderpayment(order: MatchedOrder, payment: NormalizedPaymen
     )
     on conflict (provider_ref) do nothing
   `;
+
+  const rows = await sql`
+    SELECT SUM(amount) as sum FROM transactions WHERE order_id = ${order.orderId} AND status != 'failed'
+  `;
+  const totalPaid = parseInt(rows[0]?.sum ?? "0", 10);
+  const balance = order.total - totalPaid;
 
   // Anomaly signal for TrustScore engine
   dataIntelligence.auditLog({
@@ -365,7 +366,17 @@ app.post("/logistics/webhook", async (req, reply) => {
     const dealPrice = Math.floor(customerPaid / (1 + platformFeeRate));
 
     if (recipientCode && dealPrice > 0) {
-      // 3. Initiate Transfer
+      // 3. Initiate Transfer (Atomic Lock)
+      const escrowUpdateRows = await sql`
+        UPDATE escrow_accounts SET status = 'releasing', updated_at = now()
+        WHERE order_id = ${orderId} AND status = 'held'
+        RETURNING id
+      `;
+      if (escrowUpdateRows.length === 0) {
+        app.log.warn({ orderId }, "Escrow already released or not held, aborting transfer");
+        return reply.send({ ok: true, ignored: true });
+      }
+
       const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
       if (paystackSecretKey) {
         const transferRes = await fetch("https://api.paystack.co/transfer", {

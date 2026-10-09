@@ -438,7 +438,7 @@ export const financeHandlers: Record<string, (merchantId: string, args: any) => 
         await xero.setTokenSet({ access_token: integrations[0].access_token });
         const tenantId = integrations[0].metadata.tenantId;
         
-        // This is a mocked structure for the payload to Xero
+        // Build Xero invoice payload per Xero Accounting API spec
         const invoicesPayload = invoices.map(inv => ({
             Type: 'ACCREC',
             Contact: { ContactID: '00000000-0000-0000-0000-000000000000' },

@@ -1,0 +1,25 @@
+eivables with AI-drafted follow-up messagesMargin analysis per product (updated live)The Autonomous SettingsDefine autonomy boundaries: "Auto-approve purchases under ₦50,000. Auto-apply loyalty discounts up 
+ New"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>@@START@@   ├─ Analyzes past purchases: Strong preference for Ankara fabrics (83% of orders)@@START@@@@START@@@@START@@@@START@@@@START@@@@START@@@@START@@@@
+Courier New" w:cs="Courier New"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>@@START@@        I'm setting aside 4 yards for you at our usual special rate if you're interested.@@START@@@@START@@@@START@@@@S
+uation Sets"Golden datasets" for testing model performance on informal commerce tasksHuman-verified preference pairs for reinforcement learningFederated Learning Compute RentalAI labs don't get raw data—they re
+ a customer completes checkout via ACE PWA with one merchant, their profile (name, address, payment preferences) is stored under their Global Buyer ID (tied to phone number). When that same customer messages AN
+marize the entire session into high-density JSON containing only behaviorally relevant information (preferences, patterns, relationship metadata). This compressed profile is stored in a Vector Database for sema
+          let profile = CompressedProfile {            customer_id: session.customer_id,            preferences: self.extract_preferences(&amp;session),            negotiation_patterns: self.extract_negotiation
+e context        self.archive_messages(&amp;session);                profile    }        fn extract_preferences(&amp;self, session: &amp;CompletedSession) -&gt; CustomerPreferences {        // Use LLM to analyz
+ta        let analysis_prompt = format!(            "Analyze this conversation and extract customer preferences as JSON:\n\             - Preferred colors\n\             - Size preferences\n\             - Pric
+     );                // Call LLM once with full context to extract structured insights        let preferences_json = self.llm.analyze(analysis_prompt);        serde_json::from_str(&amp;preferences_json).unwra
+ofile {    customer_id: String,        // Dense behavioral data (replaces thousands of messages)    preferences: CustomerPreferences,    negotiation_patterns: NegotiationBehavior,    trust_signals: TrustMetrics
+eraction_summary: String,  // Max 200 tokens}#[derive(Serialize, Deserialize, Clone)]struct CustomerPreferences {    preferred_colors: Vec&lt;String&gt;,       // ["blue", "emerald", "black"]    size_preference
+// Casual (uses emojis, slang)    preferred_payment: PaymentMethod,    // Bank transfer    delivery_preference: DeliveryPref,   // "Prefers Saturday delivery"}#[derive(Serialize, Deserialize, Clone)]struct Nego
+s, but focus on the recent conversation context. The              profile contains their historical preferences and behavior patterns."        )    }}Vector Database Semantic Retrievaluse qdrant_client::{client
+p;CompressedProfile    ) -&gt; Vec&lt;CompressedProfile&gt; {        // Find customers with similar preferences/behavior        // Useful for collaborative filtering: "Customers like you also bought..."        
+mbedding-3-small for cost efficiency        let text_representation = format!(            "Customer preferences: {:?}, Purchase history: {:?}, Communication style: {:?}",            profile.preferences,        
+    profile.product_history,            profile.preferences.communication_style        );                // Call OpenAI embeddings API        self.embedding_m
+rely on voice notes for communication due to low literacy rates, faster communication, and cultural preference for verbal interaction over typing. However, these voice notes are recorded in environments that ar
+HuggingFace        let base_model = WhisperModel::load("openai/whisper-medium");                let config = FineTuningConfig {            learning_rate: 1e-5,            batch_size: 16,            epochs: 
+5,            warmup_steps: 500,        };                base_model.fine_tune(dataset, config).await    }}Hybrid Transcription Strategy (Cost Optimization)enum TranscriptionStrategy {    CloudW
+hortener.shorten(long_url)    }}AI Voice Call Implementationuse elevenlabs::{ElevenLabsClient, VoiceSettings};struct AIVoiceCallService {    elevenlabs_client: ElevenLabsClient,    twilio_client: TwilioClien
+t,    nigerian_accent_voice_id: String,  // Pre-configured ElevenLabs voice        async fn initiate_call(&amp;self, confirmation: &amp;PendingConfirmatio
+  let audio_stream = self.elevenlabs_client.text_to_speech(            &amp;script,            VoiceSettings {                voice_id: self.nigerian_accent_voice_id.clone(),                stability: 0.75, 
+person sessionConnect their WhatsApp Business API (we handle the Meta approval process)Set autonomy preferences togetherGoal: 10/10 NPS from first cohortSuccess Metric: 100 active merchants processing 25+ order
+pp (MVP)Expo setupCore screens: Conversation timelineOrder dashboardProduct catalog managementBasic settingsAuthentication (phone OTP via Firebase)Deliverable: Merchant can manage their entire business from 

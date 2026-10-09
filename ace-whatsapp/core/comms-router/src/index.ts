@@ -25,3 +25,7 @@ export {
   sendWhatsAppMessage,
   EscalationPriority,
 } from "./whatsapp.js";
+
+export {
+  sendEscalationSms
+} from "./africasTalking.js";

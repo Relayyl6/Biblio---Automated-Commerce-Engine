@@ -237,3 +237,36 @@ async function deadLetter(
     logger.error(`[whatsapp] CRITICAL: failed to dead-letter a failed send for merchant ${merchantId}:`, dlqErr);
   }
 }
+
+
+
+export async function downloadWhatsAppMedia(mediaId: string, merchantId: string): Promise<{ base64: string, mimeType: string } | null> {
+  const token = await resolveAccessToken(merchantId);
+  try {
+    const metaRes = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!metaRes.ok) {
+      logger.warn(`[WhatsApp] Failed to get media URL for ${mediaId}: ${metaRes.statusText}`);
+      return null;
+    }
+    const metaData = await metaRes.json() as any;
+    if (!metaData.url) return null;
+
+    const mediaRes = await fetch(metaData.url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!mediaRes.ok) {
+      logger.warn(`[WhatsApp] Failed to download media ${mediaId}`);
+      return null;
+    }
+    const buffer = await mediaRes.arrayBuffer();
+    return {
+      base64: Buffer.from(buffer).toString('base64'),
+      mimeType: metaData.mime_type
+    };
+  } catch (err) {
+    logger.error(`[WhatsApp] Error downloading media ${mediaId}:`, err);
+    return null;
+  }
+}

@@ -1,0 +1,92 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Search, ArrowLeft, X, User, ShoppingBag, ShoppingCart } from 'lucide-react-native';
+import Animated, { FadeIn, FadeInDown, SlideInRight, SlideOutRight } from 'react-native-reanimated';
+import { useSearchData } from '../src/api/client';
+import { useAuthStore } from '../src/store/authStore';
+
+export default function SearchScreen() {
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const merchantId = useAuthStore(state => state.merchantId);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const { data: results, isLoading } = useSearchData(merchantId, debouncedQuery);
+
+  return (
+    <Animated.View entering={SlideInRight.springify()} exiting={SlideOutRight} className="flex-1 bg-[#F7F8FA] dark:bg-[#090A0C] pt-14">
+      <View className="px-4 flex-row items-center mb-6">
+        <Pressable onPress={() => router.back()} className="p-2 mr-2 active:opacity-60">
+          <ArrowLeft size={24} className="text-[#0F172A] dark:text-white" />
+        </Pressable>
+        <Animated.View entering={FadeIn.delay(100)} className="flex-1 flex-row items-center bg-white dark:bg-[#15171A] border border-gray-200 dark:border-[#1F2227] rounded-full px-4 h-12 shadow-[0_2px_10px_rgb(0,0,0,0.02)] dark:shadow-none">
+          <Search size={20} className="text-[#64748B] dark:text-[#A1A1AA]" />
+          <TextInput 
+            autoFocus
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search customers, products, or chats..." 
+            placeholderTextColor="#94A3B8"
+            className="flex-1 ml-3 text-[#0F172A] dark:text-white text-base"
+          />
+          {query.length > 0 && (
+            <Pressable onPress={() => setQuery('')} className="p-1 active:opacity-60">
+              <X size={18} className="text-[#64748B] dark:text-[#A1A1AA]" />
+            </Pressable>
+          )}
+        </Animated.View>
+      </View>
+
+      <ScrollView className="flex-1 px-6">
+        {isLoading && debouncedQuery.length >= 2 ? (
+          <View className="py-8 items-center justify-center">
+             <ActivityIndicator color="#2563EB" />
+          </View>
+        ) : debouncedQuery.length >= 2 ? (
+          results && results.length > 0 ? (
+            <Animated.View entering={FadeInDown.springify()}>
+              {results.map((item: any, idx: number) => {
+                const Icon = item.type === 'customer' ? User : item.type === 'product' ? ShoppingBag : ShoppingCart;
+                const color = item.type === 'customer' ? 'text-blue-500' : item.type === 'product' ? 'text-purple-500' : 'text-emerald-500';
+                const bg = item.type === 'customer' ? 'bg-blue-50 dark:bg-blue-900/20' : item.type === 'product' ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-emerald-50 dark:bg-emerald-900/20';
+                
+                return (
+                  <Pressable key={idx} className="flex-row items-center py-4 border-b border-gray-100 dark:border-[#1F2227] active:opacity-60">
+                    <View className={`w-10 h-10 rounded-full ${bg} items-center justify-center mr-3`}>
+                       <Icon size={18} className={color} />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-[#0F172A] dark:text-white font-bold text-base">{item.title}</Text>
+                      <Text className="text-[#64748B] dark:text-[#A1A1AA] text-sm">{item.subtitle}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </Animated.View>
+          ) : (
+            <Animated.View entering={FadeInDown.springify()} className="py-8 items-center justify-center">
+              <Text className="text-[#64748B] dark:text-[#A1A1AA]">No results found for "{debouncedQuery}".</Text>
+            </Animated.View>
+          )
+        ) : (
+          <Animated.View entering={FadeInDown.delay(200).springify()}>
+            <Text className="text-[#0F172A] dark:text-white font-bold text-lg mb-4">Recent Searches</Text>
+            {['Blessing Ankara', 'Restock gold print', 'Failed payments'].map((item, idx) => (
+              <Pressable key={idx} onPress={() => setQuery(item)} className="flex-row items-center py-3 border-b border-gray-100 dark:border-[#1F2227] active:opacity-60">
+                <Search size={16} className="text-[#94A3B8] mr-3" />
+                <Text className="text-[#475569] dark:text-[#A1A1AA] text-base">{item}</Text>
+              </Pressable>
+            ))}
+          </Animated.View>
+        )}
+      </ScrollView>
+    </Animated.View>
+  );
+}
+

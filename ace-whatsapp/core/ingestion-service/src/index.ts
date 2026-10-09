@@ -246,16 +246,11 @@ function extractMessages(body: unknown): InboundMessage[] {
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 
 app.post("/sms/webhook", async (req, reply) => {
-  // Simulating Africa's Talking / Twilio payload
-  // Typically they send: { from: '+234800...', text: '1', to: '...' }
+  // Africa's Talking / Twilio payload: { from: '+234800...', text: '1', to: '...' }
   const b = req.body as { from: string; text: string };
   if (!b.from || !b.text) return reply.send({ ok: false });
 
-  // Resolve merchant by phone (using mocked logic or real lookup)
-  // For this MVP, we assume the from phone number is the merchant's contact phone
-  // But wait, the simulated phone is a random number we mocked as merchant_id in the test?
-  // Actually, we'll just require the `merchantId` to be passed in the payload for this test API,
-  // or look it up. Let's just look it up.
+  // Resolve merchant by their registered phone number ID
   const rows = await sql<{ id: string }[]>`
     select id from merchants where phone_number_id = ${b.from} limit 1
   `;

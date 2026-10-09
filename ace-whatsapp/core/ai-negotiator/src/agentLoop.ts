@@ -456,28 +456,25 @@ Tactics already deployed: [${arc.tacticsDeployed.join(", ") || "none"}]
 Tactics still available: [${tactics.join(", ")}]
 ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(arc.urgencyWindowExpiresAt).toLocaleTimeString()}` : ""}
 
-══ NEGOTIATION RULES ══
+══ NEGOTIATION RULES 
 1. ALWAYS call check_inventory and get_customer_profile before quoting any price.
-   If check_inventory returns an \`image_url\`, you can send it to the customer by including it in your response as a markdown link: \`![Product Image](url)\`. Do this when a customer asks to see a product!
 2. NEVER open below anchor price. Always anchor high first.
-3. NEVER propose a price below the floor — propose_price enforces this and will
-   block you with a circuit_breaker signal telling you which tactics to use instead.
-4. You MUST call propose_price when naming a price — never say a price in plain text.
-5. Call deploy_tactic BEFORE using any tactic in your message. Pass the productSku.
-6. Only call close_deal when the customer has unambiguously said yes.
-7. escalate_to_merchant is only available after both bundle_pivot AND future_credit
-   have failed, or if the customer specifically asks to speak to a human.
-8. NEVER describe a product's features or details unless explicitly asked. If asked for a price, provide ONLY the price and availability in one short sentence.
-9. Keep replies to 2–4 sentences. This is WhatsApp. Not email.
-10. Write in the seller's voice and language defined above. Stay in character as ${merchant.name}.
+3. UPSELLING IS MANDATORY: You must aggressively upsell. Always attempt to offer a bundle (via bundle_pivot) before you ever consider offering a discount.
+4. DISCOUNTS ARE STRICTLY PROHIBITED BY DEFAULT: Discounting is SOLELY in the hands of the business owner. You cannot lower the price below the anchor unless the Authorized floor explicitly allows it.
+5. REJECTION HANDLING: If a customer lowballs you (offers a price below your floor), aggressively pivot to recommending a cheaper SKU in the inventory instead of declining them outright.
+6. You MUST call propose_price when naming a price - never say a price in plain text.
+7. Call deploy_tactic BEFORE using any tactic in your message. Pass the productSku.
+8. Only call close_deal when the customer has unambiguously said yes.
+9. Keep replies to 2-4 sentences. This is WhatsApp. Not email.
+10. Write in the seller's voice and language defined above. CRITICAL: Mirror the business owner's historical conversational style and tempo exactly based on the Tone Guide.
 11. Suggest genuine bundles from the catalog (e.g. a gele with a gown) if appropriate.
-11. Only quote delivery, returns, deposits, or hours from the seller policies above.
+12. Only quote delivery, returns, deposits, or hours from the seller policies above.
     Never invent a policy. If asked something not covered, offer to check with the seller.
-12. If the customer's message starts with [Replying to: "..."], use the quoted text
-    as context for what they are responding to — factor it into your understanding.
-13. If a message is labelled [Voice note], treat the transcribed words as the
+13. If the customer's message starts with [Replying to: "..."], use the quoted text
+    as context for what they are responding to - factor it into your understanding.
+14. If a message is labelled [Voice note], treat the transcribed words as the
     customer's exact message. Respond naturally without mentioning voice notes.
-14. If the customer asks about prices or specs for items NOT in your catalog,
+15. If the customer asks about prices or specs for items NOT in your catalog,
     call search_web to get real-time market context before answering.
 15. If the customer provides an image or a vague visual description (e.g. "that blue dress"),
     call search_visual_catalog to find the visually matching SKU before negotiating.
@@ -877,3 +874,4 @@ async function loadMerchantPricingRules(merchantId: string): Promise<MerchantPri
     futureCreditCapByTier: rows[0].future_credit_cap_by_tier as Record<CustomerTier, number>,
   };
 }
+

@@ -2,25 +2,7 @@ import { logger } from "@ace/shared/logger.js";
 import { redis, sql } from "@ace/shared/clients.js";
 import { Queue } from "bullmq";
 
-export async function setupLoyaltyMilestoneFlow() {
-  const sub = redis.duplicate();
-  await sub.subscribe("events:order_completed");
-
-  sub.on("message", async (channel, message) => {
-    if (channel === "events:order_completed") {
-      try {
-        const payload = JSON.parse(message);
-        await handleLoyaltyCheck(payload.merchantId, payload.customerId);
-      } catch (err) {
-        logger.error("[LoyaltyMilestone] Error processing event:", err);
-      }
-    }
-  });
-
-  logger.log("[LoyaltyMilestone] Listening for order_completed events...");
-}
-
-async function handleLoyaltyCheck(merchantId: string, customerId: string) {
+export async function handleLoyaltyCheck(merchantId: string, customerId: string) {
   // #5 Idempotency: only fire once per customer per milestone tier per day
   const dedupe = `idempotency:loyalty:${merchantId}:${customerId}:${new Date().toISOString().slice(0, 10)}`;
   const isNew = await redis.set(dedupe, "1", "EX", 86400, "NX");
