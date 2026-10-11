@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------
+  # INFRASTRUCTURE
+  # ----------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ace_admin
+      POSTGRES_PASSWORD: ace_password
+      POSTGRES_DB: ace_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ace_admin -d ace_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------
+  # MICROSERVICES
+  # ----------------------------------------
+  baileys-gateway:
+    build: .
+    command: npm run baileys-gateway
+    environment:
+      - DATABASE_URL=postgres://ace_admin:ace_password@postgres:5432/ace_db
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./ace-whatsapp/core/baileys-gateway/auth_info_baileys:/app/ace-whatsapp/core/baileys-gateway/auth_info_baileys # Persist WhatsApp session
+    restart: unless-stopped
+
+  merchant-api:
+    build: .
+    command: npm run merchant-api
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://ace_admin:ace_password@postgres:5432/ace_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  event-orchestrator:
+    build: .
+    command: npm run event-orchestrator
+    environment:
+      - DATABASE_URL=postgres://ace_admin:ace_password@postgres:5432/ace_db
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  payment-verification:
+    build: .
+    command: npm run payment
+    environment:
+      - DATABASE_URL=postgres://ace_admin:ace_password@postgres:5432/ace_db
+      - REDIS_URL=redis://redis:6379
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  logistics-coordination:
+    build: .
+    command: npm run logistics
+    environment:
+      - DATABASE_URL=postgres://ace_admin:ace_password@postgres:5432/ace_db
+      - REDIS_URL=redis://redis:6379
+      - KWIK_API_KEY=${KWIK_API_KEY}
+      - SENDBOX_API_KEY=${SENDBOX_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

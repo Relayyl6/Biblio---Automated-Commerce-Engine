@@ -1,0 +1,105 @@
+import { useRouter } from 'expo-router';
+import React from 'react';
+import { View, Text, ScrollView, ActivityIndicator, Pressable } from 'react-native';
+import { CreditCard, DollarSign, Activity, TrendingUp, ArrowLeft } from 'lucide-react-native';
+import { useFinanceData } from '../src/api/client';
+
+export default function FinanceScreen() {
+  const router = useRouter();
+  const { data, isLoading } = useFinanceData();
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 bg-[#F7F8FA] dark:bg-[#090A0C] items-center justify-center">
+        <ActivityIndicator size="large" color="#E2FF6E" />
+      </View>
+    );
+  }
+
+  return (
+    <View className="flex-1 bg-[#F7F8FA] dark:bg-[#090A0C] pt-16">
+      
+      <View className="px-6 mb-4 flex-row items-center">
+        <Pressable onPress={() => router.back()} className="mr-3 active:opacity-60">
+          <ArrowLeft size={24} className="text-[#0F172A] dark:text-white" />
+        </Pressable>
+  
+        <Text className="text-[#0F172A] dark:text-white text-3xl font-bold tracking-tight">Financial Dashboard</Text>
+      </View>
+
+      <ScrollView className="flex-1 px-4">
+        {/* Receivables */}
+        <View className="bg-white dark:bg-[#15171A] p-6 rounded-3xl dark:rounded-[24px] mb-4 border border-gray-100 dark:border-[#1F2227] shadow-[0_4px_20px_rgb(0,0,0,0.03)] dark:shadow-none relative overflow-hidden">
+          <View className="hidden dark:flex absolute -top-10 -right-10 w-32 h-32 bg-[#E2FF6E] opacity-5 rounded-full blur-3xl" />
+          <Text className="text-[#64748B] dark:text-[#A1A1AA] text-sm font-medium mb-2">Total Outstanding Receivables</Text>
+          <View className="flex-row items-baseline mb-4">
+            <Text className="text-[#0F172A] dark:text-white text-4xl font-bold tracking-tight mr-3">
+              ₦{data?.receivables_total?.toLocaleString() ?? '0'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Real-time Reconciliation */}
+        <View className="bg-white dark:bg-[#15171A] p-5 rounded-3xl dark:rounded-[24px] border border-gray-100 dark:border-[#1F2227] shadow-[0_4px_20px_rgb(0,0,0,0.03)] dark:shadow-none mb-6">
+          <Text className="text-[#0F172A] dark:text-white text-lg font-bold tracking-tight mb-4">Payment Reconciliation</Text>
+          {(data?.reconciliation || []).length === 0 ? (
+            <Text className="text-[#64748B] dark:text-[#A1A1AA]">No paid orders yet.</Text>
+          ) : (
+            data.reconciliation.map((rec: any, idx: number) => (
+              <View key={idx} className="flex-row justify-between items-center py-2 border-b border-gray-100 dark:border-[#1F2227]">
+                <View className="flex-row items-center">
+                  <CreditCard size={16} className="text-[#2563EB] dark:text-[#8B5CF6] mr-2" />
+                  <Text className="text-[#0F172A] dark:text-white font-medium capitalize">{rec.payment_method}</Text>
+                </View>
+                <View className="items-end">
+                  <Text className="text-[#10B981] dark:text-[#E2FF6E] font-bold">₦{rec.total.toLocaleString()}</Text>
+                  <Text className="text-[#64748B] dark:text-[#A1A1AA] text-xs">{rec.count} transactions</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+
+        {/* Actionable Follow-ups */}
+        <View className="bg-white dark:bg-[#15171A] p-5 rounded-3xl dark:rounded-[24px] border border-gray-100 dark:border-[#1F2227] shadow-[0_4px_20px_rgb(0,0,0,0.03)] dark:shadow-none mb-6">
+          <Text className="text-[#0F172A] dark:text-white text-lg font-bold tracking-tight mb-4">Pending Payments (AI Drafts)</Text>
+          {(data?.outstanding || []).length === 0 ? (
+            <Text className="text-[#64748B] dark:text-[#A1A1AA]">No pending payments.</Text>
+          ) : (
+            data.outstanding.map((o: any, idx: number) => (
+              <View key={idx} className="mb-4 bg-[#F7F8FA] dark:bg-[#090A0C] p-4 rounded-xl border border-gray-200 dark:border-[#1F2227]">
+                <View className="flex-row justify-between mb-2">
+                  <Text className="text-[#0F172A] dark:text-white font-bold">{o.name || 'Customer'}</Text>
+                  <Text className="text-amber-500 font-bold">₦{o.total_amount}</Text>
+                </View>
+                <Text className="text-[#64748B] dark:text-[#A1A1AA] text-sm mb-3 italic">"{o.draft_message}"</Text>
+                <Pressable className="bg-[#0F172A] dark:bg-[#E2FF6E] py-2 rounded-lg items-center active:opacity-80">
+                  <Text className="text-white dark:text-[#090A0C] font-bold">Send Reminder</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+        </View>
+
+        {/* Margin Analysis */}
+        <View className="bg-white dark:bg-[#15171A] p-5 rounded-3xl dark:rounded-[24px] border border-gray-100 dark:border-[#1F2227] shadow-[0_4px_20px_rgb(0,0,0,0.03)] dark:shadow-none mb-12">
+          <Text className="text-[#0F172A] dark:text-white text-lg font-bold tracking-tight mb-4">Margin Analysis</Text>
+          {(data?.margins || []).length === 0 ? (
+            <Text className="text-[#64748B] dark:text-[#A1A1AA]">No products available for margin analysis.</Text>
+          ) : (
+            data.margins.map((m: any, idx: number) => (
+              <View key={idx} className="flex-row justify-between items-center py-2 border-b border-gray-100 dark:border-[#1F2227]">
+                <Text className="text-[#0F172A] dark:text-white flex-1 mr-2" numberOfLines={1}>{m.name}</Text>
+                <View className="items-end">
+                  <Text className="text-[#10B981] dark:text-[#E2FF6E] font-bold">₦{Number(m.margin).toLocaleString()} profit</Text>
+                  <Text className="text-[#64748B] dark:text-[#A1A1AA] text-xs">Cost: ₦{Number(m.cost).toLocaleString()}</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+

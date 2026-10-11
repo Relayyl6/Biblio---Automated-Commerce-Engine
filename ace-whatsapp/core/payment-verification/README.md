@@ -47,4 +47,11 @@ Handles all payment verification without merchant intervention. Generates dynami
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **Webhook Ingestion**: Fastify service on port 3002 receiving bank/PSP webhooks (`POST /payment/webhook`) with raw-body HMAC signature validation.
+- **Fast 200 Ack & Idempotency**: Immediate provider acknowledgment with Redis `providerRef` deduplication.
+- **Deterministic Reconciliation**: Matches transactions to open `awaiting_payment` orders via Virtual Account Number (VAN) and drives `PAYMENT_CONFIRMED` state transitions.
+- **Underpayment & Anomaly Handling**: Non-destructive underpayment processing with balance prompts back to the customer, plus anomaly telemetry to `DataIntelligenceEngine`.
+- **Atomic Persistence**: SQL transaction updates `orders` state and writes durable `transactions` ledger row atomically.
+

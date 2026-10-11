@@ -1,0 +1,449 @@
+-- infra/schema.sql
+--
+-- Minimal schema to run the critical path end-to-end. A few notes on
+-- choices that matter:
+--
+-- * `state jsonb` on orders: the OrderState discriminated union maps
+--   directly to JSONB. This is a deliberate trade — you give up some
+--   query-ability (harder to `WHERE status = 'draft'` without the
+--   ->> operator) in exchange for the TS type and the DB row NEVER
+--   disagreeing about shape. Add a generated column
+--   (`status text generated always as (state->>'status') stored`) if you
+--   need to index/filter on status frequently.
+--
+-- * pg_trgm extension: powers the `similarity()` call in tools.ts'
+--   checkInventory — trigram similarity search is the cheapest way to get
+--   "fuzzy product name match" without standing up a separate search
+--   index (Elasticsearch/Meilisearch) for an MVP catalog of a few hundred
+--   SKUs. Revisit once a merchant catalog exceeds ~10k products.
+
+create extension if not exists pg_trgm;
+create extension if not exists "uuid-ossp";
+
+create table if not exists merchants (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  phone_number_id text not null unique, -- WhatsApp Business phone_number_id
+  -- ── Seller context the AI negotiator speaks from ──────────────────────────
+  -- These are injected into the negotiator's system prompt so each merchant's
+  -- agent sounds like THEM, not a generic bot. See agentLoop.buildSystemPrompt.
+  tone_guide text,            -- voice/persona, e.g. "Warm Lagos market trader"
+  business_policies text,     -- standing rules: returns, min order, hours, etc.
+  delivery_info text,         -- delivery areas, fees, timelines the AI may quote
+  dialect text not null default 'pidgin', -- pidgin | yoruba | igbo | hausa | english
+  -- ──────────────────────────────────────────────────────────────────────────
+  whatsapp_catalog_id text,   -- Meta commerce catalog id, for catalog-sync
+  default_discount_pct numeric not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- Phase 1 identity resolution stub: one row per (customer phone, merchant).
+-- Replace with the real Global Buyer ID resolution in Phase 2 — at that
+-- point this table becomes a many-to-many link rather than the primary
+-- identity source.
+create table if not exists customer_merchant_links (
+  customer_id text not null, -- WhatsApp phone number, E.164
+  merchant_id uuid not null references merchants(id),
+  created_at timestamptz not null default now(),
+  primary key (customer_id, merchant_id)
+);
+
+create table if not exists products (
+  sku text not null,
+  merchant_id uuid not null references merchants(id),
+  name text not null,
+  stock integer not null default 0,
+  price numeric not null,
+  -- ── Deep product context the AI negotiator can sell on ────────────────────
+  -- The richer this is, the better the agent describes, bundles, and justifies
+  -- value instead of just discounting. check_inventory returns all of it.
+  description text,                          -- selling copy: fabric, fit, story
+  category text,                             -- e.g. "Ankara", "Footwear"
+  tags jsonb not null default '[]',          -- ["wedding","plus-size","blue"]
+  attributes jsonb not null default '{}',    -- {"sizes":["M","L"],"color":"blue","material":"100% cotton wax"}
+  image_url text,                            -- catalog/IG image (visual-context, Phase 2)
+  currency text not null default 'NGN',
+  active boolean not null default true,      -- soft-hide without deleting
+  -- Source of truth for this row: 'manual' (admin/seed) or 'whatsapp_catalog'.
+  source text not null default 'manual',
+  updated_at timestamptz not null default now(),
+  primary key (sku, merchant_id)
+);
+
+create index if not exists products_name_trgm_idx on products using gin (name gin_trgm_ops);
+-- Trigram index on description too, so the agent can match on selling copy
+-- ("the flowy blue one") not just the product name.
+-- create index if not exists products_description_trgm_idx on products using gin (description gin_trgm_ops);
+create index if not exists products_category_idx on products (merchant_id, category);
+
+create table if not exists orders (
+  id uuid primary key,
+  merchant_id uuid not null references merchants(id),
+  customer_id text not null,
+  state jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists orders_customer_merchant_idx on orders (customer_id, merchant_id, updated_at desc);
+
+-- Payment-verification looks up the awaiting-payment order by the virtual account
+-- number the customer paid into. This expression index keeps that lookup cheap.
+create index if not exists orders_virtual_account_idx on orders ((state->>'virtualAccountNumber'));
+
+-- ─── Transactions (payment ledger) ─────────────────────────────────────────────
+-- One row per inbound payment event from a bank/card provider. `provider_ref` is
+-- UNIQUE — it is the idempotency key that makes webhook redelivery a no-op (the
+-- payment provider, like Meta, retries until it gets a 2xx). Mirrors the
+-- `transactions` table in infra/README.md.
+create table if not exists transactions (
+  id uuid primary key default uuid_generate_v4(),
+  order_id uuid references orders(id),
+  merchant_id uuid not null references merchants(id),
+  customer_id text not null,
+  amount numeric not null,                 -- amount paid, in NGN
+  virtual_account text,                    -- the VAN credited
+  provider_ref text not null unique,       -- bank/card reference — idempotency key
+  status text not null,                    -- 'confirmed' | 'underpaid' | 'unmatched'
+  created_at timestamptz not null default now()
+);
+
+create index if not exists transactions_order_idx on transactions (order_id, created_at desc);
+create index if not exists transactions_merchant_idx on transactions (merchant_id, created_at desc);
+
+create table if not exists escalations (
+  id uuid primary key default uuid_generate_v4(),
+  merchant_id uuid not null references merchants(id),
+  customer_id text not null,
+  reason text not null,
+  context jsonb not null,
+  resolved boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ─── Merchant Pricing Rules ────────────────────────────────────────────────────
+-- One row per merchant. Merchant configures these once via the merchant app.
+-- ai-negotiator reads this to compute AuthorizedPriceRange.
+create table if not exists merchant_pricing_rules (
+  merchant_id uuid primary key references merchants(id),
+  base_price numeric not null default 0,       -- Default anchor (per-product in Phase 2)
+  absolute_floor numeric not null default 0,   -- Hard floor, never crossed
+  -- JSONB columns for tier maps — see pricingService.ts for the shape.
+  -- Example: '{"new":0.05,"returning":0.15,"loyal":0.22,"vip":0.30}'
+  max_discount_by_tier jsonb not null default '{"new":0.05,"returning":0.15,"loyal":0.22,"vip":0.30}',
+  max_bundle_value_add_by_tier jsonb not null default '{"new":0,"returning":0.10,"loyal":0.20,"vip":0.30}',
+  future_credit_cap_by_tier jsonb not null default '{"new":0,"returning":1000,"loyal":2500,"vip":5000}',
+  updated_at timestamptz not null default now()
+);
+
+-- ─── Negotiation Trace ─────────────────────────────────────────────────────────
+-- Full arc recorded at session end. This is the NegotiationTrace from the
+-- README — the enterprise data asset and training signal.
+create table if not exists negotiation_traces (
+  session_id uuid primary key,
+  merchant_id uuid not null references merchants(id),
+  customer_id text not null,
+  customer_tier text not null,
+  anchor_price numeric not null,
+  authorized_floor numeric not null,
+  outcome text not null,          -- 'closed' | 'below_floor_escalated' | 'bundle_closed' | 'abandoned'
+  final_price numeric,
+  final_margin numeric,           -- final_price - absolute_floor — computed on insert
+  tactics_deployed jsonb not null default '[]',
+  tactics_succeeded jsonb not null default '[]',
+  price_elasticity_signal numeric, -- customer_final_offer / base_price
+  turns jsonb not null default '[]',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists negotiation_traces_merchant_idx on negotiation_traces (merchant_id, created_at desc);
+create index if not exists negotiation_traces_outcome_idx on negotiation_traces (outcome);
+
+-- ─── Vendor Decisions (Vendor Communiqué reply codes) ────────────────────────
+-- Stores the outcome of a merchant's numeric reply to an escalation message.
+-- Written by vendorCommunique.ts handleMerchantReply().
+create table if not exists vendor_decisions (
+  id            uuid        primary key default uuid_generate_v4(),
+  merchant_id   uuid        references merchants(id),
+  decision_type text        not null,  -- 'escalation_reply'
+  channel       text        not null,  -- 'sms' | 'whatsapp' | 'baileys'
+  choice        text        not null,  -- 'approve_exception' | 'hold_firm' | 'offer_bundle'
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists vendor_decisions_merchant_idx on vendor_decisions (merchant_id);
+
+-- ─── Baileys Vendor Business Line ─────────────────────────────────────────────
+-- One row per vendor (one Baileys session = one WhatsApp business line).
+-- A single merchant can have multiple vendors / business lines.
+create table if not exists vendors (
+  id                      uuid        primary key default uuid_generate_v4(),
+  merchant_id             uuid        not null references merchants(id) on delete cascade,
+
+  -- The dedicated "business line" SIM. E.164 without '+': '2348012345678'.
+  -- NULL until the vendor completes the pairing flow (POST /vendors/:id/pair).
+  business_line_number    text        unique,
+
+  -- The vendor's own personal WhatsApp number — the classifier uses this to
+  -- distinguish vendor product uploads from customer queries on the same socket.
+  personal_number         text        not null,
+
+  -- Optional contact for re-provision alerts (SMS / separate WA)
+  notification_phone      text,
+
+  -- Session lifecycle managed by baileys-gateway
+  session_status          text        not null default 'disconnected',
+    -- 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'logged_out'
+
+  -- WhatsApp Status (Stories) configuration
+  auto_status_enabled     boolean     not null default false,
+  posting_frequency_hours integer     not null default 24,
+  approve_before_post     boolean     not null default true,  -- false = fully automatic
+
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists vendors_merchant_id_idx on vendors (merchant_id);
+
+-- Track every WhatsApp Status (Story) post ever made by each vendor.
+-- Immutable audit log — never delete. Errors go in the error column.
+create table if not exists status_log (
+  id          uuid        primary key default uuid_generate_v4(),
+  vendor_id   uuid        not null references vendors(id) on delete cascade,
+  sku         text        not null,
+  image_url   text,
+  caption     text,
+  posted_at   timestamptz not null default now(),
+  error       text        -- null = success, error message on failure
+);
+
+create index if not exists status_log_vendor_idx  on status_log (vendor_id);
+create index if not exists status_log_posted_idx  on status_log (posted_at desc);
+
+-- Holds Status posts pending merchant approval (when approve_before_post = true).
+create table if not exists status_post_queue (
+  id          uuid        primary key default uuid_generate_v4(),
+  vendor_id   uuid        not null references vendors(id) on delete cascade,
+  sku         text        not null,
+  image_url   text,
+  caption     text,
+  queued_at   timestamptz not null default now(),
+  approved_at timestamptz,   -- null = pending dashboard review
+  posted_at   timestamptz    -- null = not yet published to Status
+);
+
+create index if not exists status_queue_vendor_idx on status_post_queue (vendor_id);
+create index if not exists status_queue_pending_idx
+  on status_post_queue (vendor_id)
+  where approved_at is not null and posted_at is null;
+
+-- Add vendor-push columns to products (idempotent with IF NOT EXISTS).
+-- 'source' already exists from catalog-sync — add 'last_posted_at' for the Status cron.
+alter table products
+  add column if not exists last_posted_at timestamptz;
+
+-- [Added 2026-08-20] Vendor Decisions Table
+CREATE TABLE IF NOT EXISTS vendor_decisions (
+  id uuid primary key default gen_random_uuid(),
+  merchant_id uuid not null references merchants(id),
+  decision_type text not null,
+  channel text not null,
+  choice text not null,
+  created_at timestamptz not null default now()
+);
+CREATE TABLE IF NOT EXISTS escrow_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES orders(id),
+    merchant_id UUID NOT NULL REFERENCES merchants(id),
+    customer_id VARCHAR(255) NOT NULL,
+    amount NUMERIC(10, 2) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'held',
+    held_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    auto_release_at TIMESTAMP WITH TIME ZONE,
+    released_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_escrow_order_id ON escrow_accounts(order_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_merchant_id ON escrow_accounts(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_status ON escrow_accounts(status);
+CREATE TABLE IF NOT EXISTS merchant_integrations (
+  merchant_id UUID REFERENCES merchants(id),
+  provider VARCHAR(50) NOT NULL,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  expires_at TIMESTAMP,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  PRIMARY KEY (merchant_id, provider)
+);
+
+-- ─── [Hardening] Missing tables for Biblio Agent tool handlers ────────────────
+
+CREATE TABLE IF NOT EXISTS services (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  name text NOT NULL,
+  description text,
+  duration_minutes integer NOT NULL,
+  price numeric NOT NULL,
+  active boolean NOT NULL DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS appointments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+    service_id uuid REFERENCES services(id),
+    status text NOT NULL DEFAULT 'confirmed',
+  title text NOT NULL,
+  description text,
+  start_time timestamptz NOT NULL,
+  end_time timestamptz NOT NULL,
+  location text,
+  attendee_email text,
+  google_event_id text,
+  status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_appointments_merchant ON appointments(merchant_id, start_time);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+  order_id uuid REFERENCES orders(id),
+  amount numeric NOT NULL,
+  currency text NOT NULL DEFAULT 'NGN',
+  status text NOT NULL DEFAULT 'pending',
+  due_date date,
+  provider text,
+  provider_ref text,
+  line_items jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_merchant ON invoices(merchant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS active_promotions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  code text NOT NULL,
+  discount_pct numeric,
+  discount_flat numeric,
+  applies_to jsonb DEFAULT '[]',
+  max_uses integer,
+  uses integer NOT NULL DEFAULT 0,
+  starts_at timestamptz,
+  expires_at timestamptz,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(merchant_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS system_actions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  action_id text NOT NULL,
+  action_name text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_system_actions_merchant ON system_actions(merchant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS customers (
+  id text PRIMARY KEY,
+  name text,
+  email text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS negotiation_arcs (
+  session_id uuid PRIMARY KEY,
+  merchant_id uuid NOT NULL REFERENCES merchants(id),
+  customer_id text NOT NULL,
+  arc jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_negotiation_arcs_lookup ON negotiation_arcs(merchant_id, customer_id, updated_at DESC);
+
+-- ─── [Hardening] Merchant missing columns ─────────────────────────────────────
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS bank_account_number text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS bank_code text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS paystack_recipient_code text;
+ALTER TABLE merchants ADD COLUMN IF NOT EXISTS contact_phone text;
+
+-- ─── [Hardening] Add customer_id to vendor_decisions (issue #8) ──────────────
+ALTER TABLE vendor_decisions ADD COLUMN IF NOT EXISTS customer_id text;
+
+
+-- Added from apply_retention.js
+CREATE TABLE IF NOT EXISTS merchant_pricing_rules (
+  merchant_id UUID PRIMARY KEY,
+  max_discount_percent NUMERIC NOT NULL DEFAULT 10,
+  min_margin_percent NUMERIC NOT NULL DEFAULT 15,
+  winback_discounts_enabled BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS winback_drafts (
+  id TEXT PRIMARY KEY,
+  merchant_id UUID NOT NULL,
+  customer_id TEXT NOT NULL,
+  proposed_discount_percent NUMERIC NOT NULL,
+  message_draft TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Added from apply_suppliers.js
+CREATE TABLE IF NOT EXISTS suppliers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  contact_phone TEXT,
+  contact_email TEXT,
+  preferred_channel TEXT DEFAULT 'whatsapp',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS restock_drafts (
+  id TEXT PRIMARY KEY,
+  merchant_id UUID NOT NULL,
+  supplier_id UUID,
+  inventory_item_id UUID NOT NULL,
+  proposed_quantity INT NOT NULL,
+  message_draft TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Added from apply_tone_guides.js
+CREATE TABLE IF NOT EXISTS tone_guides (
+  id TEXT PRIMARY KEY,
+  operator_id UUID,
+  version INT,
+  sections JSONB,
+  approved_by TEXT,
+  approved_at TIMESTAMP WITH TIME ZONE,
+  supersedes TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT false,
+  merchant_id UUID,
+  style_metrics JSONB,
+  status TEXT DEFAULT 'pending_approval'
+);
+CREATE INDEX IF NOT EXISTS idx_tone_guides_operator ON tone_guides (operator_id);
+
+-- Transactional Outbox for State Machine Events
+CREATE TABLE IF NOT EXISTS outbox_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  processed_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (status, created_at);

@@ -29,7 +29,7 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                      LAYER 1: INTERFACE LAYER                       ║
+║                      LAYER 1: INTERFACE LAYER                        ║
 ║                                                                      ║
 ║  Merchant WhatsApp ─────────────────┐                                ║
 ║  Customer WhatsApp ─────────────────┤                                ║
@@ -41,73 +41,73 @@ ACE WhatsApp is a **three-layer autonomous commerce engine** layered invisibly o
                            ║ Webhooks (WhatsApp Business Cloud API)
                            ▼
 ╔══════════════════════════════════════════════════════════════════════╗
-║                  LAYER 2: AUTONOMOUS STATE ENGINE                   ║
+║                  LAYER 2: AUTONOMOUS STATE ENGINE                    ║
 ║                   (11 Microservices: Rust + AI SDK)                  ║
 ║                                                                      ║
-║  ┌──────────────────────────────────────────────────────────────┐   ║
-║  │  1. INGESTION SERVICE (Rust + Actix-web)                     │   ║
-║  │  Webhook ingestion · rate limiting · deduplication           │   ║
-║  │  Media download · voice → STT · image OCR                    │   ║
-║  └────────────────────────────┬─────────────────────────────────┘   ║
-║                               │ Publishes to Kafka                  ║
-║  ┌────────────────────────────▼─────────────────────────────────┐   ║
-║  │  2. IDENTITY RESOLUTION SERVICE (Rust)                       │   ║
-║  │  Phone + username + email → Global Buyer ID                  │   ║
-║  │  Fuzzy name matching · cross-platform coherence              │   ║
-║  └────────────────────────────┬─────────────────────────────────┘   ║
-║                               │                                     ║
-║             ┌─────────────────┴───────────────────┐                ║
-║             ▼                                     ▼                 ║
-║  ┌──────────────────────┐       ┌─────────────────────────────┐    ║
-║  │ 3. INTENT PARSER     │       │  4. STATE MACHINE           │    ║
-║  │  TypeScript/Vercel   │──────▶│     ORCHESTRATOR (Rust)     │    ║
-║  │  AI SDK + FastAPI    │       │                             │    ║
-║  │                      │       │  Deterministic state chart  │    ║
-║  │  Whisper → BERT      │       │  30-45s debounce window     │    ║
-║  │  generateObject()    │       │  AI suggests → Rust approves│    ║
-║  │  → typed Intent JSON │       │  Hard rule enforcement      │    ║
-║  └──────────────────────┘       └──────────────┬──────────────┘    ║
-║                                                │ Domain Events      ║
-║         ┌────────────────────────┬─────────────┼──────────┐        ║
-║         ▼                        ▼             ▼          ▼        ║
-║  ┌─────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────┐  ║
-║  │ 5. PAYMENT  │  │ 6. LOGISTICS   │  │ 7. SUPPLIER  │  │  8.  │  ║
-║  │ VERIFICATION│  │ COORDINATION   │  │ INTEGRATION  │  │COMMS │  ║
-║  │  (Rust)     │  │  (Rust)        │  │  (Rust)      │  │ROUTER│  ║
-║  │             │  │                │  │              │  │(Rust)│  ║
-║  │ Virtual     │  │ Kwik/Gokada/   │  │ Auto-ping    │  │ SMS  │  ║
-║  │ accounts    │  │ MAX dispatch   │  │ supplier WA  │  │ Voice│  ║
-║  │ Bank APIs   │  │ Rider tracking │  │ Pre-negotiate│  │Vendor│  ║
-║  │ Escrow      │  │ Customer notif │  │ Draft PO     │  │Comms │  ║
-║  └─────────────┘  └────────────────┘  └──────────────┘  └──────┘  ║
+║  ┌──────────────────────────────────────────────────────────────┐    ║
+║  │  1. INGESTION SERVICE (Rust + Actix-web)                     │    ║
+║  │  Webhook ingestion · rate limiting · deduplication           │    ║
+║  │  Media download · voice → STT · image OCR                    │    ║
+║  └────────────────────────────┬─────────────────────────────────┘    ║
+║                               │ Publishes to Kafka                   ║
+║  ┌────────────────────────────▼─────────────────────────────────┐    ║
+║  │  2. IDENTITY RESOLUTION SERVICE (Rust)                       │    ║
+║  │  Phone + username + email → Global Buyer ID                  │    ║
+║  │  Fuzzy name matching · cross-platform coherence              │    ║
+║  └────────────────────────────┬─────────────────────────────────┘    ║
+║                               │                                      ║
+║             ┌─────────────────┴───────────────────┐                  ║
+║             ▼                                     ▼                  ║
+║  ┌──────────────────────┐       ┌─────────────────────────────┐      ║
+║  │ 3. INTENT PARSER     │       │  4. STATE MACHINE           │      ║
+║  │  TypeScript/Vercel   │──────▶│     ORCHESTRATOR (Rust)     │      ║
+║  │  AI SDK + FastAPI    │       │                             │      ║
+║  │                      │       │  Deterministic state chart  │      ║
+║  │  Whisper → BERT      │       │  30-45s debounce window     │      ║
+║  │  generateObject()    │       │  AI suggests → Rust approves│      ║
+║  │  → typed Intent JSON │       │  Hard rule enforcement      │      ║
+║  └──────────────────────┘       └──────────────┬──────────────┘      ║
+║                                                │ Domain Events       ║
+║         ┌────────────────────────┬─────────────┼──────────┐          ║
+║         ▼                        ▼             ▼          ▼          ║
+║  ┌─────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────┐     ║
+║  │ 5. PAYMENT  │  │ 6. LOGISTICS   │  │ 7. SUPPLIER  │  │  8.  │     ║
+║  │ VERIFICATION│  │ COORDINATION   │  │ INTEGRATION  │  │COMMS │     ║
+║  │  (Rust)     │  │  (Rust)        │  │  (Rust)      │  │ROUTER│     ║
+║  │             │  │                │  │              │  │(Rust)│     ║
+║  │ Virtual     │  │ Kwik/Gokada/   │  │ Auto-ping    │  │ SMS  │     ║
+║  │ accounts    │  │ MAX dispatch   │  │ supplier WA  │  │ Voice│     ║
+║  │ Bank APIs   │  │ Rider tracking │  │ Pre-negotiate│  │Vendor│     ║
+║  │ Escrow      │  │ Customer notif │  │ Draft PO     │  │Comms │     ║
+║  └─────────────┘  └────────────────┘  └──────────────┘  └──────┘     ║
 ║                                                                      ║
-║  ┌──────────────────────────────────────────────────────────────┐   ║
-║  │  11. AI NEGOTIATOR (Rust circuit breaker + Vercel AI SDK)    │   ║
-║  │  Full negotiation arc · 6 merchant-approved tactics          │   ║
-║  │  NegotiationTrace logging → goods & price intel              │   ║
-║  │  Below-floor → Vendor Communique SMS to merchant             │   ║
-║  └──────────────────────────────────────────────────────────────┘   ║
+║  ┌──────────────────────────────────────────────────────────────┐    ║
+║  │  11. AI NEGOTIATOR (Rust circuit breaker + Vercel AI SDK)    │    ║
+║  │  Full negotiation arc · 6 merchant-approved tactics          │    ║
+║  │  NegotiationTrace logging → goods & price intel              │    ║
+║  │  Below-floor → Vendor Communique SMS to merchant             │    ║
+║  └──────────────────────────────────────────────────────────────┘    ║
 ║                                                                      ║
-║  ┌──────────────────────────────────────┐                           ║
-║  │  9. VISUAL CONTEXT RESOLUTION        │                           ║
-║  │     (Rust + Python)                  │                           ║
-║  │  Social media scraping daemon        │                           ║
-║  │  CLIP/ViT embeddings → SKU match     │                           ║
-║  │  Resolves "that dress in your reel"  │                           ║
-║  └──────────────────────────────────────┘                           ║
+║  ┌──────────────────────────────────────┐                            ║
+║  │  9. VISUAL CONTEXT RESOLUTION        │                            ║
+║  │     (Rust + Python)                  │                            ║
+║  │  Social media scraping daemon        │                            ║
+║  │  CLIP/ViT embeddings → SKU match     │                            ║
+║  │  Resolves "that dress in your reel"  │                            ║
+║  └──────────────────────────────────────┘                            ║
 ║                                                                      ║
-║  ┌──────────────────────────────────────────────────────────────┐   ║
-║  │  10. DATA REFINEMENT PIPELINE (Python + Airflow)             │   ║
-║  │  PII scrubber · anonymization · synthetic data generation    │   ║
-║  │  HITL verification queue · enterprise dataset packaging      │   ║
-║  └──────────────────────────────────────────────────────────────┘   ║
+║  ┌──────────────────────────────────────────────────────────────┐    ║
+║  │  10. DATA REFINEMENT PIPELINE (Python + Airflow)             │    ║
+║  │  PII scrubber · anonymization · synthetic data generation    │    ║
+║  │  HITL verification queue · enterprise dataset packaging      │    ║
+║  └──────────────────────────────────────────────────────────────┘    ║
 ╚══════════════════════════╦═══════════════════════════════════════════╝
                            ║ Refined data
                            ▼
 ╔══════════════════════════════════════════════════════════════════════╗
-║             LAYER 3: ENTERPRISE INTELLIGENCE PLATFORM               ║
+║             LAYER 3: ENTERPRISE INTELLIGENCE PLATFORM                ║
 ║                                                                      ║
-║  AI Training Data Marketplace · FMCG Intelligence · TrustScore API  ║
+║  AI Training Data Marketplace · FMCG Intelligence · TrustScore API   ║
 ║  (see /data-intelligence/)                                           ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```

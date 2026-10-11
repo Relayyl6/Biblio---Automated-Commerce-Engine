@@ -1,0 +1,111 @@
+import React from 'react';
+import { View, Text, Pressable, Dimensions } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Check, X } from 'lucide-react-native';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.4;
+
+export type DraftType = 'restock' | 'winback' | 'tone_update' | 'pricing_override' | 'dispatch' | 'escalation_sms';
+
+export interface DraftCardProps {
+  id: string;
+  type: DraftType;
+  title: string;
+  subtitle: string;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  onSnooze?: (id: string) => void;
+}
+
+export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onReject, onSnooze }: DraftCardProps) {
+  const translateX = useSharedValue(0);
+
+  const panGesture = Gesture.Pan()
+    .onUpdate((event) => {
+      translateX.value = event.translationX;
+    })
+    .onEnd((event) => {
+      if (translateX.value > SWIPE_THRESHOLD || event.velocityX > 800) {
+        translateX.value = withSpring(SCREEN_WIDTH, {}, () => runOnJS(onApprove)(id));
+      } else if (translateX.value < -SWIPE_THRESHOLD || event.velocityX < -800) {
+        translateX.value = withSpring(-SCREEN_WIDTH, {}, () => runOnJS(onReject)(id));
+      } else {
+        translateX.value = withSpring(0);
+      }
+    });
+
+  const rStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: translateX.value }],
+    };
+  });
+
+  const bgStyle = useAnimatedStyle(() => {
+    const opacityApprove = Math.min(translateX.value / (SWIPE_THRESHOLD * 0.8), 1);
+    const opacityReject = Math.min(-translateX.value / (SWIPE_THRESHOLD * 0.8), 1);
+
+    return {
+      backgroundColor:
+        translateX.value > 0
+          ? `rgba(16, 185, 129, ${opacityApprove})` // Green
+          : `rgba(239, 68, 68, ${opacityReject})`,   // Red
+    };
+  });
+
+  return (
+    <View className="relative w-full mb-4 overflow-hidden rounded-[24px] bg-[#F7F8FA] dark:bg-[#090A0C]">
+      {/* Background Actions */}
+      <Animated.View style={[bgStyle]} className="absolute inset-0 flex-row justify-between items-center px-8">
+        <X size={32} color="#FFFFFF" strokeWidth={3} />
+        <Check size={32} color="#FFFFFF" strokeWidth={3} />
+      </Animated.View>
+
+      {/* Draggable Foreground Card */}
+      <GestureDetector gesture={panGesture}>
+        <Animated.View
+          style={[rStyle]}
+          className="bg-white dark:bg-[#15171A] p-5 flex-col justify-center rounded-[24px] border border-gray-100 dark:border-[#1F2227] shadow-[0_4px_20px_rgb(0,0,0,0.04)] dark:shadow-lg">
+          
+          <View className="flex-row items-center justify-between mb-3">
+            <View className="bg-amber-50 dark:bg-[#8B5CF6]/20 px-3 py-1 rounded-full border border-amber-100 dark:border-[#8B5CF6]/30 flex-row items-center">
+              <Text className="text-amber-600 dark:text-[#8B5CF6] text-xs font-bold uppercase tracking-wide">
+                {type}
+              </Text>
+            </View>
+            <Text className="text-[#64748B] dark:text-[#A1A1AA] text-xs font-medium">Swipe to act</Text>
+          </View>
+
+          <Text className="text-[#0F172A] dark:text-white text-[18px] font-bold tracking-tight mb-1.5">{title}</Text>
+          <Text className="text-[#64748B] dark:text-[#A1A1AA] text-sm leading-relaxed mb-4" numberOfLines={2}>
+            {subtitle}
+          </Text>
+
+          {/* Action Hint */}
+          <View className="flex-row justify-between items-center space-x-2">
+            <Pressable className="flex-1 bg-[#0F172A] dark:bg-[#E2FF6E] rounded-full py-3 items-center">
+              <Text className="text-white dark:text-[#090A0C] text-sm font-bold">Review Details</Text>
+            </Pressable>
+            {onSnooze && (
+              <Pressable 
+                onPress={() => onSnooze(id)}
+                className="bg-[#F1F5F9] dark:bg-[#1F2227] rounded-full py-3 px-5 items-center justify-center border border-gray-200 dark:border-gray-800"
+              >
+                <Text className="text-[#475569] dark:text-[#A1A1AA] text-sm font-bold">Snooze</Text>
+              </Pressable>
+            )}
+          </View>
+
+        </Animated.View>
+      </GestureDetector>
+    </View>
+  );
+}
+
+

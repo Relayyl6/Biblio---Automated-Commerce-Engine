@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "ACE Merchant",
+    "slug": "ace-merchant-app",
+    "scheme": "acemerchant",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "extra": {
+      "merchantApiBaseUrl": "http://localhost:3004"
+    }
+  }
+}

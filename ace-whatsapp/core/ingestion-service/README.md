@@ -41,4 +41,10 @@ Owns the WhatsApp Business Cloud API connection. Ingests all inbound messages fr
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **Webhook Ingestion**: Fastify endpoint on port 3000 supporting Meta webhook challenge verification (`GET /webhook`) and inbound payload processing (`POST /webhook`).
+- **Signature Security**: Opt-in raw-body HMAC SHA-256 verification (`x-hub-signature-256`) rejecting forged payloads.
+- **Fast 200 Ack & Deduplication**: Immediate 200 acknowledgment with Redis-based message ID deduplication (`SETNX` with 24-hour TTL).
+- **Direct Pipeline Dispatch**: Normalizes WhatsApp message formats (text, image, audio, location) into `InboundMessage` objects and dispatches into `enqueueInboundMessage` in `comms-router`.
+

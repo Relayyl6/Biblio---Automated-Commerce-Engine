@@ -9,9 +9,11 @@ Phase 1 of ACE. Merchants do nothing new — they keep texting on WhatsApp. ACE 
 
 ## Core Premise
 
-- Merchants already live on WhatsApp. We don't change that.
+- Merchants already live on WhatsApp, Instagram, Facebook Messenger, and Email. We don't change that.
 - Customers experience zero friction — they never download anything (Phase 1).
 - ACE intercepts, interprets, and **executes** commerce operations autonomously.
+- **Omni-Channel Shared Inbox**: The entire team manages all customer interactions from one unified interface.
+- **Contact Merge**: If the same customer messages you on WhatsApp in the morning and emails you in the afternoon, the platform recognizes it's the same person and merges their profiles into a single thread to avoid duplicate tickets.
 - The merchant's only job: **exception management**.
 
 ---
@@ -22,7 +24,7 @@ Phase 1 of ACE. Merchants do nothing new — they keep texting on WhatsApp. ACE 
 |----------|-------------|
 | **Order Fulfillment** | Customer texts → AI parses intent → payment virtual account issued → logistics booked → merchant notified. Zero merchant input. |
 | **Demand-Driven Restocking** | Stock oracle detects impending stockout → pings supplier → negotiates price → drafts PO → merchant approves with one tap (8 seconds). |
-| **Customer Retention Engine** | Nightly analysis detects at-risk VIP customers → AI generates culturally nuanced re-engagement message → auto-sends (or 4hr hold for merchant review). |
+| **Customer Retention & Shared Inbox** | Contact Merge unifies Instagram/WhatsApp/Email identities. Nightly analysis detects at-risk VIPs → AI auto-sends a culturally nuanced re-engagement message to their preferred channel. |
 | **Multimodal Visual Resolution** | "That blue dress in your last reel" → AI scrapes merchant's IG → CLIP embeddings match product → SKU resolved → price negotiated autonomously. |
 
 ---

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ACE Chat Simulator</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background-color: #efeae2; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    .chat-container { width: 400px; height: 600px; background: #e5ddd5; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .header { background: #075e54; color: white; padding: 16px; font-weight: bold; }
+    .messages { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+    .message { max-width: 80%; padding: 8px 12px; border-radius: 8px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
+    .sent { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 0; }
+    .received { background: #fff; align-self: flex-start; border-bottom-left-radius: 0; }
+    .input-area { background: #f0f0f0; padding: 12px; display: flex; gap: 8px; }
+    input { flex: 1; padding: 10px; border-radius: 20px; border: none; outline: none; }
+    button { background: #075e54; color: white; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div class="header">ACE AI Negotiator</div>
+    <div class="messages" id="msgs"></div>
+    <div class="input-area">
+      <input type="text" id="phone" value="2348012345678" style="width: 120px;" placeholder="Phone" />
+      <input type="text" id="text" placeholder="Type a message..." onkeypress="if(event.key==='Enter') send()" />
+      <button onclick="send()">Send</button>
+    </div>
+  </div>
+
+  <script>
+    function addMsg(text, type) {
+      const div = document.createElement('div');
+      div.className = `message ${type}`;
+      div.innerText = text;
+      document.getElementById('msgs').appendChild(div);
+      div.scrollIntoView();
+    }
+
+    async function send() {
+      const phone = document.getElementById('phone').value;
+      const text = document.getElementById('text').value;
+      if(!text) return;
+      document.getElementById('text').value = '';
+      
+      addMsg(text, 'sent');
+
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [{
+          id: "123",
+          changes: [{
+            value: {
+              metadata: { phone_number_id: "test_phone_id" },
+              contacts: [{ profile: { name: "Test User" }, wa_id: phone }],
+              messages: [{
+                from: phone,
+                id: "msg_" + Date.now(),
+                timestamp: Math.floor(Date.now()/1000).toString(),
+                type: "text",
+                text: { body: text }
+              }]
+            }
+          }]
+        }]
+      };
+
+      try {
+        await fetch('http://localhost:3001/webhook', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-hub-signature-256': 'test_signature'
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        // Polling loop to simulate webhook response would normally go to the actual phone,
+        // Since we are mocking, the response is logged on the terminal by the egress router.
+        addMsg("(Message sent to Ingestion Service. Watch the terminal logs or Egress Router for the agent's reply!)", 'received');
+      } catch (err) {
+        addMsg("Error: " + err.message, 'received');
+      }
+    }
+
+    // Connect to Mock Meta Server for real-time replies
+    const source = new EventSource("http://localhost:3005/stream");
+    source.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      let text = "Agent: ";
+      if (data.type === "text") { 
+        text += data.text.body; 
+      } else if (data.type === "interactive") { 
+        text += data.interactive.body.text + "\n\nOptions:\n" + data.interactive.action.buttons.map(b => `> ${b.reply.title}`).join("\n"); 
+      }
+      addMsg(text, 'received');
+    };
+  </script>
+</body>
+</html>

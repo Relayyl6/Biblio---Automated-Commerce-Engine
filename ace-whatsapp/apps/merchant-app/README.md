@@ -44,4 +44,22 @@
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[~] Foundation started (2026-06-19)` — Expo + expo-router app wired to
+`core/merchant-api`. Implemented screens: **Command Center** (`app/index.tsx`),
+**Catalog + WhatsApp sync** (`app/catalog.tsx`), **Seller Voice & Settings**
+(`app/settings.tsx`). Typed API client in `src/api/client.ts`.
+
+### Run
+```bash
+cd ace-whatsapp/apps/merchant-app
+npm install
+npm run start          # Expo dev server (press i / a for iOS / Android)
+```
+Point it at a running `merchant-api` via `app.json → expo.extra.merchantApiBaseUrl`
+(default `http://localhost:3004`).
+
+> ⚠️ This is a foundation, not yet runtime-verified end-to-end (needs `npm install`
+> of the Expo toolchain + a device/simulator). It is intentionally kept out of the
+> backend `tsconfig`. Remaining per the spec above: Conversation Hub, Financial
+> Dashboard, full Autonomous Settings, auth/session (currently a hardcoded demo
+> `MERCHANT_ID`).

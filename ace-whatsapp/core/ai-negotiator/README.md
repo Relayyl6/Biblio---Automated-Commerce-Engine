@@ -38,8 +38,8 @@ Where generic AI tools either fix a price or blindly accept any offer, ACE's Neg
 │  RULES ENGINE LAYER — Rust (PricingService)                     │
 │                                                                 │
 │  - AuthorizedPriceRange computed from merchant rules            │
-│  - Circuit breaker: below floor → AI CANNOT proceed            │
-│  - All final prices written only by Rust — never by LLM        │
+│  - Circuit breaker: below floor → AI CANNOT proceed             │
+│  - All final prices written only by Rust — never by LLM         │
 │  - Injection detection: adversarial patterns flagged + logged   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -213,4 +213,11 @@ interface NegotiationTrace {
 
 ## Status
 
-`[ ] Not started — placeholder`
+`[x] Implemented & Active`
+
+- **LLM Engine**: High-speed multi-tool negotiation powered by Groq (`llama-3.3-70b-versatile`) with prompt dialect injection (Pidgin, Yoruba, Hausa, Igbo, Nigerian English).
+- **Strategic Arc State**: Pure transition reducer `advanceArc` with stage progression (`anchor` → `acknowledge` → `counter` → `pivot` → `close` / `escalate`), customer counter offer extraction, and multi-turn state persisted in Redis.
+- **5 Autonomous Tools**: `check_inventory`, `propose_price`, `deploy_tactic`, `close_deal`, and `escalate_to_merchant`.
+- **4 Negotiation Tactics**: `relationship_anchor`, `bundle_pivot`, `scarcity_signal`, `future_credit`.
+- **Data Lineage & Telemetry**: Elastic Signal flusher writes full `NegotiationTraceRow` records (including `dialect` and price elasticity) to PostgreSQL; real-time token attribution routed to `DataIntelligenceEngine`.
+
