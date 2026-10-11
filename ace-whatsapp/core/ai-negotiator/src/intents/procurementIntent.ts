@@ -1,5 +1,5 @@
-import { procurementService } from '../../../supplier-integration/src/procurementService';
-import { ChannelType } from '../../../supplier-integration/src/types';
+import { procurementService } from '../../../supplier-integration/src/procurementService.js';
+import { ChannelType } from '../../../supplier-integration/src/types.js';
 
 /**
  * Triggered when the AI Parser detects the merchant saying:
@@ -11,7 +11,7 @@ export async function handleRegisterProcurementNodeIntent(
   extractedLinkOrId: string,
   categories: string[]
 ) {
-  console.log([AI Negotiator] Extracted REGISTER_PROCUREMENT_NODE intent from merchant.);
+  console.log('[AI Negotiator] Extracted REGISTER_PROCUREMENT_NODE intent from merchant.');
   
   // Determine channel type from link
   let channelType: ChannelType = 'whatsapp_direct';
@@ -21,7 +21,7 @@ export async function handleRegisterProcurementNodeIntent(
 
   await procurementService.registerNode(merchantId, {
     merchantId,
-    name: \Auto-Registered Node (\)\,
+    name: `Auto-Registered Node (${channelType})`,
     channelType,
     channelId: extractedLinkOrId,
     categories,

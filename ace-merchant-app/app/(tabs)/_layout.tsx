@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tabs, useRouter } from 'expo-router';
-import { Home, Inbox, MoreHorizontal, Search } from 'lucide-react-native';
-import { View, Text, Pressable } from 'react-native';
+import { Home, Inbox, MoreHorizontal, Search, ArrowLeft, MessageCircle, User, Settings as SettingsIcon } from 'lucide-react-native';
+import { View, Text, Pressable, Keyboard } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -10,12 +10,14 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  FadeInRight,
+  FadeOutLeft,
+  FadeInLeft,
+  FadeOutRight
 } from 'react-native-reanimated';
 import { colors } from '../../theme';
 import { useInbox } from '../../src/api/client';
 
-// Wire this up to your actual inbox query (e.g. useInbox().data.length)
-// so the dot only shows when there's something to triage.
 function useInboxBadgeCount() {
   const { data: cards = [] } = useInbox();
   return cards.length;
@@ -29,7 +31,7 @@ function TabIcon({
   activeBg,
   badge,
 }: {
-  Icon: typeof Home;
+  Icon: any;
   isFocused: boolean;
   accent: string;
   inactive: string;
@@ -70,6 +72,14 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const inboxBadge = useInboxBadgeCount();
+  const [showMore, setShowMore] = useState(false);
+  const [kbVisible, setKbVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKbVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+  if (kbVisible) return null;
 
   const icons: Record<string, typeof Home> = {
     index: Home,
@@ -90,7 +100,6 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       }}
       pointerEvents="box-none"
     >
-      {/* Pill holding the 3 primary tabs */}
       <View
         style={{
           flex: 1,
@@ -111,45 +120,66 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
           elevation: 8,
         }}
       >
-        {state.routes.map((route, index) => {
-          const isFocused = state.index === index;
-          const Icon = icons[route.name] ?? Home;
+        {!showMore ? (
+          <Animated.View entering={FadeInLeft.springify()} exiting={FadeOutLeft} style={{ flexDirection: 'row', flex: 1, justifyContent: 'space-around' }}>
+            {state.routes.map((route, index) => {
+              const isFocused = state.index === index;
+              const Icon = icons[route.name] ?? Home;
 
-          const onPress = () => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name, route.params as object);
-            }
-          };
+              const onPress = () => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (route.name === 'more') {
+                  setShowMore(true);
+                  return;
+                }
+                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!isFocused && !event.defaultPrevented) {
+                  navigation.navigate(route.name, route.params as object);
+                }
+              };
 
-          return (
-            <Pressable
-              key={route.key}
-              onPress={onPress}
-              hitSlop={10}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: isFocused }}
-              accessibilityLabel={route.name}
-            >
-              <TabIcon
-                Icon={Icon}
-                isFocused={isFocused}
-                accent={c.accent}
-                inactive={c.textTertiary}
-                activeBg={c.accentSoft}
-                badge={route.name === 'inbox' ? inboxBadge : undefined}
-              />
+              return (
+                <Pressable
+                  key={route.key}
+                  onPress={onPress}
+                  hitSlop={10}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: isFocused }}
+                >
+                  <TabIcon
+                    Icon={Icon}
+                    isFocused={isFocused && route.name !== 'more'}
+                    accent={c.accent}
+                    inactive={c.textTertiary}
+                    activeBg={c.accentSoft}
+                    badge={route.name === 'inbox' ? inboxBadge : undefined}
+                  />
+                </Pressable>
+              );
+            })}
+          </Animated.View>
+        ) : (
+          <Animated.View entering={FadeInRight.springify()} exiting={FadeOutRight} style={{ flexDirection: 'row', flex: 1, justifyContent: 'space-around' }}>
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowMore(false); }} hitSlop={10}>
+              <TabIcon Icon={ArrowLeft} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-          );
-        })}
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); navigation.navigate('more'); }} hitSlop={10}>
+              <TabIcon Icon={User} isFocused={state.index === 2} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
+            </Pressable>
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/chats' as any); }} hitSlop={10}>
+              <TabIcon Icon={MessageCircle} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
+            </Pressable>
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/settings' as any); }} hitSlop={10}>
+              <TabIcon Icon={SettingsIcon} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
+            </Pressable>
+          </Animated.View>
+        )}
       </View>
 
-      {/* Distinct search button, visually separated from navigation */}
       <Pressable
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          router.push('/search');
+          router.push('/search' as any);
         }}
         accessibilityRole="button"
         accessibilityLabel="Search"
@@ -173,12 +203,24 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   );
 }
 
+const renderTabBar = (props: any) => <CustomTabBar {...props} />;
+
 export default function TabsLayout() {
+  const { colorScheme } = useColorScheme();
+  const c = colorScheme === 'dark' ? colors.dark : colors.light;
+
   return (
-    <Tabs tabBar={props => <CustomTabBar {...props} />} screenOptions={{ headerShown: false }}>
+    <Tabs
+      tabBar={renderTabBar}
+      screenOptions={{
+        headerShown: false,
+        sceneStyle: { backgroundColor: c.bg },
+      }}
+    >
       <Tabs.Screen name="index" options={{ title: 'Pulse' }} />
       <Tabs.Screen name="inbox" options={{ title: 'Inbox' }} />
       <Tabs.Screen name="more" options={{ title: 'More' }} />
     </Tabs>
   );
 }
+

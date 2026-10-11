@@ -292,6 +292,78 @@ sequenceDiagram
 ### 5. Burst Debouncing (ManyChat-Style Smoothness)
 - [`debounce.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/comms-router/src/debounce.ts) consolidates rapid customer messages sent within 10 seconds into a single, cohesive `ConversationTurn`, preventing the AI from interrupting or double-responding.
 
+### 6. RL + RAG Pipeline — Adaptive Negotiation & Context Engine
+- **Core Principle: Learning Proposes; Circuit Breakers Enforce**:
+  The AI's learning components only recommend strategic actions (discount tiers, few-shot framing); deterministic state machines and pre-computed floor circuits enforce invariant boundaries. The bandit can never violate the merchant's configured minimum margin.
+
+```mermaid
+flowchart TD
+    subgraph Inbound["Inbound Message"]
+        M1[Customer Message] --> M2[Comms Router Debounce]
+    end
+
+    subgraph RAG_Layer["RAG Exemplar Memory"]
+        M2 --> R1[Exemplar Store]
+        R1 -->|Dialect + Tier + Scenario| R2[(interaction_exemplars Table)]
+        R2 -->|Dynamic Few-Shot Prompts| A1[System Prompt Injection]
+    end
+
+    subgraph RL_Layer["LinUCB Contextual Bandit"]
+        M2 --> B1[Feature Extractor\n6D Context Vector]
+        B1 --> B2[LinUCB Pricing Bandit]
+        B2 -->|Action Selection UCB| B3[7 Discrete Discount Arms\n0% to 30%]
+        B3 --> A1
+    end
+
+    subgraph Execution["Negotiator & Safety Circuit"]
+        A1 --> EX1[Groq Llama 3.3 LLM]
+        EX1 --> CB{Circuit Breaker\nHard Floor Gate}
+        CB -->|Valid Margin| OUT1[Send Counter-Offer]
+        CB -->|Breaches Floor| OUT2[Floor Mask: Clamped to Max Permitted]
+    end
+
+    subgraph Feedback["Feedback & Reward Loop"]
+        OUT1 --> FB1[interactionFeedback Service]
+        FB1 --> FB2[(conversation_outcomes Table)]
+        ORD[Payment Confirmed / Deal Closed] -->|Backdated Outcome| FB3[Margin-Based Reward Calculation]
+        FB3 -->|r = margin * outcome - λ * override| B2
+    end
+```
+
+- **Data Foundation (`conversation_outcomes` & `interaction_exemplars`)**:
+  - `conversation_outcomes` in Neon PostgreSQL stores full `(context, action, outcome)` tuples including LinUCB state representations, customer reactions, turn counts, and final realized margin.
+  - `interaction_exemplars` maintains authenticated conversational patterns across Nigerian Pidgin, Yoruba, Igbo, Hausa, and English.
+- **RAG Exemplar Store ([`shared/src/rag/exemplarStore.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/rag/exemplarStore.ts))**:
+  - Dynamically extracts few-shot exemplars matching the customer's dialect, tier (`new`, `regular`, `vip`), and scenario (`first_order`, `hesitation`, `low_stock`, `high_value`).
+  - Pre-formats authentic Nigerian commerce dialogue into the system prompt of [`agentLoop.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/ai-negotiator/src/agentLoop.ts).
+- **LinUCB Contextual Bandit ([`shared/src/rl/pricingBandit.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/rl/pricingBandit.ts))**:
+  - **Feature Representation (6D)**: $[1.0, \text{price\_ratio}, \text{clv\_scaled}, \text{is\_vip}, \text{turns\_scaled}, \text{sentiment}]$.
+  - **Discrete Action Arms**: $7$ discount options: $[0\%, 5\%, 10\%, 15\%, 20\%, 25\%, 30\%]$.
+  - **Upper Confidence Bound**: Action selection via $UCB_a = \hat{\theta}_a^T x + \alpha \sqrt{x^T A_a^{-1} x}$.
+  - **Circuit-Breaker Masking**: Clamps proposed discount to prevent any violation of the merchant's configured absolute floor price.
+  - **Dual Persistence**: Matrix states persisted in Redis with zero-downtime in-memory caching.
+- **Interaction Feedback Loop ([`shared/src/feedback/interactionFeedback.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/feedback/interactionFeedback.ts))**:
+  - Tracks live turns and merchant manual overrides from the Exception Queue.
+  - Backdates order outcomes when a transaction clears, calculating realized margin and updating the LinUCB model:
+    $$r = \mathbf{1}_{\{\text{order\_completed}\}} \cdot \text{margin\_realized} - \lambda \cdot \mathbf{1}_{\{\text{merchant\_override}\}}$$
+
+### 7. Biblio Mobile App Architecture & Hardware Polish
+- **Full-Height Modal Drawers ([`SidePanel.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/src/components/SidePanel.tsx))**:
+  - Converted the slide-in drawer to a root `<Modal visible transparent statusBarTranslucent>` with `position: 'absolute', top: 0, bottom: 0, right: 0, height: '100%'`.
+  - Fixes the Android/iOS hardware navigation bar gap where drawers were previously raised above the screen bottom.
+- **Zero White-Flash Screen Transitions**:
+  - Added React Navigation `ThemeProvider` directly in [`app/_layout.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/_layout.tsx) with theme background matching.
+  - Bound `backgroundColor: c.bg` across `GestureHandlerRootView`, `SafeAreaProvider`, and `Tabs` `sceneStyle`.
+  - Configured root window dark background `#090A0C` in [`app.json`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app.json).
+- **Clean Standardized Header Architecture ([`ScreenHeader.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/src/components/ScreenHeader.tsx))**:
+  - Removed redundant boxed container wrappers around headers in [`suppliers.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/suppliers.tsx) and [`crm.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/crm.tsx).
+  - Standardized all sub-screens to consistent hit targets, back arrows, and pill search bars.
+- **Live Inventory & Sync Carousel**:
+  - Added horizontal carousel to [`app/(tabs)/index.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/(tabs)/index.tsx) displaying stock levels, WhatsApp origin tags, and Naira prices.
+  - Seamless "Add First Product" routing into [`crm.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/crm.tsx), prioritizing manual 1-tap addition with optional WhatsApp catalog syncing.
+- **100% Scroll & Safe-Area Coverage**:
+  - All screens (`index`, `inbox`, `more`, `crm`, `suppliers`, `chats`, `chat/[id]`, `finance`, `settings`, `notifications`, `support`, `search`) use `ScrollView` or `FlatList` with `keyboardShouldPersistTaps="handled"` and `contentContainerStyle` padding ($100\text{--}140\text{px}$) ensuring elements are never clipped by the floating bottom tab bar.
+
 ---
 
 ## The Three-Layer Architecture
@@ -398,11 +470,14 @@ Merchants can operate and test their storefront directly on the same phone via W
 | Layer | Stack |
 |-------|-------|
 | **Agent / AI orchestration** | TypeScript + **Groq SDK** (`llama-3.3-70b-versatile` & `llama-3.2-11b-vision-preview`) |
+| **RL & Contextual Bandits** | LinUCB Contextual Bandit (`shared/src/rl/pricingBandit.ts`) with 6D state vector & margin-based reward feedback |
+| **RAG & Exemplar Memory** | Dialect/tier-indexed Exemplar Store (`shared/src/rag/exemplarStore.ts`) with dynamic prompt injection |
+| **Outcome & Feedback Loop** | Interaction Feedback Engine (`shared/src/feedback/interactionFeedback.ts`) & `conversation_outcomes` ledger |
 | **Core microservices** | Fastify, TypeScript, BullMQ, Redis, PostgreSQL |
 | **WhatsApp Gateways** | Meta WhatsApp Cloud API (`ingestion-service`) & Baileys Multi-Device Web Sockets (`baileys-gateway`) |
-| **Merchant app** | React Native + Expo |
+| **Merchant app** | React Native + Expo (v57, Reanimated 4, NativeWind 4, TanStack Query) |
 | **Customer interface** | WhatsApp Direct UI & Progressive Web App |
-| **Primary DB** | PostgreSQL (ACID, partitioned by `merchant_id`) |
+| **Primary DB** | PostgreSQL (ACID, Neon serverless, partitioned by `merchant_id`) |
 | **State cache & Queue** | Redis + BullMQ (4.5s debounce window, rate-limiting, locks) |
 | **Payments** | Monnify / Paystack / Flutterwave Dynamic Virtual Account Numbers (VAN) |
 
@@ -416,8 +491,10 @@ Merchants can operate and test their storefront directly on the same phone via W
 - [Lead-to-Close Pipeline](./docs/product/LEAD_TO_CLOSE.md) — 10-stage full automation pipeline
 - [Vendor Communiqué System](./docs/product/VENDOR_COMMUNIQUE.md) — SMS decision protocol
 - [AI Negotiator](./ace-whatsapp/core/ai-negotiator/README.md) — Negotiation arc, 6 tactics, circuit breaker
+- [RL & RAG Pipeline Architecture](./shared/src/rl/pricingBandit.ts) — LinUCB Bandit, Exemplar Store, & Outcome Feedback
 
 ### Engineering & Infrastructure
 - [Database Architecture](./infra/README.md) — PostgreSQL schema, indexing, and design rationale
 - [Engineering Guidelines](./docs/engineering/GUIDELINES.md) — 8 principles, critical vulnerability mitigations
 - [Data Collection Architecture](./docs/engineering/DATA_COLLECTION.md) — 5 data types, Kafka topology
+- [Interaction Feedback & Bandit Training](./shared/src/feedback/interactionFeedback.ts) — Outcome backdating & policy updates

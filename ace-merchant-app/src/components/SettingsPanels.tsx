@@ -139,7 +139,7 @@ export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
 export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const [address, setAddress] = useState('');
-  const [metaConnected] = useState(true); // read-only status from your Meta OAuth flow
+  const [metaConnected] = useState(false); // read-only status from your Meta OAuth flow
 
   return (
     <View>

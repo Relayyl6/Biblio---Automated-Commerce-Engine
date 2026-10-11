@@ -16,3 +16,34 @@ export interface RestockRequest {
   quantityNeeded: number;
   urgency: 'low' | 'high';
 }
+
+export interface InventoryItem {
+  id: string;
+  merchantId: string;
+  sku: string;
+  name: string;
+  stockQuantity: number;
+  reorderThreshold: number;
+  reorderBatchSize: number;
+  supplierId?: string;
+}
+
+export interface Supplier {
+  id: string;
+  merchantId: string;
+  name: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  preferredChannel?: string;
+}
+
+export interface RestockDraft {
+  id: string;
+  merchantId: string;
+  supplierId: string;
+  inventoryItemId: string;
+  proposedQuantity: number;
+  messageDraft: string;
+  status: string;
+  createdAt: string;
+}

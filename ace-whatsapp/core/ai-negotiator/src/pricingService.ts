@@ -213,3 +213,39 @@ export function validateBundlePivot(
 
   return { ok: true };
 }
+
+// ─── Stage 1 Contextual Bandit Integration ────────────────────────────────────
+
+import {
+  pricingBandit,
+  BanditArm,
+  BANDIT_ARMS,
+  BanditContextInput,
+  BanditArmSelection,
+} from "@ace/shared/rl/pricingBandit.js";
+
+export { BanditArm, BANDIT_ARMS, BanditContextInput, BanditArmSelection };
+
+/**
+ * Stage 1 Contextual Bandit Selection (LinUCB)
+ *
+ * Selects an optimal discount within [range.floor, range.anchor].
+ * Safety guarantee: Validated against the circuit breaker so the bandit
+ * strictly proposes, never violates the merchant's hard floor.
+ */
+export async function proposeBanditPrice(
+  range: AuthorizedPriceRange,
+  context: BanditContextInput,
+  rawCustomerInput: string = "",
+): Promise<{
+  validation: PriceValidationResult;
+  banditSelection: BanditArmSelection;
+}> {
+  const banditSelection = await pricingBandit.selectDiscount(range, context);
+  const validation = validateProposedPrice(banditSelection.proposedPrice, range, rawCustomerInput);
+
+  return {
+    validation,
+    banditSelection,
+  };
+}

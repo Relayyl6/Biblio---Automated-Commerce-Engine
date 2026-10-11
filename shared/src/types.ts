@@ -267,3 +267,6 @@ export interface Source {
 export type PricingResult =
   | { action: "quote"; customerPrice: number; markup: number }
   | { action: "ask_merchant"; costPrice: number };
+
+export type CustomerTier = "new" | "returning" | "loyal" | "vip";
+

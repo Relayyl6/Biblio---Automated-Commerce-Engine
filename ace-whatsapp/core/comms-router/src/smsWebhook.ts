@@ -86,13 +86,15 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
       // Inject into the standard Omni-Channel Debouncer so the AI Negotiator processes it natively!
       const { enqueueInboundMessage } = await import("./debounce.js");
       await enqueueInboundMessage({
-        id: crypto.randomUUID(),
+        waMessageId: crypto.randomUUID(),
+        fromPhone: fromPhone,
+        toPhoneNumberId: customerMatch.merchant_id,
         merchantId: customerMatch.merchant_id,
-        customerId: customerMatch.id,
-        platform: "sms",
-        type: "text",
-        text: text,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        content: {
+          type: "text",
+          text: text,
+        },
       });
 
       return reply.send({ success: true, routedToCustomerInbox: true });

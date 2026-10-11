@@ -35,7 +35,7 @@ class ProcurementService {
         AND auto_restock_enabled = true
         AND ${category} = ANY(categories)
     `;
-    return nodes as ProcurementNode[];
+    return nodes as unknown as ProcurementNode[];
   }
 
   async broadcastRestockRequest(merchantId: string, request: RestockRequest, category: string): Promise<void> {

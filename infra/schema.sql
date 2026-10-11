@@ -20,7 +20,7 @@
 create extension if not exists pg_trgm;
 create extension if not exists "uuid-ossp";
 
-create table merchants (
+create table if not exists merchants (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
   phone_number_id text not null unique, -- WhatsApp Business phone_number_id
@@ -41,14 +41,14 @@ create table merchants (
 -- Replace with the real Global Buyer ID resolution in Phase 2 — at that
 -- point this table becomes a many-to-many link rather than the primary
 -- identity source.
-create table customer_merchant_links (
+create table if not exists customer_merchant_links (
   customer_id text not null, -- WhatsApp phone number, E.164
   merchant_id uuid not null references merchants(id),
   created_at timestamptz not null default now(),
   primary key (customer_id, merchant_id)
 );
 
-create table products (
+create table if not exists products (
   sku text not null,
   merchant_id uuid not null references merchants(id),
   name text not null,
@@ -70,13 +70,13 @@ create table products (
   primary key (sku, merchant_id)
 );
 
-create index products_name_trgm_idx on products using gin (name gin_trgm_ops);
+create index if not exists products_name_trgm_idx on products using gin (name gin_trgm_ops);
 -- Trigram index on description too, so the agent can match on selling copy
 -- ("the flowy blue one") not just the product name.
-create index products_description_trgm_idx on products using gin (description gin_trgm_ops);
-create index products_category_idx on products (merchant_id, category);
+-- create index if not exists products_description_trgm_idx on products using gin (description gin_trgm_ops);
+create index if not exists products_category_idx on products (merchant_id, category);
 
-create table orders (
+create table if not exists orders (
   id uuid primary key,
   merchant_id uuid not null references merchants(id),
   customer_id text not null,
@@ -85,18 +85,18 @@ create table orders (
   updated_at timestamptz not null default now()
 );
 
-create index orders_customer_merchant_idx on orders (customer_id, merchant_id, updated_at desc);
+create index if not exists orders_customer_merchant_idx on orders (customer_id, merchant_id, updated_at desc);
 
 -- Payment-verification looks up the awaiting-payment order by the virtual account
 -- number the customer paid into. This expression index keeps that lookup cheap.
-create index orders_virtual_account_idx on orders ((state->>'virtualAccountNumber'));
+create index if not exists orders_virtual_account_idx on orders ((state->>'virtualAccountNumber'));
 
 -- ─── Transactions (payment ledger) ─────────────────────────────────────────────
 -- One row per inbound payment event from a bank/card provider. `provider_ref` is
 -- UNIQUE — it is the idempotency key that makes webhook redelivery a no-op (the
 -- payment provider, like Meta, retries until it gets a 2xx). Mirrors the
 -- `transactions` table in infra/README.md.
-create table transactions (
+create table if not exists transactions (
   id uuid primary key default uuid_generate_v4(),
   order_id uuid references orders(id),
   merchant_id uuid not null references merchants(id),
@@ -108,10 +108,10 @@ create table transactions (
   created_at timestamptz not null default now()
 );
 
-create index transactions_order_idx on transactions (order_id, created_at desc);
-create index transactions_merchant_idx on transactions (merchant_id, created_at desc);
+create index if not exists transactions_order_idx on transactions (order_id, created_at desc);
+create index if not exists transactions_merchant_idx on transactions (merchant_id, created_at desc);
 
-create table escalations (
+create table if not exists escalations (
   id uuid primary key default uuid_generate_v4(),
   merchant_id uuid not null references merchants(id),
   customer_id text not null,
@@ -124,7 +124,7 @@ create table escalations (
 -- ─── Merchant Pricing Rules ────────────────────────────────────────────────────
 -- One row per merchant. Merchant configures these once via the merchant app.
 -- ai-negotiator reads this to compute AuthorizedPriceRange.
-create table merchant_pricing_rules (
+create table if not exists merchant_pricing_rules (
   merchant_id uuid primary key references merchants(id),
   base_price numeric not null default 0,       -- Default anchor (per-product in Phase 2)
   absolute_floor numeric not null default 0,   -- Hard floor, never crossed
@@ -139,7 +139,7 @@ create table merchant_pricing_rules (
 -- ─── Negotiation Trace ─────────────────────────────────────────────────────────
 -- Full arc recorded at session end. This is the NegotiationTrace from the
 -- README — the enterprise data asset and training signal.
-create table negotiation_traces (
+create table if not exists negotiation_traces (
   session_id uuid primary key,
   merchant_id uuid not null references merchants(id),
   customer_id text not null,
@@ -156,8 +156,8 @@ create table negotiation_traces (
   created_at timestamptz not null default now()
 );
 
-create index negotiation_traces_merchant_idx on negotiation_traces (merchant_id, created_at desc);
-create index negotiation_traces_outcome_idx on negotiation_traces (outcome);
+create index if not exists negotiation_traces_merchant_idx on negotiation_traces (merchant_id, created_at desc);
+create index if not exists negotiation_traces_outcome_idx on negotiation_traces (outcome);
 
 -- ─── Vendor Decisions (Vendor Communiqué reply codes) ────────────────────────
 -- Stores the outcome of a merchant's numeric reply to an escalation message.
@@ -171,12 +171,12 @@ create table if not exists vendor_decisions (
   created_at    timestamptz not null default now()
 );
 
-create index vendor_decisions_merchant_idx on vendor_decisions (merchant_id);
+create index if not exists vendor_decisions_merchant_idx on vendor_decisions (merchant_id);
 
 -- ─── Baileys Vendor Business Line ─────────────────────────────────────────────
 -- One row per vendor (one Baileys session = one WhatsApp business line).
 -- A single merchant can have multiple vendors / business lines.
-create table vendors (
+create table if not exists vendors (
   id                      uuid        primary key default uuid_generate_v4(),
   merchant_id             uuid        not null references merchants(id) on delete cascade,
 
@@ -204,11 +204,11 @@ create table vendors (
   updated_at  timestamptz not null default now()
 );
 
-create index vendors_merchant_id_idx on vendors (merchant_id);
+create index if not exists vendors_merchant_id_idx on vendors (merchant_id);
 
 -- Track every WhatsApp Status (Story) post ever made by each vendor.
 -- Immutable audit log — never delete. Errors go in the error column.
-create table status_log (
+create table if not exists status_log (
   id          uuid        primary key default uuid_generate_v4(),
   vendor_id   uuid        not null references vendors(id) on delete cascade,
   sku         text        not null,
@@ -218,11 +218,11 @@ create table status_log (
   error       text        -- null = success, error message on failure
 );
 
-create index status_log_vendor_idx  on status_log (vendor_id);
-create index status_log_posted_idx  on status_log (posted_at desc);
+create index if not exists status_log_vendor_idx  on status_log (vendor_id);
+create index if not exists status_log_posted_idx  on status_log (posted_at desc);
 
 -- Holds Status posts pending merchant approval (when approve_before_post = true).
-create table status_post_queue (
+create table if not exists status_post_queue (
   id          uuid        primary key default uuid_generate_v4(),
   vendor_id   uuid        not null references vendors(id) on delete cascade,
   sku         text        not null,
@@ -233,8 +233,8 @@ create table status_post_queue (
   posted_at   timestamptz    -- null = not yet published to Status
 );
 
-create index status_queue_vendor_idx on status_post_queue (vendor_id);
-create index status_queue_pending_idx
+create index if not exists status_queue_vendor_idx on status_post_queue (vendor_id);
+create index if not exists status_queue_pending_idx
   on status_post_queue (vendor_id)
   where approved_at is not null and posted_at is null;
 

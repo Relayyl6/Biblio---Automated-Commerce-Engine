@@ -51,18 +51,36 @@ export function jsonb(value: unknown): ReturnType<typeof sql.json> {
   return sql.json(value as Parameters<typeof sql.json>[0]);
 }
 
+import dns from "node:dns";
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 export const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: 2,
+  connectTimeout: 5000,
+  lazyConnect: false,
   retryStrategy(times) {
-    // Retry indefinitely to recover from long DB restarts or network blips
-    // Capped exponential backoff: 500ms, 1000ms... up to 5000ms
-    const delay = Math.min(times * 500, 5000);
-    return delay;
+    // Capped exponential backoff: 1s up to 10s
+    return Math.min(times * 1000, 10000);
   },
 });
 
-// We still listen to errors to know when it drops, but we won't get spammed 11,000 times.
+let lastRedisErrorLog = 0;
+let lastRedisErrorMessage = "";
+
+// Throttle errors to at most once every 60s per unique error to avoid terminal spam
 redis.on("error", (err) => {
-  logger.error("[redis] connection error:", err.message);
+  const now = Date.now();
+  if (err.message !== lastRedisErrorMessage || now - lastRedisErrorLog > 60000) {
+    lastRedisErrorMessage = err.message;
+    lastRedisErrorLog = now;
+    logger.warn(`[redis] connection notice: ${err.message}. Retrying in background...`);
+  }
+});
+
+redis.on("connect", () => {
+  lastRedisErrorMessage = "";
+  logger.info("[redis] connected successfully");
 });

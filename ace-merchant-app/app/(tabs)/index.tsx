@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable, StatusBar } from 'react-native';
 import {
   Settings,
   TrendingUp,
@@ -10,11 +10,16 @@ import {
   ShoppingCart,
   CreditCard,
   AlertCircle,
+  Package,
+  ArrowUpRight,
+  ChevronRight,
 } from 'lucide-react-native';
+import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { usePulseData } from '../../src/api/client';
+import { usePulseData, useProducts } from '../../src/api/client';
 import { colors } from '../../theme';
 import { StatTile } from '../../src/components/StatTile';
 
@@ -23,10 +28,9 @@ function Skeleton({ h, w, radius = 16, c }: { h: number; w: string | number; rad
 }
 
 function PulseSkeleton({ c }: { c: typeof colors.light }) {
-  // A shape-matched skeleton reads as "loading your data" instead of a
-  // spinner, which reads as "something might be broken."
+  const insets = useSafeAreaInsets();
   return (
-    <View style={{ backgroundColor: c.bg }} className="flex-1 pt-16 px-6">
+    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16 }} className="flex-1 px-6">
       <View className="flex-row justify-between items-center mb-8">
         <Skeleton h={28} w={120} c={c} />
         <Skeleton h={40} w={40} radius={20} c={c} />
@@ -45,15 +49,24 @@ function PulseSkeleton({ c }: { c: typeof colors.light }) {
 
 export default function PulseScreen() {
   const { data, isLoading } = usePulseData();
+  const { data: products } = useProducts();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
 
   if (isLoading) return <PulseSkeleton c={c} />;
 
+  const recentProducts = (products || []).slice(0, 8);
+
   return (
-    <ScrollView style={{ backgroundColor: c.bg }} className="flex-1 pt-16" contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16 }}
+      className="flex-1"
+      contentContainerStyle={{ paddingBottom: 140 }}
+      showsVerticalScrollIndicator={false}
+    >
       <View className="px-6 flex-row justify-between items-center mb-6">
         <View>
           <Text style={{ color: c.textSecondary }} className="text-xs font-semibold uppercase tracking-wider">
@@ -72,7 +85,7 @@ export default function PulseScreen() {
         </Pressable>
       </View>
 
-      {/* Hero Metric */}
+      {/* Revenue Card */}
       <Animated.View entering={FadeInDown.delay(80).springify()} className="mx-6 mb-4">
         <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="p-6 rounded-[28px] border overflow-hidden">
           <Text style={{ color: c.textSecondary }} className="text-sm font-medium mb-2">
@@ -92,7 +105,7 @@ export default function PulseScreen() {
         </View>
       </Animated.View>
 
-      {/* KPI row, now sharing the StatTile component */}
+      {/* KPI row */}
       <Animated.View entering={FadeInDown.delay(130).springify()} className="mx-6 flex-row mb-6" style={{ gap: 12 }}>
         <StatTile
           icon={Activity}
@@ -132,8 +145,95 @@ export default function PulseScreen() {
         </Animated.View>
       )}
 
+      {/* Horizontal Carousel: Live / Recently Synced Inventory */}
+      <View className="mb-6">
+        <View className="mx-6 flex-row justify-between items-center mb-3">
+          <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight">
+            Live Inventory & Sync
+          </Text>
+          <Pressable onPress={() => router.push('/crm')} className="flex-row items-center active:opacity-70">
+            <Text style={{ color: c.accent }} className="text-xs font-bold mr-1">View CRM</Text>
+            <ChevronRight size={14} color={c.accent} />
+          </Pressable>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6" contentContainerStyle={{ paddingRight: 24 }}>
+          {recentProducts.length === 0 ? (
+            <Pressable
+              onPress={() => router.push({ pathname: '/crm', params: { action: 'add' } })}
+              style={{ backgroundColor: c.surface, borderColor: c.border }}
+              className="w-72 p-5 rounded-[24px] border border-dashed flex-row items-center mr-4 active:opacity-70"
+            >
+              <View style={{ backgroundColor: c.accentSoft }} className="w-11 h-11 rounded-2xl items-center justify-center mr-3">
+                <Package size={22} color={c.accent} />
+              </View>
+              <View className="flex-1">
+                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Add First Product</Text>
+                <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Synced via WhatsApp, CSV or App</Text>
+              </View>
+            </Pressable>
+          ) : (
+            recentProducts.map((p: any, idx: number) => {
+              const isWhatsApp = p.source === 'whatsapp';
+              const inStock = Number(p.stock ?? p.quantity ?? 0) > 0;
+              const stockCount = Number(p.stock ?? p.quantity ?? 0);
+              return (
+                <Pressable
+                  key={p.sku || p.id || idx}
+                  onPress={() => router.push('/crm')}
+                  style={{ backgroundColor: c.surface, borderColor: c.border }}
+                  className="w-56 p-4 rounded-[24px] border mr-4 justify-between active:opacity-80"
+                >
+                  <View>
+                    <View className="flex-row items-center justify-between mb-2">
+                      <View
+                        style={{ backgroundColor: isWhatsApp ? '#22C55E1A' : c.surfaceAlt }}
+                        className="flex-row items-center px-2 py-0.5 rounded-full"
+                      >
+                        {isWhatsApp ? (
+                          <FontAwesome5 name="whatsapp" size={11} color="#22C55E" />
+                        ) : (
+                          <Package size={11} color={c.textTertiary} />
+                        )}
+                        <Text
+                          style={{ color: isWhatsApp ? '#22C55E' : c.textSecondary }}
+                          className="text-[10px] font-bold ml-1 uppercase"
+                        >
+                          {isWhatsApp ? 'WhatsApp' : (p.category || 'Catalog')}
+                        </Text>
+                      </View>
+                      <View style={{ backgroundColor: inStock ? c.successSoft : c.dangerSoft }} className="px-2 py-0.5 rounded-full">
+                        <Text style={{ color: inStock ? c.success : c.danger }} className="text-[10px] font-bold">
+                          {inStock ? `${stockCount} left` : 'Out of stock'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text style={{ color: c.textPrimary }} className="font-bold text-sm mt-1" numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    {p.description ? (
+                      <Text style={{ color: c.textTertiary }} className="text-[11px] mt-0.5" numberOfLines={1}>
+                        {p.description}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <View className="mt-4 pt-3 flex-row items-center justify-between border-t" style={{ borderColor: c.border }}>
+                    <Text style={{ color: c.textPrimary }} className="font-extrabold text-base">
+                      ₦{Number(p.price || 0).toLocaleString()}
+                    </Text>
+                    <ArrowUpRight size={16} color={c.textTertiary} />
+                  </View>
+                </Pressable>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
+
       <SectionHeader title="The Oracle" c={c} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6 pb-2">
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6 pb-2" contentContainerStyle={{ paddingRight: 24 }}>
         {(data?.oracle_alerts || []).map((alert: any, idx: number) => {
           const isWinback = alert.type === 'WINBACK';
           const accentColor = isWinback ? '#F59E0B' : '#EF4444';

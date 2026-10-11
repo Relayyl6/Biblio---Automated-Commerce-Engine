@@ -25,7 +25,7 @@ export default function SearchScreen() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const { data: results, isLoading } = useSearchData(merchantId, debouncedQuery);
+  const { data: results, isLoading } = useSearchData(merchantId || '', debouncedQuery);
   const hasQuery = debouncedQuery.length >= 2;
 
   return (

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut } from 'lucide-react-native';
 import { colors } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Section, ToggleRow, InputRow, NavigationRow } from '../src/components/SettingsRows';
@@ -168,6 +168,28 @@ export default function SettingsScreen() {
             onPress={() => setActivePanel('developer')}
             isLast
           />
+                </Section>
+
+        <Section title="System & Support" icon={Bell} delay={450}>
+          <NavigationRow
+            title="Notifications"
+            subtitle="Alerts & digest preferences"
+            icon={Bell}
+            onPress={() => router.push('/notifications')}
+          />
+          <NavigationRow
+            title="Help & Support"
+            subtitle="Guides and contact"
+            icon={HelpCircle}
+            onPress={() => router.push('/support')}
+          />
+          <NavigationRow
+            title="Sign out"
+            subtitle="Disconnect this device"
+            icon={LogOut}
+            onPress={() => {}}
+            isLast
+          />
         </Section>
       </ScrollView>
 
@@ -186,4 +208,7 @@ export default function SettingsScreen() {
     </View>
   );
 }
+
+
+
 

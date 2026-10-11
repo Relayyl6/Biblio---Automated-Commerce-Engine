@@ -71,7 +71,7 @@ export default function LoginScreen() {
   const handleSendOTP = async () => {
     setError(null);
     if (!isPhoneValid) {
-      setError('Enter a valid WhatsApp business number');
+      setError('Enter a valid phone number');
       return;
     }
     setIsLoading(true);
@@ -204,11 +204,11 @@ export default function LoginScreen() {
               <Animated.View entering={FadeIn.duration(250)} key="phone-step">
                 <Text style={{ color: c.textPrimary }} className="text-xl font-semibold mb-1">Welcome back</Text>
                 <Text style={{ color: c.textSecondary }} className="text-sm mb-6 leading-5">
-                  Sign in with the WhatsApp number linked to your store
+                  Sign in with your registered store phone number
                 </Text>
 
                 <Text style={{ color: c.textTertiary }} className="text-xs font-medium mb-2 ml-1">
-                  WHATSAPP BUSINESS NUMBER
+                  phone number
                 </Text>
                 <View
                   style={{ backgroundColor: c.bg, borderColor: error ? c.danger : c.border }}
@@ -253,7 +253,7 @@ export default function LoginScreen() {
                 </Pressable>
 
                 <Text style={{ color: c.textTertiary }} className="text-xs text-center mt-5 leading-4">
-                  We'll send a 6-digit code via WhatsApp to verify it's you
+                  We'll send a 6-digit code via SMS to verify it's you
                 </Text>
               </Animated.View>
             ) : (
@@ -263,7 +263,7 @@ export default function LoginScreen() {
                 </View>
                 <Text style={{ color: c.textPrimary }} className="text-xl font-semibold mb-1">Enter your code</Text>
                 <Text style={{ color: c.textSecondary }} className="text-sm mb-6 leading-5">
-                  Sent via WhatsApp to{' '}
+                  Sent via SMS to{' '}
                   <Text style={{ color: c.textPrimary }} className="font-medium">
                     {formatPhoneDisplay(phone)}
                   </Text>
@@ -273,7 +273,7 @@ export default function LoginScreen() {
                   {otpDigits.map((digit, i) => (
                     <TextInput
                       key={i}
-                      ref={ref => (otpRefs.current[i] = ref)}
+                      ref={ref => { otpRefs.current[i] = ref; }}
                       value={digit}
                       onChangeText={t => handleOtpChange(t, i)}
                       onKeyPress={e => handleOtpKeyPress(e, i)}

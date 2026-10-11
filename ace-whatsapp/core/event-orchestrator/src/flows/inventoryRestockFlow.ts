@@ -1,4 +1,4 @@
-import { procurementService } from '../../../supplier-integration/src/procurementService';
+import { procurementService } from '../../../supplier-integration/src/procurementService.js';
 import { sql } from '@ace/shared/clients.js';
 
 export async function handleLowStockEvent(merchantId: string, sku: string, quantityRemaining: number, category: string) {
@@ -24,4 +24,20 @@ export async function handleLowStockEvent(merchantId: string, sku: string, quant
     quantityNeeded,
     urgency: quantityRemaining === 0 ? 'high' : 'low'
   }, category);
+}
+
+export async function handleOrderPaidForRestock(data: {
+  merchantId: string;
+  items?: Array<{ sku: string; quantity: number; category?: string }>;
+}) {
+  if (!data?.items || !Array.isArray(data.items)) return;
+  for (const item of data.items) {
+    const stockRows = await sql<{ quantity: number }[]>`
+      SELECT quantity FROM products WHERE sku = ${item.sku} AND merchant_id = ${data.merchantId}::uuid LIMIT 1
+    `.catch(() => []);
+    const remaining = stockRows[0]?.quantity ?? 0;
+    if (remaining <= 5) {
+      await handleLowStockEvent(data.merchantId, item.sku, remaining, item.category || 'general');
+    }
+  }
 }

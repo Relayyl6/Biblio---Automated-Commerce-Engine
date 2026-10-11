@@ -52,7 +52,7 @@ export function buildLogisticsWebhook(): FastifyInstance {
     if (update.status === 'delivered') {
       await notifyCustomerOfDelivery(merchant_id, customer_id, update.trackingNumber);
     } else if (update.status === 'failed') {
-      logger.error({ trackingNumber: update.trackingNumber, order_id }, 'Delivery failed or returned');
+      logger.error('Delivery failed or returned', { trackingNumber: update.trackingNumber, order_id });
     }
 
     reply.status(200).send({ received: true });

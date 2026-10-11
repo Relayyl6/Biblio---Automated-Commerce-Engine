@@ -50,6 +50,8 @@ import type {
 } from "@ace/shared/types";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
+import { exemplarStore } from "@ace/shared/rag/exemplarStore.js";
+import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback.js";
 
 const env = loadNegotiatorEnv();
 const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
@@ -173,7 +175,16 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
     authorizedRange: sentinelRange,
   };
 
-  const systemPrompt = buildSystemPrompt(turn, currentArc, merchant);
+  // ── Dynamic RAG Few-Shot Exemplars ────────────────────────────────────
+  const exemplars = await exemplarStore.getSuccessfulExemplars({
+    dialect: merchant.dialect,
+    customerTier: currentArc.tier,
+    scenarioType: "price_negotiation",
+    limit: 3,
+  });
+  const exemplarsBlock = exemplarStore.formatExemplarsForPrompt(exemplars);
+
+  const systemPrompt = buildSystemPrompt(turn, currentArc, merchant, exemplarsBlock);
   const userContent = buildUserContent(turn);
 
   const messages: Groq.Chat.ChatCompletionMessageParam[] = [
@@ -412,6 +423,7 @@ function buildSystemPrompt(
   turn: ConversationTurn,
   arc: NegotiationArc,
   merchant: MerchantContext,
+  exemplarsBlock: string = "",
 ): string {
   const tactics = availableTactics({ arc, currentStockLevel: 0 });
 
@@ -422,7 +434,7 @@ function buildSystemPrompt(
     ? `Delivery options you may quote:\n${merchant.deliveryInfo}`
     : "";
 
-  
+  const ragSection = exemplarsBlock ? `\n\n${exemplarsBlock}` : "";
 
   return `You are the autonomous sales & negotiation agent for ${merchant.name}, a WhatsApp business.
 You are a skilled, relationship-aware market trader acting on behalf of ${merchant.name}.
@@ -434,8 +446,6 @@ If the customer asks to book an appointment or service:
 2. Use check_availability to find open time slots for the customer's desired date.
 3. Once they agree on a slot, use book_appointment to confirm it.
 Do NOT negotiate prices for services unless explicitly told. Just quote the price and book.
- for ${merchant.name}, a WhatsApp business.
-You are a skilled, relationship-aware market trader acting on behalf of ${merchant.name}.
 Your goal: close the deal at the highest price the customer will accept — within authorized bounds.
 
 ══ WHO YOU ARE (THE SELLER'S VOICE) ══
@@ -476,7 +486,7 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
     customer's exact message. Respond naturally without mentioning voice notes.
 15. If the customer asks about prices or specs for items NOT in your catalog,
     call search_web to get real-time market context before answering.
-15. If the customer provides an image or a vague visual description (e.g. "that blue dress"),
+16. If the customer provides an image or a vague visual description (e.g. "that blue dress"),
     call search_visual_catalog to find the visually matching SKU before negotiating.
 
 ══ ARC PLAYBOOK ══
@@ -484,7 +494,7 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
 → Customer counters: acknowledge relationship/context → counter with tactic
 → Below floor: bundle pivot first, then credit offer, then escalate if both fail
 → Customer accepts: close_deal → issue_payment_link
-
+${ragSection}
 ══ ORDER STATE ══
 ${JSON.stringify(turn.orderState)}`;
 }
@@ -664,6 +674,39 @@ async function finalizeTurn(
   await flushNegotiationTrace(finalArc);
   await saveArc(finalArc);
 
+  // ── Data Foundation: Log interaction tuple to conversation_outcomes ──
+  const lastMsg = turn.messages.length > 0 ? turn.messages[turn.messages.length - 1] : undefined;
+  const lastCustomerText =
+    lastMsg && lastMsg.content.type === "text"
+      ? lastMsg.content.text
+      : "Customer message";
+
+
+  await interactionFeedback.recordInteraction({
+    merchantId: turn.merchantId,
+    customerId: turn.customerId,
+    sessionId: finalArc.sessionId,
+    contextSnapshot: {
+      orderState: finalOrderState,
+      arcStage: finalArc.stage,
+      productSku: finalArc.productSku,
+      tier: finalArc.tier,
+      anchorPrice: finalArc.anchorPrice,
+      floor: finalArc.floor,
+      tacticsDeployed: finalArc.tacticsDeployed,
+      customerMessage: lastCustomerText,
+    },
+    aiDraft: replyText,
+    merchantAction: "sent_as_is",
+    customerResponse: "replied_positive",
+    dialect: finalArc.dialect || "pidgin",
+    customerTier: finalArc.tier,
+    scenarioType: "price_negotiation",
+    discountOffered: finalArc.anchorPrice > 0 && finalArc.agentLastOffer
+      ? (finalArc.anchorPrice - finalArc.agentLastOffer) / finalArc.anchorPrice
+      : 0,
+  }).catch((err) => logger.warn("[AgentLoop] Non-fatal interaction logging warning:", err));
+
   if (replyText.trim().length > 0) {
     const phoneNumberId = replyPhoneNumberId(turn);
     
@@ -748,6 +791,27 @@ async function flushNegotiationTrace(arc: NegotiationArc): Promise<void> {
   `;
 
   await dataIntelligence.logNegotiationTrace(trace as any);
+
+  // ── RL Layer: Backdate resolved outcome and margin to bandit model ──
+  if (trace.outcome === "closed" || trace.outcome === "bundle_closed") {
+    await interactionFeedback.recordOrderOutcome({
+      sessionId: trace.sessionId,
+      customerId: trace.customerId,
+      merchantId: trace.merchantId,
+      outcome: "completed_full_margin",
+      marginRealized: trace.finalMargin || (trace.finalPrice ? trace.finalPrice * 0.3 : 0),
+      finalPrice: trace.finalPrice || trace.anchorPrice,
+    }).catch((err) => logger.warn("[AgentLoop] Non-fatal bandit outcome backdate warning:", err));
+  } else if (trace.outcome === "abandoned") {
+    await interactionFeedback.recordOrderOutcome({
+      sessionId: trace.sessionId,
+      customerId: trace.customerId,
+      merchantId: trace.merchantId,
+      outcome: "abandoned",
+      marginRealized: 0,
+      finalPrice: 0,
+    }).catch((err) => logger.warn("[AgentLoop] Non-fatal bandit outcome backdate warning:", err));
+  }
 }
 
 // ─── Human Escalation ─────────────────────────────────────────────────────────

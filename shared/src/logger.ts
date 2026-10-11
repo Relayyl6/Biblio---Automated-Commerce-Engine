@@ -7,6 +7,10 @@ export const logger = {
     console.log(message, metadata || "");
     routeToActivityPanel("info", message, metadata).catch(() => {});
   },
+  info: (message: string, metadata?: any) => {
+    console.log(message, metadata || "");
+    routeToActivityPanel("info", message, metadata).catch(() => {});
+  },
   warn: (message: string, metadata?: any) => {
     console.warn(message, metadata || "");
     routeToActivityPanel("warn", message, metadata).catch(() => {});
