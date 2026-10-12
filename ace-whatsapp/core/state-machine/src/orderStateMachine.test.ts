@@ -26,6 +26,15 @@ const verified: OrderState = {
   total: 28500,
   paidAt: 123456789,
 };
+const readyForPickup: OrderState = {
+  status: "ready_for_pickup",
+  orderId: "o1",
+  items,
+  total: 28500,
+  paidAt: 123456789,
+  pickupCode: "PK-12345",
+  pickupAddress: "Shop 14, Alaba Market, Lagos",
+};
 const outForDelivery: OrderState = {
   status: "out_for_delivery",
   orderId: "o1",
@@ -40,7 +49,7 @@ const cancelled: OrderState = { status: "cancelled", orderId: "o1", reason: "cus
 
 const quoteCreated: OrderEvent = { type: "QUOTE_CREATED", orderId: "o1", items, total: 28500 };
 
-describe("transition — happy path (the full order lifecycle)", () => {
+describe("transition — happy path (the full delivery order lifecycle)", () => {
   it("no_order + QUOTE_CREATED → draft", () => {
     const next = transition(noOrder, quoteCreated);
     expect(next.status).toBe("draft");
@@ -79,6 +88,45 @@ describe("transition — happy path (the full order lifecycle)", () => {
   it("out_for_delivery + DELIVERY_CONFIRMED → delivered", () => {
     const next = transition(outForDelivery, { type: "DELIVERY_CONFIRMED" });
     expect(next.status).toBe("delivered");
+  });
+});
+
+describe("transition — store pickup happy path", () => {
+  it("payment_verified + ORDER_READY_FOR_PICKUP → ready_for_pickup", () => {
+    const next = transition(verified, {
+      type: "ORDER_READY_FOR_PICKUP",
+      pickupCode: "PK-12345",
+      pickupAddress: "Shop 14, Alaba Market, Lagos",
+    });
+    expect(next.status).toBe("ready_for_pickup");
+    if (next.status === "ready_for_pickup") {
+      expect(next.pickupCode).toBe("PK-12345");
+      expect(next.pickupAddress).toBe("Shop 14, Alaba Market, Lagos");
+    }
+  });
+
+  it("ready_for_pickup + PICKUP_CONFIRMED → delivered", () => {
+    const next = transition(readyForPickup, {
+      type: "PICKUP_CONFIRMED",
+      pickupCode: "PK-12345",
+    });
+    expect(next.status).toBe("delivered");
+  });
+
+  it("payment_verified + direct PICKUP_CONFIRMED → delivered", () => {
+    const next = transition(verified, {
+      type: "PICKUP_CONFIRMED",
+      pickupCode: "PK-12345",
+    });
+    expect(next.status).toBe("delivered");
+  });
+
+  it("ready_for_pickup + ORDER_CANCELLED → cancelled", () => {
+    const next = transition(readyForPickup, {
+      type: "ORDER_CANCELLED",
+      reason: "customer requested cancellation",
+    });
+    expect(next.status).toBe("cancelled");
   });
 });
 
@@ -122,6 +170,7 @@ describe("transition — cancellation is allowed pre-terminal", () => {
     ["draft", draft],
     ["awaiting_payment", awaiting],
     ["payment_verified", verified],
+    ["ready_for_pickup", readyForPickup],
     ["out_for_delivery", outForDelivery],
   ] as const)("%s + ORDER_CANCELLED → cancelled", (_label, state) => {
     const next = transition(state, { type: "ORDER_CANCELLED", reason: "customer changed mind" });
@@ -139,6 +188,8 @@ describe("transition — terminal states reject everything", () => {
     quoteCreated,
     { type: "PAYMENT_LINK_ISSUED", virtualAccountNumber: "1", expiresAt: 1 },
     { type: "PAYMENT_CONFIRMED", amount: 1, paidAt: 123 },
+    { type: "ORDER_READY_FOR_PICKUP", pickupCode: "PK-1", pickupAddress: "Store" },
+    { type: "PICKUP_CONFIRMED", pickupCode: "PK-1" },
     { type: "RIDER_ASSIGNED", trackingUrl: "1" },
     { type: "DELIVERY_CONFIRMED" },
     { type: "ORDER_CANCELLED", reason: "no" },

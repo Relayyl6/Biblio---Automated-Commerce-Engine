@@ -1,10 +1,18 @@
 import { LogisticsProvider, OrderPayload, DispatchResult, TrackingUpdate } from '../types.js';
+import { getMerchantApiKey } from '@ace/shared/integrations/credentials.js';
 
 export class SendboxAdapter implements LogisticsProvider {
-  private apiKey: string;
+  private explicitApiKey?: string;
   
-  constructor() {
-    this.apiKey = process.env.SENDBOX_API_KEY || '';
+  constructor(apiKey?: string) {
+    this.explicitApiKey = apiKey;
+  }
+
+  private async resolveKey(merchantId?: string): Promise<string | null> {
+    if (this.explicitApiKey && !this.explicitApiKey.includes('your_')) {
+      return this.explicitApiKey;
+    }
+    return getMerchantApiKey(merchantId, 'sendbox');
   }
 
   async quote(order: OrderPayload): Promise<number> {
@@ -12,8 +20,9 @@ export class SendboxAdapter implements LogisticsProvider {
   }
 
   async dispatch(order: OrderPayload): Promise<DispatchResult> {
-    if (!this.apiKey) {
-      return { success: false, provider: 'sendbox', error: 'Missing SENDBOX_API_KEY' };
+    const apiKey = await this.resolveKey(order.merchantId);
+    if (!apiKey) {
+      return { success: false, provider: 'sendbox', error: 'Missing SENDBOX_API_KEY for merchant or platform' };
     }
 
     try {
@@ -44,7 +53,7 @@ export class SendboxAdapter implements LogisticsProvider {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(payload)
       });

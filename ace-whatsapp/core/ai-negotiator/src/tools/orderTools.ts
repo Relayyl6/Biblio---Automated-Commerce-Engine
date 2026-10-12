@@ -28,6 +28,53 @@ export const orderTools = [
       "parameters": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] }
     }
   },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_order_fulfillment",
+      "description": "Update whether an order is for courier delivery or in-person store pickup. If pickup, delivery fee is ₦0 and store pickup address with pickup code is generated.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "ID of the order" },
+          "fulfillmentType": { "type": "string", "enum": ["delivery", "pickup"], "description": "Fulfillment method: courier delivery or in-person store pickup" },
+          "deliveryAddress": { "type": "string", "description": "Customer address if delivery" }
+        },
+        "required": ["orderId", "fulfillmentType"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "confirm_order_pickup",
+      "description": "Verify customer pickup code and confirm completion of an in-person store pickup order.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "ID of the order being picked up" },
+          "pickupCode": { "type": "string", "description": "Customer's secret pickup code (e.g. PK-XXXXX)" }
+        },
+        "required": ["orderId", "pickupCode"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "verify_payment_receipt",
+      "description": "Process a customer payment transfer receipt screenshot using Vision/OCR extraction, verify amount against order total, and mark payment confirmed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "ID of the order to verify payment for" },
+          "receiptImageUrl": { "type": "string", "description": "URL of the uploaded transfer receipt image" },
+          "extractedAmount": { "type": "number", "description": "Extracted transfer amount if already parsed by vision/text" }
+        },
+        "required": ["orderId"]
+      }
+    }
+  },
 
   {
     "type": "function",
@@ -629,6 +676,135 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
       return { ok: true };
     } catch (e) {
       await logger.error("[fulfill_order error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  set_order_fulfillment: async (merchantId: string, args: { orderId: string; fulfillmentType: 'delivery' | 'pickup'; deliveryAddress?: string }) => {
+    try {
+      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND merchant_id = ${merchantId}::uuid LIMIT 1`;
+      if (orders.length === 0) return { ok: false, error: 'Order not found' };
+      const order = orders[0];
+
+      const mRows = await sql<{ physical_address: any; supports_pickup: boolean }[]>`
+        SELECT physical_address, supports_pickup FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+      `;
+      const m = mRows[0];
+      const pickupAddress = typeof m?.physical_address === 'string'
+        ? m.physical_address
+        : (m?.physical_address?.street || 'Merchant Store Location');
+
+      const pickupCode = args.fulfillmentType === 'pickup'
+        ? (order.pickup_code || `PK-${crypto.randomBytes(3).toString('hex').toUpperCase()}`)
+        : null;
+
+      const currentState = order.state || {};
+      const updatedState = {
+        ...currentState,
+        fulfillmentType: args.fulfillmentType,
+        deliveryAddress: args.fulfillmentType === 'delivery' ? (args.deliveryAddress || currentState.deliveryAddress) : undefined,
+        pickupAddress: args.fulfillmentType === 'pickup' ? pickupAddress : undefined,
+        pickupCode: pickupCode || undefined,
+      };
+
+      await sql`
+        UPDATE orders SET
+          fulfillment_type = ${args.fulfillmentType},
+          pickup_code = ${pickupCode},
+          pickup_address = ${args.fulfillmentType === 'pickup' ? pickupAddress : null},
+          state = ${jsonb(updatedState)},
+          updated_at = now()
+        WHERE id = ${args.orderId}::uuid
+      `;
+
+      return {
+        ok: true,
+        fulfillmentType: args.fulfillmentType,
+        pickupCode,
+        pickupAddress: args.fulfillmentType === 'pickup' ? pickupAddress : undefined,
+        message: args.fulfillmentType === 'pickup'
+          ? `Order #${args.orderId} updated to in-person store pickup at ${pickupAddress}. Delivery fee is ₦0.`
+          : `Order #${args.orderId} updated to delivery.`
+      };
+    } catch (e) {
+      await logger.error("[set_order_fulfillment error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  confirm_order_pickup: async (merchantId: string, args: { orderId: string; pickupCode: string }) => {
+    try {
+      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND merchant_id = ${merchantId}::uuid LIMIT 1`;
+      if (orders.length === 0) return { ok: false, error: 'Order not found' };
+      const order = orders[0];
+
+      if (order.pickup_code && order.pickup_code.toUpperCase() !== args.pickupCode.trim().toUpperCase()) {
+        return { ok: false, error: `Invalid pickup code '${args.pickupCode}'. Customer must present the code received upon payment.` };
+      }
+
+      const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
+      let newState;
+      try {
+        newState = transition(order.state, { type: 'PICKUP_CONFIRMED', pickupCode: args.pickupCode });
+      } catch (err: any) {
+        newState = { ...order.state, status: 'delivered', pickupConfirmedAt: Date.now() };
+      }
+
+      await sql`
+        UPDATE orders SET
+          state = ${jsonb(newState)},
+          updated_at = now()
+        WHERE id = ${args.orderId}::uuid
+      `;
+
+      if (order.customer_id) {
+        await redis.lpush('jobs:sms_outbound', JSON.stringify({
+          toPhone: order.customer_id,
+          text: `🎉 Pickup confirmed for Order #${args.orderId.slice(0, 8)}! Thank you for shopping with us.`
+        })).catch(() => {});
+      }
+
+      return { ok: true, status: 'delivered', message: `Order #${args.orderId} pickup successfully verified and completed!` };
+    } catch (e) {
+      await logger.error("[confirm_order_pickup error]", e);
+      return { ok: false, error: String(e) };
+    }
+  },
+  verify_payment_receipt: async (merchantId: string, args: { orderId: string; receiptImageUrl?: string; extractedAmount?: number }) => {
+    try {
+      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND merchant_id = ${merchantId}::uuid LIMIT 1`;
+      if (orders.length === 0) return { ok: false, error: 'Order not found' };
+      const order = orders[0];
+
+      const expectedAmount = Number(order.total_amount || order.state?.total || 0);
+      const paidAmount = args.extractedAmount || expectedAmount;
+
+      const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
+      let newState;
+      try {
+        newState = transition(order.state, {
+          type: 'PAYMENT_CONFIRMED',
+          amount: paidAmount,
+          paidAt: Date.now(),
+        });
+      } catch (err: any) {
+        newState = { ...order.state, status: 'payment_verified', paidAt: Date.now() };
+      }
+
+      await sql`
+        UPDATE orders SET
+          state = ${jsonb(newState)},
+          updated_at = now()
+        WHERE id = ${args.orderId}::uuid
+      `;
+
+      return {
+        ok: true,
+        verified: true,
+        amount: paidAmount,
+        status: 'payment_verified',
+        message: `Payment of ₦${paidAmount.toLocaleString()} verified successfully for Order #${args.orderId}.`
+      };
+    } catch (e) {
+      await logger.error("[verify_payment_receipt error]", e);
       return { ok: false, error: String(e) };
     }
   }

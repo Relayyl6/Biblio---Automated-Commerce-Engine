@@ -13,6 +13,8 @@ import {
   usePostStatusNow,
   useMerchantConfig,
   useUpdateMerchantConfig,
+  useMerchantIntegrations,
+  useUpdateMerchantIntegrations,
 } from '../api/client';
 import { useAlert } from '../store/alertStore';
 
@@ -41,27 +43,47 @@ function PanelSaveButton({ onPress, label = 'Save changes', isLoading }: { onPre
 export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const alert = useAlert();
+  const { data: integrations, isLoading: isIntegrationsLoading } = useMerchantIntegrations();
+  const updateIntegrations = useUpdateMerchantIntegrations();
+
   const [gokada, setGokada] = useState('');
   const [kwik, setKwik] = useState('');
   const [max, setMax] = useState('');
 
   useEffect(() => {
-    (async () => {
-      const savedG = await AsyncStorage.getItem('dispatch_key_gokada');
-      const savedK = await AsyncStorage.getItem('dispatch_key_kwik');
-      const savedM = await AsyncStorage.getItem('dispatch_key_max');
-      if (savedG) setGokada(savedG);
-      if (savedK) setKwik(savedK);
-      if (savedM) setMax(savedM);
-    })();
-  }, []);
+    if (integrations?.dispatch) {
+      if (integrations.dispatch.gokada) setGokada(integrations.dispatch.gokada);
+      if (integrations.dispatch.kwik) setKwik(integrations.dispatch.kwik);
+      if (integrations.dispatch.max) setMax(integrations.dispatch.max);
+    } else {
+      (async () => {
+        const savedG = await AsyncStorage.getItem('dispatch_key_gokada');
+        const savedK = await AsyncStorage.getItem('dispatch_key_kwik');
+        const savedM = await AsyncStorage.getItem('dispatch_key_max');
+        if (savedG) setGokada(savedG);
+        if (savedK) setKwik(savedK);
+        if (savedM) setMax(savedM);
+      })();
+    }
+  }, [integrations]);
 
   const handleSave = async () => {
-    await AsyncStorage.setItem('dispatch_key_gokada', gokada);
-    await AsyncStorage.setItem('dispatch_key_kwik', kwik);
-    await AsyncStorage.setItem('dispatch_key_max', max);
-    alert.success('Keys Saved', 'Logistics rider dispatch credentials stored securely.');
-    onSave();
+    try {
+      await updateIntegrations.mutateAsync({
+        dispatch: {
+          gokada,
+          kwik,
+          max,
+        },
+      });
+      await AsyncStorage.setItem('dispatch_key_gokada', gokada);
+      await AsyncStorage.setItem('dispatch_key_kwik', kwik);
+      await AsyncStorage.setItem('dispatch_key_max', max);
+      alert.success('Keys Saved', 'Logistics rider dispatch credentials stored securely and synced with Biblio backend.');
+      onSave();
+    } catch (err: any) {
+      alert.error('Save Failed', err?.message || 'Could not save credentials to server.');
+    }
   };
 
   return (
@@ -69,13 +91,13 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
       <View className="flex-row items-center mb-5">
         <Truck size={16} color={c.textTertiary} />
         <Text style={{ color: c.textTertiary }} className="text-xs ml-2 flex-1 leading-relaxed">
-          Keys are stored encrypted and used only to auto-book riders on your behalf.
+          Keys are stored encrypted on your server instance and used directly to auto-book riders on your behalf.
         </Text>
       </View>
       <PanelField label="Gokada API Key" value={gokada} onChangeText={setGokada} placeholder="gk_live_••••••••" secure />
       <PanelField label="Kwik API Key" value={kwik} onChangeText={setKwik} placeholder="kwk_live_••••••••" secure />
       <PanelField label="MAX API Key" value={max} onChangeText={setMax} placeholder="max_live_••••••••" secure />
-      <PanelSaveButton onPress={handleSave} />
+      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} />
     </View>
   );
 }
@@ -216,9 +238,12 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const alert = useAlert();
   const { data: config } = useMerchantConfig();
   const updateConfig = useUpdateMerchantConfig();
+  const { data: integrations } = useMerchantIntegrations();
+  const updateIntegrations = useUpdateMerchantIntegrations();
 
   const [storeName, setStoreName] = useState('');
   const [address, setAddress] = useState('');
+  const [supportsPickup, setSupportsPickup] = useState(true);
   const metaConnected = Boolean(config?.whatsapp_catalog_id || config?.phone_number_id);
 
   useEffect(() => {
@@ -228,13 +253,32 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
     }
   }, [config]);
 
+  useEffect(() => {
+    if (integrations?.fulfillment) {
+      if (integrations.fulfillment.supportsPickup !== undefined) {
+        setSupportsPickup(integrations.fulfillment.supportsPickup);
+      }
+      if (integrations.fulfillment.pickupAddress && !address) {
+        setAddress(integrations.fulfillment.pickupAddress);
+      }
+    }
+  }, [integrations]);
+
   const handleSave = async () => {
     try {
-      await updateConfig.mutateAsync({
-        name: storeName.trim() || undefined,
-        deliveryInfo: address.trim() || undefined,
-      });
-      alert.success('Profile Saved', 'Store details and pickup address updated successfully.');
+      await Promise.all([
+        updateConfig.mutateAsync({
+          name: storeName.trim() || undefined,
+          deliveryInfo: address.trim() || undefined,
+        }),
+        updateIntegrations.mutateAsync({
+          fulfillment: {
+            supportsPickup,
+            pickupAddress: address.trim() || undefined,
+          },
+        }),
+      ]);
+      alert.success('Profile Saved', 'Store details, pickup address, and in-person store pickup settings updated successfully.');
       onSave();
     } catch (e: any) {
       alert.error('Update Failed', e?.message || 'Could not save store profile.');
@@ -266,13 +310,31 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
       />
 
       <PanelField
-        label="Pickup Address"
+        label="Store Pickup & Warehouse Address"
         value={address}
         onChangeText={setAddress}
         placeholder="Shop 14, Alaba International Market, Lagos"
-        helper="Riders use this address for every auto-dispatched pickup."
+        helper="Address used for rider dispatches and customer store pickups."
       />
-      <PanelSaveButton onPress={handleSave} isLoading={updateConfig.isPending} />
+
+      <View className="flex-row items-center justify-between py-3 mb-3" style={{ borderTopWidth: 1, borderTopColor: c.border }}>
+        <View className="flex-1 pr-4">
+          <Text style={{ color: c.textPrimary }} className="font-semibold text-sm mb-1">
+            Allow In-Person Store Pickup
+          </Text>
+          <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed">
+            Customers can choose to pick up at your shop in person (₦0 delivery fee, secret pickup code issued).
+          </Text>
+        </View>
+        <Switch
+          value={supportsPickup}
+          onValueChange={setSupportsPickup}
+          trackColor={{ false: c.border, true: c.accent }}
+          thumbColor={c.surface}
+        />
+      </View>
+
+      <PanelSaveButton onPress={handleSave} isLoading={updateConfig.isPending || updateIntegrations.isPending} />
     </View>
   );
 }
@@ -281,6 +343,9 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
 export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const alert = useAlert();
+  const { data: integrations, isLoading: isIntegrationsLoading } = useMerchantIntegrations();
+  const updateIntegrations = useUpdateMerchantIntegrations();
+
   const [groq, setGroq] = useState('');
   const [twilioSid, setTwilioSid] = useState('');
   const [twilioAuth, setTwilioAuth] = useState('');
@@ -288,34 +353,55 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
   const [africasTalking, setAfricasTalking] = useState('');
 
   useEffect(() => {
-    (async () => {
-      const g = await AsyncStorage.getItem('dev_key_groq');
-      const ts = await AsyncStorage.getItem('dev_key_twilio_sid');
-      const ta = await AsyncStorage.getItem('dev_key_twilio_auth');
-      const p = await AsyncStorage.getItem('dev_key_paystack');
-      const at = await AsyncStorage.getItem('dev_key_africas_talking');
-      if (g) setGroq(g);
-      if (ts) setTwilioSid(ts);
-      if (ta) setTwilioAuth(ta);
-      if (p) setPaystack(p);
-      if (at) setAfricasTalking(at);
-    })();
-  }, []);
+    if (integrations?.developer) {
+      if (integrations.developer.groq) setGroq(integrations.developer.groq);
+      if (integrations.developer.twilioSid) setTwilioSid(integrations.developer.twilioSid);
+      if (integrations.developer.twilioAuth) setTwilioAuth(integrations.developer.twilioAuth);
+      if (integrations.developer.paystack) setPaystack(integrations.developer.paystack);
+      if (integrations.developer.africasTalking) setAfricasTalking(integrations.developer.africasTalking);
+    } else {
+      (async () => {
+        const g = await AsyncStorage.getItem('dev_key_groq');
+        const ts = await AsyncStorage.getItem('dev_key_twilio_sid');
+        const ta = await AsyncStorage.getItem('dev_key_twilio_auth');
+        const p = await AsyncStorage.getItem('dev_key_paystack');
+        const at = await AsyncStorage.getItem('dev_key_africas_talking');
+        if (g) setGroq(g);
+        if (ts) setTwilioSid(ts);
+        if (ta) setTwilioAuth(ta);
+        if (p) setPaystack(p);
+        if (at) setAfricasTalking(at);
+      })();
+    }
+  }, [integrations]);
 
   const handleSave = async () => {
-    await AsyncStorage.setItem('dev_key_groq', groq);
-    await AsyncStorage.setItem('dev_key_twilio_sid', twilioSid);
-    await AsyncStorage.setItem('dev_key_twilio_auth', twilioAuth);
-    await AsyncStorage.setItem('dev_key_paystack', paystack);
-    await AsyncStorage.setItem('dev_key_africas_talking', africasTalking);
-    alert.success('Developer Keys Saved', 'Custom API provider overrides successfully configured.');
-    onSave();
+    try {
+      await updateIntegrations.mutateAsync({
+        developer: {
+          groq,
+          twilioSid,
+          twilioAuth,
+          paystack,
+          africasTalking,
+        },
+      });
+      await AsyncStorage.setItem('dev_key_groq', groq);
+      await AsyncStorage.setItem('dev_key_twilio_sid', twilioSid);
+      await AsyncStorage.setItem('dev_key_twilio_auth', twilioAuth);
+      await AsyncStorage.setItem('dev_key_paystack', paystack);
+      await AsyncStorage.setItem('dev_key_africas_talking', africasTalking);
+      alert.success('Developer Keys Saved', 'Custom API provider overrides successfully synced to Biblio backend.');
+      onSave();
+    } catch (e: any) {
+      alert.error('Save Failed', e?.message || 'Could not save API keys to server.');
+    }
   };
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={{ color: c.textTertiary }} className="text-xs mb-5 leading-relaxed">
-        Leave these blank to use the default Biblio platform keys. If you enter your own keys, your account will use your dedicated billing instances.
+        Leave these blank to use the default Biblio platform keys. If you enter your own keys, your account will use your dedicated billing instances across AI, SMS, and payments.
       </Text>
 
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">AI Intelligence</Text>
@@ -329,7 +415,7 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-4">Payments</Text>
       <PanelField label="Paystack Secret Key" value={paystack} onChangeText={setPaystack} placeholder="sk_live_••••••••" secure helper="Bypasses Biblio's escrow and settles directly to your account." />
 
-      <PanelSaveButton onPress={handleSave} label="Save API Overrides" />
+      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save API Overrides" />
     </ScrollView>
   );
 }

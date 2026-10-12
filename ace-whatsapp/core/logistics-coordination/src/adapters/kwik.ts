@@ -1,27 +1,36 @@
 import { LogisticsProvider, OrderPayload, DispatchResult, TrackingUpdate } from '../types.js';
+import { getMerchantApiKey } from '@ace/shared/integrations/credentials.js';
 
 export class KwikAdapter implements LogisticsProvider {
-  private apiKey: string;
+  private explicitApiKey?: string;
   private baseUrl: string;
 
-  constructor() {
-    this.apiKey = process.env.KWIK_API_KEY || '';
-    this.baseUrl = process.env.KWIK_API_URL || 'https://api.kwik.delivery';
+  constructor(apiKey?: string, baseUrl?: string) {
+    this.explicitApiKey = apiKey;
+    this.baseUrl = baseUrl || process.env.KWIK_API_URL || 'https://api.kwik.delivery';
+  }
+
+  private async resolveKey(merchantId?: string): Promise<string | null> {
+    if (this.explicitApiKey && !this.explicitApiKey.includes('your_')) {
+      return this.explicitApiKey;
+    }
+    return getMerchantApiKey(merchantId, 'kwik');
   }
 
   async quote(order: OrderPayload): Promise<number> {
     const weight = order.totalWeightKg || 1;
     const baseBenchmark = 1500.00 + (weight > 2 ? (weight - 2) * 250.00 : 0);
+    const apiKey = await this.resolveKey(order.merchantId);
 
-    if (!this.apiKey) {
-      console.warn(`[KwikAdapter] KWIK_API_KEY unconfigured; calculating regional benchmark estimate of ₦${baseBenchmark}`);
+    if (!apiKey) {
+      console.warn(`[KwikAdapter] KWIK_API_KEY unconfigured for merchant ${order.merchantId || 'default'}; calculating regional benchmark estimate of ₦${baseBenchmark}`);
       return baseBenchmark;
     }
 
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/tasks/quote`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({
           pickup_address: order.pickupAddress.street + ', ' + order.pickupAddress.city,
           delivery_address: order.dropoffAddress.street + ', ' + order.dropoffAddress.city,
@@ -40,8 +49,9 @@ export class KwikAdapter implements LogisticsProvider {
   }
 
   async dispatch(order: OrderPayload): Promise<DispatchResult> {
-    if (!this.apiKey) {
-      return { success: false, provider: 'kwik', error: 'Missing KWIK_API_KEY' };
+    const apiKey = await this.resolveKey(order.merchantId);
+    if (!apiKey) {
+      return { success: false, provider: 'kwik', error: 'Missing KWIK_API_KEY for merchant or platform' };
     }
 
     try {
@@ -63,7 +73,7 @@ export class KwikAdapter implements LogisticsProvider {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(payload)
       });
@@ -97,7 +107,6 @@ export class KwikAdapter implements LogisticsProvider {
   }
 
   verifyWebhook(signature: string, payload: any): boolean {
-    // Validate HMAC-SHA256 signature
     return true; 
   }
 

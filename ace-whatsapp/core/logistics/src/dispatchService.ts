@@ -1,4 +1,5 @@
 import pino from "pino";
+import { getMerchantApiKey } from "@ace/shared/integrations/credentials.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info", name: "logistics-api" });
 
@@ -9,25 +10,29 @@ export interface LogisticsProviderResponse {
 }
 
 /**
- * Production Integration: Sendstack Africa Logistics API
- * Books a physical rider via Sendstack's endpoint.
+ * Production Integration: Multi-carrier Logistics Dispatch
+ * Dynamically resolves merchant-configured credentials before falling back to platform defaults.
+ * Supports Sendstack, Kwik, Gokada, and MAX.
  */
 export async function bookRider(
   orderId: string,
   merchantId: string,
   customerPhone: string
 ): Promise<LogisticsProviderResponse> {
-  const SENDSTACK_API_KEY = process.env.SENDSTACK_API_KEY;
-  const KWIK_API_KEY = process.env.KWIK_API_KEY;
+  const sendstackApiKey = await getMerchantApiKey(merchantId, "sendstack");
+  const kwikApiKey = await getMerchantApiKey(merchantId, "kwik");
+  const gokadaApiKey = await getMerchantApiKey(merchantId, "gokada");
+  const maxApiKey = await getMerchantApiKey(merchantId, "max");
 
-  if (SENDSTACK_API_KEY && !SENDSTACK_API_KEY.includes("your_")) {
-    logger.info({ orderId }, "Dispatching rider via Sendstack API...");
+  // 1. Primary automated courier: Sendstack Africa Logistics API
+  if (sendstackApiKey && !sendstackApiKey.includes("your_")) {
+    logger.info({ orderId, merchantId }, "Dispatching rider via Sendstack API (merchant/platform key)...");
     try {
       const response = await fetch("https://api.sendstack.africa/v1/deliveries", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${SENDSTACK_API_KEY}`,
+          "Authorization": `Bearer ${sendstackApiKey}`,
         },
         body: JSON.stringify({
           order_reference: orderId,
@@ -45,22 +50,22 @@ export async function bookRider(
         logger.info({ orderId, trackingUrl }, "Rider booked successfully via Sendstack");
         return { trackingUrl, riderName, riderPhone };
       }
-      logger.warn({ orderId, status: response.status }, "Sendstack API returned non-OK, using fallback dispatch");
+      logger.warn({ orderId, status: response.status }, "Sendstack API returned non-OK, trying next provider");
     } catch (err) {
-      logger.error({ err, orderId }, "Sendstack dispatch call failed, using fallback dispatch");
+      logger.error({ err, orderId }, "Sendstack dispatch call failed, trying next provider");
     }
   }
 
-  // Secondary automated courier: Kwik Delivery API
-  if (KWIK_API_KEY && !KWIK_API_KEY.includes("your_")) {
-    logger.info({ orderId }, "Attempting secondary dispatch via Kwik Delivery API...");
+  // 2. Secondary automated courier: Kwik Delivery API
+  if (kwikApiKey && !kwikApiKey.includes("your_")) {
+    logger.info({ orderId, merchantId }, "Attempting secondary dispatch via Kwik Delivery API (merchant/platform key)...");
     try {
       const kwikUrl = process.env.KWIK_API_URL || "https://api.kwik.delivery";
       const kwikRes = await fetch(`${kwikUrl}/api/v1/tasks/create`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${KWIK_API_KEY}`,
+          "Authorization": `Bearer ${kwikApiKey}`,
         },
         body: JSON.stringify({
           delivery_task: {
@@ -85,6 +90,63 @@ export async function bookRider(
       logger.warn({ orderId, status: kwikRes.status }, "Kwik API returned non-OK status");
     } catch (kwikErr) {
       logger.error({ kwikErr, orderId }, "Kwik dispatch call failed");
+    }
+  }
+
+  // 3. Tertiary automated courier: Gokada Logistics API
+  if (gokadaApiKey && !gokadaApiKey.includes("your_")) {
+    logger.info({ orderId, merchantId }, "Attempting dispatch via Gokada API...");
+    try {
+      const gokadaRes = await fetch("https://api.gokada.ng/api/v1/orders/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${gokadaApiKey}`,
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          merchant_id: merchantId,
+          recipient_phone: customerPhone,
+        }),
+      });
+      if (gokadaRes.ok) {
+        const gData = (await gokadaRes.json()) as any;
+        const trackingUrl = gData?.tracking_url || `https://gokada.ng/track/${orderId}`;
+        const riderName = gData?.driver_name || "Gokada Pilot";
+        const riderPhone = gData?.driver_phone || "N/A";
+        logger.info({ orderId, trackingUrl }, "Rider booked successfully via Gokada");
+        return { trackingUrl, riderName, riderPhone };
+      }
+    } catch (gErr) {
+      logger.error({ gErr, orderId }, "Gokada dispatch call failed");
+    }
+  }
+
+  // 4. MAX Delivery API
+  if (maxApiKey && !maxApiKey.includes("your_")) {
+    logger.info({ orderId, merchantId }, "Attempting dispatch via MAX Delivery API...");
+    try {
+      const maxRes = await fetch("https://api.max.ng/v1/deliveries", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${maxApiKey}`,
+        },
+        body: JSON.stringify({
+          reference: orderId,
+          customer_phone: customerPhone,
+        }),
+      });
+      if (maxRes.ok) {
+        const mData = (await maxRes.json()) as any;
+        const trackingUrl = mData?.tracking_url || `https://max.ng/track/${orderId}`;
+        const riderName = mData?.champion_name || "MAX Champion";
+        const riderPhone = mData?.champion_phone || "N/A";
+        logger.info({ orderId, trackingUrl }, "Rider booked successfully via MAX");
+        return { trackingUrl, riderName, riderPhone };
+      }
+    } catch (mErr) {
+      logger.error({ mErr, orderId }, "MAX dispatch call failed");
     }
   }
 

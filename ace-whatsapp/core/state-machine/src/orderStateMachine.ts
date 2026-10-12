@@ -7,23 +7,10 @@
 // system you can unit-test with zero mocks, and the one piece where bugs
 // are catastrophic (an illegal transition = money or inventory moving
 // incorrectly).
-//
-// The ai-negotiator's job is to look at a ConversationTurn and PROPOSE an
-// OrderEvent. This file's job is to be the skeptical gatekeeper that says
-// "no, you can't mark payment confirmed from `draft` state — there's no
-// virtual account to have been paid into."
-//
-// Why a switch-based reducer instead of a library like XState?
-// XState is excellent and I'd reach for it once you have states with
-// timers, parallel regions, or nested sub-machines (e.g. "awaiting_payment"
-// containing its own "reminder sent / not sent" sub-state). For an order
-// lifecycle that's fundamentally linear with one branch (cancellation), a
-// hand-written switch is more transparent, has zero extra dependencies,
-// and — critically for THIS file — gives you compiler-enforced
-// exhaustiveness via the `assertNever` trick below. Revisit XState when
-// `awaiting_payment` grows a reminder sub-state machine of its own.
 
 import type { OrderState, OrderEvent } from "@ace/shared/types";
+import { redis, sql } from "@ace/shared/clients.js";
+import { Queue } from "bullmq";
 
 export class TransitionError extends Error {
   constructor(
@@ -57,6 +44,9 @@ export function transition(
           orderId: event.orderId,
           items: event.items,
           quotedTotal: event.total,
+          fulfillmentType: event.fulfillmentType || "delivery",
+          deliveryAddress: event.deliveryAddress,
+          pickupAddress: event.pickupAddress,
         };
       }
       throw new TransitionError(
@@ -73,6 +63,9 @@ export function transition(
           orderId: event.orderId,
           items: event.items,
           quotedTotal: event.total,
+          fulfillmentType: event.fulfillmentType || state.fulfillmentType || "delivery",
+          deliveryAddress: event.deliveryAddress || state.deliveryAddress,
+          pickupAddress: event.pickupAddress || state.pickupAddress,
         };
       }
       if (event.type === "PAYMENT_LINK_ISSUED") {
@@ -83,6 +76,9 @@ export function transition(
           total: state.quotedTotal,
           virtualAccountNumber: event.virtualAccountNumber,
           expiresAt: event.expiresAt,
+          fulfillmentType: state.fulfillmentType || "delivery",
+          deliveryAddress: state.deliveryAddress,
+          pickupAddress: state.pickupAddress,
         };
       }
       if (event.type === "ORDER_CANCELLED") {
@@ -110,6 +106,9 @@ export function transition(
           items: state.items,
           total: state.total,
           paidAt: event.paidAt,
+          fulfillmentType: state.fulfillmentType || "delivery",
+          deliveryAddress: state.deliveryAddress,
+          pickupAddress: state.pickupAddress,
         };
       }
       if (event.type === "PAYMENT_TIMEOUT") {
@@ -130,6 +129,20 @@ export function transition(
     }
 
     case "payment_verified": {
+      if (event.type === "ORDER_READY_FOR_PICKUP") {
+        return {
+          status: "ready_for_pickup",
+          orderId: state.orderId,
+          items: state.items,
+          total: state.total,
+          paidAt: state.paidAt,
+          pickupCode: event.pickupCode,
+          pickupAddress: event.pickupAddress || state.pickupAddress || "Merchant Store Location",
+        };
+      }
+      if (event.type === "PICKUP_CONFIRMED") {
+        return { status: "delivered", orderId: state.orderId };
+      }
       if (event.type === "RIDER_ASSIGNED") {
         return {
           status: "out_for_delivery",
@@ -144,7 +157,21 @@ export function transition(
       throw new TransitionError(
         state.status,
         event.type,
-        "paid orders move to out_for_delivery via RIDER_ASSIGNED only",
+        "paid orders move to out_for_delivery via RIDER_ASSIGNED, or to ready_for_pickup/delivered for store pickup",
+      );
+    }
+
+    case "ready_for_pickup": {
+      if (event.type === "PICKUP_CONFIRMED") {
+        return { status: "delivered", orderId: state.orderId };
+      }
+      if (event.type === "ORDER_CANCELLED") {
+        return { status: "cancelled", orderId: state.orderId, reason: event.reason };
+      }
+      throw new TransitionError(
+        state.status,
+        event.type,
+        "ready_for_pickup orders can only transition to delivered via PICKUP_CONFIRMED or cancelled",
       );
     }
 
@@ -164,12 +191,6 @@ export function transition(
 
     case "delivered":
     case "cancelled": {
-      // Terminal states. Any event here is a no-op from the state
-      // machine's perspective — but the CALLER (ai-negotiator) should
-      // treat this as a signal that it's reasoning about stale state,
-      // likely because two webhook deliveries raced. Surfacing it as an
-      // error (rather than silently swallowing) makes that race visible
-      // in your logs instead of hiding it.
       throw new TransitionError(
         state.status,
         event.type,
@@ -181,8 +202,6 @@ export function transition(
       return assertNever(state);
   }
 }
-import { redis, sql } from "@ace/shared/clients.js";
-import { Queue } from "bullmq";
 
 const domainEventsQueue = new Queue("domain-events", {
   connection: { ...redis.options, maxRetriesPerRequest: null }
@@ -211,13 +230,10 @@ export async function transitionAndEmit(
     // Emit event
     try {
       if (event.type === "PAYMENT_CONFIRMED") {
-      await domainEventsQueue.add("payment_confirmed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
-    } else if (event.type as string === "ORDER_COMPLETED") {
-      await domainEventsQueue.add("order_completed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
-    } else if (event.type as string === "MARK_SHIPPED") {
-       // Just as an example, this might trigger inventory deductions 
-       // but typically those are explicit tool actions. 
-    }
+        await domainEventsQueue.add("payment_confirmed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
+      } else if ((event.type as string) === "ORDER_COMPLETED" || event.type === "PICKUP_CONFIRMED" || event.type === "DELIVERY_CONFIRMED") {
+        await domainEventsQueue.add("order_completed", { merchantId, customerId, orderId, timestamp: Date.now() }, { attempts: 5, backoff: { type: "exponential", delay: 2000 } });
+      }
     } catch (err) {
       console.error(`[orderStateMachine] Redis publish failed for event ${event.type}:`, err);
     }

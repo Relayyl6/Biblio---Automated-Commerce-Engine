@@ -24,6 +24,8 @@ import { logger } from "@ace/shared/logger.js";
 
 import { sql, jsonb } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
+import { getMerchantApiKey } from "@ace/shared/integrations/credentials.js";
+import type { OrderFulfillmentType } from "@ace/shared/types";
 import { transition, TransitionError } from "../../state-machine/src/orderStateMachine";
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 import { sendCustomerMessage } from "../../comms-router/src/outbound.js";
@@ -180,7 +182,7 @@ export const toolDefinitions = [
     name: "close_deal",
     description:
       "Customer has explicitly accepted the price — commit the deal and create the order. " +
-      "Only call when customer has unambiguously agreed. This is irreversible.",
+      "Only call when customer has unambiguously agreed. Can specify fulfillmentType ('delivery' or 'pickup'). This is irreversible.",
     input_schema: {
       type: "object",
       properties: {
@@ -197,6 +199,15 @@ export const toolDefinitions = [
             },
             required: ["sku", "name", "quantity", "unitPrice"],
           },
+        },
+        fulfillmentType: {
+          type: "string",
+          enum: ["delivery", "pickup"],
+          description: "Choose 'pickup' for in-person customer collection at merchant store (₦0 delivery fee), or 'delivery' for courier dispatch.",
+        },
+        deliveryAddress: {
+          type: "string",
+          description: "Delivery dropoff address if courier delivery is chosen.",
         },
       },
       required: ["finalPrice", "items"],
@@ -360,7 +371,7 @@ export async function executeTool(
     case "deploy_tactic":
       return await deployTactic(input, ctx);
     case "close_deal":
-      return closeDeal(input.finalPrice, input.items, ctx);
+      return await closeDeal(input.finalPrice, input.items, ctx, input.fulfillmentType, input.deliveryAddress);
     case "escalate_to_merchant":
       return await escalateToMerchant(input.customerFinalOffer, input.summary, ctx);
     case "issue_payment_link":
@@ -645,7 +656,13 @@ async function deployTactic(input: any, ctx: ToolContext): Promise<ToolResult> {
   return { output: { ok: true, tacticDeployed: tactic }, newArc };
 }
 
-function closeDeal(finalPrice: number, items: OrderItem[], ctx: ToolContext): ToolResult {
+async function closeDeal(
+  finalPrice: number,
+  items: OrderItem[],
+  ctx: ToolContext,
+  fulfillmentType?: "delivery" | "pickup",
+  deliveryAddress?: string,
+): Promise<ToolResult> {
   if (!ctx.authorizedRange) {
     return { output: { ok: false, error: "No authorized range loaded." } };
   }
@@ -655,10 +672,49 @@ function closeDeal(finalPrice: number, items: OrderItem[], ctx: ToolContext): To
     };
   }
 
+  const mRows = await sql<{ physical_address: any; supports_pickup: boolean }[]>`
+    SELECT physical_address, supports_pickup FROM merchants WHERE id = ${ctx.merchantId}::uuid LIMIT 1
+  `;
+  const m = mRows[0];
+  const chosenFulfillment: OrderFulfillmentType = (fulfillmentType === "pickup" && (m?.supports_pickup ?? true)) ? "pickup" : "delivery";
+  const pickupAddress = typeof m?.physical_address === "string" 
+    ? m.physical_address 
+    : (m?.physical_address?.street || m?.physical_address?.address || "Merchant Store Location");
+
   const orderId = crypto.randomUUID();
   try {
-    const newOrderState = transition(ctx.orderState, { type: "QUOTE_CREATED", orderId, items, total: finalPrice });
+    const newOrderState = transition(ctx.orderState, {
+      type: "QUOTE_CREATED",
+      orderId,
+      items,
+      total: finalPrice,
+      fulfillmentType: chosenFulfillment,
+      deliveryAddress: chosenFulfillment === "delivery" ? deliveryAddress : undefined,
+      pickupAddress: chosenFulfillment === "pickup" ? pickupAddress : undefined,
+    });
     const newArc = advanceArc(ctx.arc, { type: "DEAL_ACCEPTED", finalPrice });
+
+    // Persist draft order
+    try {
+      await sql`
+        INSERT INTO orders (id, merchant_id, customer_id, items, total_amount, state, fulfillment_type, pickup_address, created_at, updated_at)
+        VALUES (
+          ${orderId}::uuid,
+          ${ctx.merchantId}::uuid,
+          ${ctx.customerId},
+          ${jsonb(items)},
+          ${finalPrice},
+          ${jsonb(newOrderState)},
+          ${chosenFulfillment},
+          ${chosenFulfillment === 'pickup' ? pickupAddress : null},
+          now(),
+          now()
+        )
+        ON CONFLICT (id) DO UPDATE SET state = ${jsonb(newOrderState)}, updated_at = now()
+      `;
+    } catch (dbErr) {
+      logger.warn("[closeDeal] DB insert notice (continuing in-memory state):", dbErr);
+    }
 
     // Telemetry: Capture state transition for TrustScore signals
     dataIntelligence.captureOrderStateChange({
@@ -670,7 +726,17 @@ function closeDeal(finalPrice: number, items: OrderItem[], ctx: ToolContext): To
       timestamp: Date.now(),
     }).catch(err => logger.error("[Tools] Non-critical telemetry emit failed", err));
 
-    return { output: { ok: true, orderId, finalPrice }, newOrderState, newArc };
+    return {
+      output: {
+        ok: true,
+        orderId,
+        finalPrice,
+        fulfillmentType: chosenFulfillment,
+        pickupAddress: chosenFulfillment === 'pickup' ? pickupAddress : undefined,
+      },
+      newOrderState,
+      newArc,
+    };
   } catch (err) {
     if (err instanceof TransitionError) return { output: { ok: false, error: err.message } };
     throw err;
@@ -711,7 +777,7 @@ async function escalateToMerchant(
     const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${ctx.merchantId} limit 1`;
     const merchantPhone = merchantRows[0]?.contact_phone;
     if (!merchantPhone) {
-       throw new Error("Merchant has no contact_phone configured.");
+      throw new Error("Merchant has no contact_phone configured.");
     }
     await vendorCommunique.dispatchEscalation(
       ctx.merchantId,
@@ -746,19 +812,31 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
   }
 
   const dealPrice = ctx.orderState.quotedTotal;
+  const isPickup = ctx.orderState.fulfillmentType === "pickup";
+  const pickupAddress = ctx.orderState.pickupAddress;
 
-  // ── Platform fee markup (5%) ───────────────────────────────────────────────
-  // Customer pays 5% above the agreed deal price.
-  // Paystack takes ~1.5% + ₦100, Biblio retains the rest (~3.5%).
-  // e.g. ₦100,000 deal → customer transfers ₦105,000
-  const PLATFORM_FEE_RATE = 0.05;
-  const customerPayableAmount = Math.ceil(dealPrice * (1 + PLATFORM_FEE_RATE));
+  // ── Platform fee calculation from merchant configuration ──────────────────
+  const mRows = await sql<{ platform_fee_percent: number; fee_padding_model: string }[]>`
+    SELECT platform_fee_percent, fee_padding_model
+    FROM merchants
+    WHERE id = ${ctx.merchantId}::uuid LIMIT 1
+  `;
+  const feePercent = Number(mRows[0]?.platform_fee_percent ?? 3.0);
+  const feeModel = mRows[0]?.fee_padding_model ?? 'customer_padded';
+  const feeRate = feePercent / 100;
+  
+  // customer_padded: customer pays price + fee so vendor receives 100% of deal price
+  // vendor_absorbed: customer pays exact deal price, fee is settled from vendor payout
+  const customerPayableAmount = feeModel === 'customer_padded'
+    ? Math.ceil(dealPrice * (1 + feeRate))
+    : dealPrice;
+  const platformFee = Math.ceil(dealPrice * feeRate);
 
-  // ── Paystack: create a charge with bank_transfer channel ──────────────────
-  const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+  // ── Paystack: dynamic merchant key resolution ────────────────────────────
+  const paystackSecretKey = (await getMerchantApiKey(ctx.merchantId, "paystack")) || process.env.PAYSTACK_SECRET_KEY;
   let virtualAccountNumber: string;
   let bankName = "Providus Bank";
-  let accountName = "ACE Commerce Collections";
+  let accountName = "Biblio Payments";
 
   if (paystackSecretKey) {
     try {
@@ -769,9 +847,8 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          // Paystack amounts are in kobo (1 NGN = 100 kobo)
-          amount: customerPayableAmount * 100,
-          email: `${ctx.customerId.replace(/[^a-zA-Z0-9]/g, "")}@ace-commerce.app`,
+          amount: customerPayableAmount * 100, // kobo
+          email: `${ctx.customerId.replace(/[^a-zA-Z0-9]/g, "")}@biblio.africa`,
           currency: "NGN",
           bank_transfer: {
             account_expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -781,7 +858,9 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
             merchantId: ctx.merchantId,
             customerId: ctx.customerId,
             dealPrice,
-            platformFee: customerPayableAmount - dealPrice,
+            platformFee,
+            feeModel,
+            fulfillmentType: ctx.orderState.fulfillmentType || "delivery",
           },
         }),
       });
@@ -790,7 +869,6 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
         throw new Error(`Paystack API returned ${chargeRes.status}: ${JSON.stringify(chargeData)}`);
       }
 
-      // Paystack bank_transfer returns account details under authorization
       virtualAccountNumber =
         chargeData.data?.account_number ??
         chargeData.data?.bank_transfer?.account_number ??
@@ -812,7 +890,6 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
       return { output: { ok: false, error: "Payment provider unavailable. Tell the customer to try again in a few minutes." } };
     }
   } else {
-    // No Paystack key configured — this is a production error!
     logger.error("[tools] CRITICAL: PAYSTACK_SECRET_KEY is not configured.");
     return { output: { ok: false, error: "Payment system misconfigured. Please escalate." } };
   }
@@ -825,6 +902,15 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
       expiresAt,
     });
 
+    try {
+      await sql`
+        UPDATE orders SET state = ${jsonb(newOrderState)}, updated_at = now()
+        WHERE id = ${ctx.orderState.orderId}::uuid
+      `;
+    } catch (updErr) {
+      logger.warn("[issuePaymentLink] DB state update notice:", updErr);
+    }
+
     dataIntelligence.captureOrderStateChange({
       merchantId: ctx.merchantId,
       customerId: ctx.customerId,
@@ -834,6 +920,10 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
       timestamp: Date.now(),
     }).catch(() => {});
 
+    const fulfillmentNotice = isPickup
+      ? `\n🏪 *Store Pickup Selected:*\nPickup Address: ${pickupAddress || "Merchant Store"}\nDelivery fee: ₦0 (FREE). Your secret pickup code will be issued automatically upon payment confirmation.`
+      : "";
+
     return {
       output: {
         ok: true,
@@ -842,14 +932,18 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
         accountName,
         dealPrice,
         customerPayableAmount,
-        platformFeeNgn: customerPayableAmount - dealPrice,
+        platformFeeNgn: platformFee,
+        feePaddingModel: feeModel,
+        fulfillmentType: isPickup ? "pickup" : "delivery",
+        pickupAddress: isPickup ? pickupAddress : undefined,
         expiresInMinutes: 30,
         instructions:
           `Transfer exactly ₦${customerPayableAmount.toLocaleString("en-NG")} to:\n` +
           `Bank: ${bankName}\n` +
           `Account Number: ${virtualAccountNumber}\n` +
           `Account Name: ${accountName}\n` +
-          `(This includes a ₦${(customerPayableAmount - dealPrice).toLocaleString("en-NG")} processing fee)`,
+          (feeModel === "customer_padded" ? `(Includes ₦${platformFee.toLocaleString("en-NG")} Biblio processing fee)` : "") +
+          fulfillmentNotice,
       },
       newOrderState,
     };
@@ -906,7 +1000,8 @@ async function sourcePrice(productQuery: string, ctx: ToolContext): Promise<Tool
   // superior semantic matching (e.g. understanding "macbook" goes to "laptops")
   // with no infra overhead.
   let matchedSources: Source[] = [];
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "" });
+  const groqApiKey = (await getMerchantApiKey(ctx.merchantId, "groq")) || process.env.GROQ_API_KEY || "";
+  const groq = new Groq({ apiKey: groqApiKey });
   
   try {
     const sourceList = sources.map(s => `- ID: ${s.id}\n  Name: ${s.name}\n  Category/Description: ${s.description || "General items"}`).join("\n\n");
@@ -967,9 +1062,31 @@ Output ONLY valid JSON in the format: { "matches": ["id1", "id2"] }`;
        if (merchantPhone) {
          await sendCustomerMessage({ toPhone: merchantPhone, text: querySent }, undefined, ctx.merchantId);
        }
+    } else if (source.type === "warehouse_api" || source.type === "api") {
+      querySent = `POST ${source.contact} - productQuery: "${productQuery}"`;
+      try {
+        const resp = await fetch(source.contact!, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productQuery,
+            merchantId: ctx.merchantId,
+            customerId: ctx.customerId,
+            orderId,
+          }),
+          signal: AbortSignal.timeout(6000),
+        });
+        if (resp.ok) {
+          const apiData = await resp.json() as any;
+          if (apiData?.price) {
+            querySent += ` => wholesale price: ₦${apiData.price}`;
+          }
+        }
+      } catch (apiErr) {
+        logger.warn(`[sourcePrice] External warehouse API call to ${source.contact} failed:`, apiErr);
+      }
     } else {
-       // API not implemented in MVP script
-       continue;
+      querySent = `Automated query logged for supplier ${source.name}`;
     }
 
     const rows = await sql<{id: string}[]>`

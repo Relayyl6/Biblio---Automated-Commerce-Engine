@@ -95,6 +95,8 @@ export interface ConversationTurn {
  * with no orderId, the type system won't let you. This is the core
  * "make illegal states unrepresentable" pattern.
  */
+export type OrderFulfillmentType = "delivery" | "pickup";
+
 export type OrderState =
   | { status: "no_order" }
   | {
@@ -102,6 +104,9 @@ export type OrderState =
       orderId: string;
       items: OrderItem[];
       quotedTotal: number;
+      fulfillmentType?: OrderFulfillmentType;
+      deliveryAddress?: string;
+      pickupAddress?: string;
     }
   | {
       status: "awaiting_payment";
@@ -110,6 +115,9 @@ export type OrderState =
       total: number;
       virtualAccountNumber: string;
       expiresAt: number;
+      fulfillmentType?: OrderFulfillmentType;
+      deliveryAddress?: string;
+      pickupAddress?: string;
     }
   | {
       status: "payment_verified";
@@ -117,6 +125,19 @@ export type OrderState =
       items: OrderItem[];
       total: number;
       paidAt: number;
+      fulfillmentType?: OrderFulfillmentType;
+      deliveryAddress?: string;
+      pickupAddress?: string;
+      pickupCode?: string;
+    }
+  | {
+      status: "ready_for_pickup";
+      orderId: string;
+      items: OrderItem[];
+      total: number;
+      paidAt: number;
+      pickupCode: string;
+      pickupAddress: string;
     }
   | {
       status: "out_for_delivery";
@@ -140,9 +161,11 @@ export interface OrderItem {
  * the proposed event is legal from the current state.
  */
 export type OrderEvent =
-  | { type: "QUOTE_CREATED"; orderId: string; items: OrderItem[]; total: number }
+  | { type: "QUOTE_CREATED"; orderId: string; items: OrderItem[]; total: number; fulfillmentType?: OrderFulfillmentType; deliveryAddress?: string; pickupAddress?: string }
   | { type: "PAYMENT_LINK_ISSUED"; virtualAccountNumber: string; expiresAt: number }
   | { type: "PAYMENT_CONFIRMED"; paidAt: number; amount: number }
+  | { type: "ORDER_READY_FOR_PICKUP"; pickupCode: string; pickupAddress: string }
+  | { type: "PICKUP_CONFIRMED"; pickupCode?: string }
   | { type: "PAYMENT_TIMEOUT" }
   | { type: "RIDER_ASSIGNED"; trackingUrl: string }
   | { type: "DELIVERY_CONFIRMED" }

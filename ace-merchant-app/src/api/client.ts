@@ -520,4 +520,80 @@ export const useResolveDispute = () => {
   });
 };
 
+// --- MERCHANT INTEGRATIONS & API KEYS ---
+export interface MerchantIntegrationsData {
+  dispatch: {
+    gokada: string;
+    hasGokada: boolean;
+    kwik: string;
+    hasKwik: boolean;
+    max: string;
+    hasMax: boolean;
+    sendstack: string;
+    hasSendstack: boolean;
+  };
+  developer: {
+    groq: string;
+    hasGroq: boolean;
+    twilioSid: string;
+    hasTwilioSid: boolean;
+    twilioAuth: string;
+    hasTwilioAuth: boolean;
+    paystack: string;
+    hasPaystack: boolean;
+    africasTalking: string;
+    hasAfricasTalking: boolean;
+  };
+  fulfillment: {
+    supportsPickup: boolean;
+    pickupAddress: string;
+  };
+}
+
+export const useMerchantIntegrations = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery<MerchantIntegrationsData>({
+    queryKey: ['merchantIntegrations', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/integrations`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useUpdateMerchantIntegrations = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      dispatch?: {
+        gokada?: string;
+        kwik?: string;
+        max?: string;
+        sendstack?: string;
+      };
+      developer?: {
+        groq?: string;
+        twilioSid?: string;
+        twilioAuth?: string;
+        paystack?: string;
+        africasTalking?: string;
+      };
+      fulfillment?: {
+        supportsPickup?: boolean;
+        pickupAddress?: string;
+      };
+    }) => {
+      const res = await api.patch(`/merchants/${merchantId}/integrations`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchantIntegrations', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['merchant', merchantId] });
+    },
+  });
+};
+
+
 

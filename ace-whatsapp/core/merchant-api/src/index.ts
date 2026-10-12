@@ -23,6 +23,7 @@ import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback.js";
 import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop.js";
+import { maskApiKey, isMaskedKey } from "@ace/shared/integrations/credentials.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
@@ -477,6 +478,149 @@ app.patch("/merchants/:id", async (req, reply) => {
   `;
   if (!rows[0]) return reply.code(404).send({ error: "merchant not found" });
   return { ok: true };
+});
+
+// ─── Merchant Integrations & API Credentials ────────────────────────────────
+app.get("/merchants/:id/integrations", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const mRows = await sql`
+    SELECT api_keys, supports_pickup, physical_address
+    FROM merchants
+    WHERE id = ${id}::uuid LIMIT 1
+  `;
+  if (!mRows[0]) return reply.code(404).send({ error: "merchant not found" });
+
+  const m = mRows[0];
+  const apiKeys = (m.api_keys && typeof m.api_keys === 'object') ? m.api_keys : {};
+
+  const intRows = await sql<{ provider: string; access_token: string }[]>`
+    SELECT provider, access_token
+    FROM merchant_integrations
+    WHERE merchant_id = ${id}::uuid
+  `;
+  const intMap: Record<string, string> = {};
+  for (const row of intRows) {
+    if (row.access_token) {
+      intMap[row.provider] = row.access_token;
+    }
+  }
+
+  const getKey = (name: string): string => intMap[name] || apiKeys[name] || "";
+
+  return reply.send({
+    dispatch: {
+      gokada: maskApiKey(getKey("gokada")),
+      hasGokada: !!getKey("gokada"),
+      kwik: maskApiKey(getKey("kwik")),
+      hasKwik: !!getKey("kwik"),
+      max: maskApiKey(getKey("max")),
+      hasMax: !!getKey("max"),
+      sendstack: maskApiKey(getKey("sendstack")),
+      hasSendstack: !!getKey("sendstack"),
+    },
+    developer: {
+      groq: maskApiKey(getKey("groq")),
+      hasGroq: !!getKey("groq"),
+      twilioSid: maskApiKey(getKey("twilio_sid")),
+      hasTwilioSid: !!getKey("twilio_sid"),
+      twilioAuth: maskApiKey(getKey("twilio_auth")),
+      hasTwilioAuth: !!getKey("twilio_auth"),
+      paystack: maskApiKey(getKey("paystack")),
+      hasPaystack: !!getKey("paystack"),
+      africasTalking: maskApiKey(getKey("africas_talking")),
+      hasAfricasTalking: !!getKey("africas_talking"),
+    },
+    fulfillment: {
+      supportsPickup: m.supports_pickup ?? true,
+      pickupAddress: typeof m.physical_address === 'string' 
+        ? m.physical_address 
+        : (m.physical_address?.street || m.physical_address?.address || ''),
+    }
+  });
+});
+
+app.patch("/merchants/:id/integrations", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const b = req.body as any;
+  if (!b) return reply.code(400).send({ error: "body required" });
+
+  const mRows = await sql<{ api_keys: Record<string, string>; physical_address: any }[]>`
+    SELECT api_keys, physical_address
+    FROM merchants
+    WHERE id = ${id}::uuid LIMIT 1
+  `;
+  if (!mRows[0]) return reply.code(404).send({ error: "merchant not found" });
+
+  const currentApiKeys = (mRows[0].api_keys && typeof mRows[0].api_keys === 'object') ? { ...mRows[0].api_keys } : {};
+
+  // Process dispatch keys
+  if (b.dispatch) {
+    const d = b.dispatch;
+    const dispatchMapping: [string, string | undefined][] = [
+      ['gokada', d.gokada],
+      ['kwik', d.kwik],
+      ['max', d.max],
+      ['sendstack', d.sendstack],
+    ];
+    for (const [provider, val] of dispatchMapping) {
+      if (val !== undefined && !isMaskedKey(val)) {
+        const trimmed = val.trim();
+        if (trimmed === "") {
+          delete currentApiKeys[provider];
+          await sql`DELETE FROM merchant_integrations WHERE merchant_id = ${id}::uuid AND provider = ${provider}`;
+        } else {
+          currentApiKeys[provider] = trimmed;
+          await sql`
+            INSERT INTO merchant_integrations (merchant_id, provider, access_token)
+            VALUES (${id}::uuid, ${provider}, ${trimmed})
+            ON CONFLICT (merchant_id, provider) DO UPDATE SET access_token = EXCLUDED.access_token
+          `;
+        }
+      }
+    }
+  }
+
+  // Process developer keys
+  if (b.developer) {
+    const dev = b.developer;
+    const devMapping: [string, string | undefined][] = [
+      ['groq', dev.groq],
+      ['twilio_sid', dev.twilioSid],
+      ['twilio_auth', dev.twilioAuth],
+      ['paystack', dev.paystack],
+      ['africas_talking', dev.africasTalking],
+    ];
+    for (const [provider, val] of devMapping) {
+      if (val !== undefined && !isMaskedKey(val)) {
+        const trimmed = val.trim();
+        if (trimmed === "") {
+          delete currentApiKeys[provider];
+          await sql`DELETE FROM merchant_integrations WHERE merchant_id = ${id}::uuid AND provider = ${provider}`;
+        } else {
+          currentApiKeys[provider] = trimmed;
+          await sql`
+            INSERT INTO merchant_integrations (merchant_id, provider, access_token)
+            VALUES (${id}::uuid, ${provider}, ${trimmed})
+            ON CONFLICT (merchant_id, provider) DO UPDATE SET access_token = EXCLUDED.access_token
+          `;
+        }
+      }
+    }
+  }
+
+  // Update merchants table with merged api_keys and fulfillment settings
+  const updatePickupAddress = b.fulfillment?.pickupAddress !== undefined ? b.fulfillment.pickupAddress : null;
+  const updateSupportsPickup = b.fulfillment?.supportsPickup !== undefined ? Boolean(b.fulfillment.supportsPickup) : null;
+
+  await sql`
+    UPDATE merchants SET
+      api_keys = ${jsonb(currentApiKeys)},
+      supports_pickup = coalesce(${updateSupportsPickup}, supports_pickup),
+      physical_address = coalesce(${updatePickupAddress ? jsonb({ street: updatePickupAddress }) : null}, physical_address)
+    WHERE id = ${id}::uuid
+  `;
+
+  return reply.send({ ok: true, message: "Integrations updated successfully" });
 });
 
 // ─── Bank Onboarding (Escrow/Transfer Setup) ─────────────────────────────────

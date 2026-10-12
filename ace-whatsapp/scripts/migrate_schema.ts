@@ -25,7 +25,9 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS physical_address JSONB DEFAULT '{}',
     ADD COLUMN IF NOT EXISTS operating_hours JSONB DEFAULT '{}',
     ADD COLUMN IF NOT EXISTS return_policy TEXT,
-    ADD COLUMN IF NOT EXISTS delivery_notes TEXT
+    ADD COLUMN IF NOT EXISTS delivery_notes TEXT,
+    ADD COLUMN IF NOT EXISTS api_keys JSONB DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS supports_pickup BOOLEAN DEFAULT true
   `;
 
   // 2. Vendors Table Alterations
@@ -93,6 +95,29 @@ async function runMigration() {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_transcripts_merchant 
     ON merchant_agent_transcripts(merchant_id, created_at DESC)
+  `;
+
+  // 6. Orders Table Pickup and Fulfillment Columns
+  console.log("6. Updating orders table with fulfillment & pickup support...");
+  await sql`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS fulfillment_type VARCHAR(20) DEFAULT 'delivery',
+    ADD COLUMN IF NOT EXISTS pickup_code VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS pickup_address TEXT
+  `;
+
+  // 7. Merchant Integrations Table
+  console.log("7. Ensuring merchant_integrations table exists...");
+  await sql`
+    CREATE TABLE IF NOT EXISTS merchant_integrations (
+      merchant_id UUID REFERENCES merchants(id),
+      provider VARCHAR(50) NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at TIMESTAMP,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      PRIMARY KEY (merchant_id, provider)
+    )
   `;
 
   console.log("✅ Biblio Augmented Schema Migration successfully completed!");
