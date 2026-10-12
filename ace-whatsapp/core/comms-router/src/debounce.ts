@@ -207,6 +207,21 @@ export const turnWorker = new Worker<{ customerId: string; merchantId: string }>
             msg.content.base64 = media.base64;
             msg.content.mimeType = media.mimeType;
           }
+        } else if (msg.content.type === 'audio' && msg.content.mediaId && !msg.content.transcript) {
+          const media = await downloadWhatsAppMedia(msg.content.mediaId, merchantId);
+          if (media?.base64) {
+            try {
+              const audioBuf = Buffer.from(media.base64, 'base64');
+              const { transcribeBuffer } = await import('../../baileys-gateway/src/mediaProcessor.js');
+              const transcript = await transcribeBuffer(audioBuf);
+              if (transcript) {
+                msg.content.transcript = transcript;
+                logger.info('[debounce] Meta Cloud voice note transcribed via Whisper', { mediaId: msg.content.mediaId });
+              }
+            } catch (transcribeErr) {
+              logger.warn('[debounce] Failed to transcribe Meta audio note', { transcribeErr, mediaId: msg.content.mediaId });
+            }
+          }
         }
       }
 

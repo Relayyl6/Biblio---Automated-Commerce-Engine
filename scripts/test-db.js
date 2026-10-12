@@ -1,5 +1,12 @@
 import postgres from 'postgres';
-const sql = postgres('postgresql://neondb_owner:npg_peb8zHX5ORyB@ep-fragrant-cake-axw2ieex-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require', {
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+    console.error("DATABASE_URL environment variable is required.");
+    process.exit(1);
+}
+
+const sql = postgres(databaseUrl, {
     max: 1,
     idle_timeout: 3,
     connect_timeout: 10
@@ -13,7 +20,12 @@ async function run() {
         const vendors = await sql`SELECT * FROM vendors`;
         console.log("Vendors in DB:", JSON.stringify(vendors, null, 2));
 
-        const redis = new Redis(process.env.REDIS_URL || 'rediss://default:gQAAAAAAASw2AAIgcDFjMDJkNDkwYTYzMzE0YTUyYWI1NGE0ODM4MTczN2NlZg@evolving-mutt-76854.upstash.io:6379');
+        const redisUrl = process.env.REDIS_URL;
+        if (!redisUrl) {
+            console.error("REDIS_URL environment variable is required.");
+            process.exit(1);
+        }
+        const redis = new Redis(redisUrl);
         const credKeys = await redis.keys('baileys:creds:*');
         console.log("Cred Keys in Redis:", credKeys);
 

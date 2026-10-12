@@ -181,8 +181,9 @@ export class InteractionFeedbackService {
         bandit_arm: string | null;
         merchant_action: string;
         context_snapshot: any;
+        dialect: string | null;
       }[]>`
-        SELECT id, bandit_arm, merchant_action, context_snapshot
+        SELECT id, bandit_arm, merchant_action, context_snapshot, dialect
         FROM conversation_outcomes
         WHERE (session_id = ${params.sessionId || ''} OR customer_id = ${params.customerId || ''})
         ORDER BY created_at DESC
@@ -221,10 +222,11 @@ export class InteractionFeedbackService {
         if (BANDIT_ARMS.includes(armVal)) {
           const snapshot = interaction.context_snapshot || {};
           const contextVector = pricingBandit.buildContextVector({
-            customerLtv: snapshot.customerProfile?.lifetimeValue,
-            orderCount: snapshot.customerProfile?.orderCount,
+            customerLtv: snapshot.customerLtv ?? snapshot.customerProfile?.lifetimeValue,
+            orderCount: snapshot.orderCount ?? snapshot.customerProfile?.orderCount,
             productMargin: snapshot.productMargin,
             basePrice: params.finalPrice,
+            dialect: interaction.dialect || undefined,
           });
 
           await pricingBandit.recordFeedback(armVal, contextVector, reward);

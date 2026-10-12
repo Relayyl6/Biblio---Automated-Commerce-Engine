@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, Switch, Pressable, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, Switch, Pressable, Modal } from 'react-native';
 import { useColorScheme } from 'nativewind';
+import { useRouter } from 'expo-router';
+import { useAlert } from '../src/store/alertStore';
 import {
   Bell,
   BellOff,
@@ -242,6 +244,8 @@ export default function NotificationsScreen() {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const permission = useNotificationPermission();
+  const alert = useAlert();
+  const router = useRouter();
 
   const [allEnabled, setAllEnabled] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(true);
@@ -286,39 +290,39 @@ export default function NotificationsScreen() {
   );
 
   function handleReset() {
-    Alert.alert('Reset notification settings?', 'This restores every toggle below to its default.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        style: 'destructive',
-        onPress: () => {
-          setAllEnabled(true);
-          setPushEnabled(defaults.pushEnabled);
-          setWhatsappEnabled(defaults.whatsappEnabled);
-          setEmailFrequency(defaults.emailFrequency);
-          setQuietHoursEnabled(defaults.quietHoursEnabled);
-          setQuietStart(defaults.quietStart);
-          setQuietEnd(defaults.quietEnd);
-          setNotifyOrders(defaults.notifyOrders);
-          setNotifyPaymentFailures(defaults.notifyPaymentFailures);
-          setNotifyApprovals(defaults.notifyApprovals);
-          setNotifyLowConfidence(defaults.notifyLowConfidence);
-          setNotifyRestocks(defaults.notifyRestocks);
-          setNotifyRestockConfirmed(defaults.notifyRestockConfirmed);
-          setNotifyNewDevice(defaults.notifyNewDevice);
-          setNotifyPasswordChange(defaults.notifyPasswordChange);
-          setNotifyMarketing(defaults.notifyMarketing);
-        },
+    alert.showConfirm({
+      title: 'Reset Notification Settings?',
+      message: 'This will restore every notification toggle and digest preference to defaults.',
+      confirmLabel: 'Reset All',
+      destructive: true,
+      onConfirm: () => {
+        setAllEnabled(true);
+        setPushEnabled(defaults.pushEnabled);
+        setWhatsappEnabled(defaults.whatsappEnabled);
+        setEmailFrequency(defaults.emailFrequency);
+        setQuietHoursEnabled(defaults.quietHoursEnabled);
+        setQuietStart(defaults.quietStart);
+        setQuietEnd(defaults.quietEnd);
+        setNotifyOrders(defaults.notifyOrders);
+        setNotifyPaymentFailures(defaults.notifyPaymentFailures);
+        setNotifyApprovals(defaults.notifyApprovals);
+        setNotifyLowConfidence(defaults.notifyLowConfidence);
+        setNotifyRestocks(defaults.notifyRestocks);
+        setNotifyRestockConfirmed(defaults.notifyRestockConfirmed);
+        setNotifyNewDevice(defaults.notifyNewDevice);
+        setNotifyPasswordChange(defaults.notifyPasswordChange);
+        setNotifyMarketing(defaults.notifyMarketing);
+        alert.success('Settings Restored', 'Notification settings have been reset to system defaults.');
       },
-    ]);
+    });
   }
 
   function handleTestNotification() {
-    Alert.alert('Test notification', "This is what a push from Biblo will look like once you're set up.");
+    alert.info('Test Push Notification', "This is a preview of an incoming Biblo real-time push notification.");
   }
 
   function handleClearBadge() {
-    Alert.alert('Badge cleared', 'Your app icon badge count has been reset.');
+    alert.success('Badge Cleared', 'Your app icon unread badge count has been reset.');
   }
 
   return (
@@ -339,7 +343,7 @@ export default function NotificationsScreen() {
               <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed mb-2">
                 Turn them on in your device settings to receive alerts from Biblo.
               </Text>
-              <Pressable onPress={() => Alert.alert('Open Settings', 'TODO: Linking.openSettings()')}>
+              <Pressable onPress={() => alert.info('Device Settings', 'Open your phone Settings > Biblo to enable push notification permissions.')}>
                 <Text style={{ color: '#F59E0B' }} className="text-xs font-bold">
                   Open Settings
                 </Text>
@@ -560,7 +564,7 @@ export default function NotificationsScreen() {
 
         <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-5 rounded-3xl border mb-8">
           <Pressable
-            onPress={() => Alert.alert('Notification History', 'TODO: navigate to a history/log screen.')}
+            onPress={() => router.push('/notification-history')}
             style={{ borderColor: c.border }}
             className="flex-row items-center justify-between py-4 border-b"
           >

@@ -58,6 +58,15 @@ export default function SearchScreen() {
                 return (
                   <Pressable
                     key={idx}
+                    onPress={() => {
+                      if (item.type === 'product') {
+                        router.push('/crm');
+                      } else if (item.type === 'customer' || item.type === 'chat') {
+                        router.push(item.id ? `/chat/${item.id}` : '/chats');
+                      } else if (item.type === 'order') {
+                        router.push('/finance');
+                      }
+                    }}
                     style={{ borderBottomColor: c.border }}
                     className="flex-row items-center py-4 border-b active:opacity-60"
                   >

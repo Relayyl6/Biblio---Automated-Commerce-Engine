@@ -50,11 +50,29 @@ export async function classifyAndRoute(
   const hasBusinessPrefix = /^business[:\s]+/i.test(rawText);
   const selfJid = msg.key.remoteJid || (vendor.business_line_number ? `${vendor.business_line_number}@s.whatsapp.net` : null);
 
+  const vendorPersonalPhone = normalisePhone(vendor.personal_number || "");
+  const vendorBusinessPhone = normalisePhone(vendor.business_line_number || "");
+
+  const hasImage = !!msg.message?.imageMessage;
+  const hasAudio = !!msg.message?.audioMessage;
+  const isStatusCommand = /^status\s+(on|off)$/i.test(rawText.trim());
+  const isInventoryPostInstruction = /\bpost(?:\s+(?:this|it))?\s+(?:now|in\s+\d+|to\s+[+\d])/i.test(rawText);
+  const isInventorySubmission = hasImage || hasAudio || isStatusCommand || isInventoryPostInstruction;
+
   if (isFromMe) {
-    // Human operator (vendor) replied via their linked WhatsApp device!
-    // We must pause the AI and log the message.
     const receiverJid = msg.key.remoteJid;
-    if (receiverJid && !receiverJid.endsWith('@g.us') && receiverJid !== 'status@broadcast') {
+    const receiverPhone = receiverJid ? jidToPhone(receiverJid) : "";
+    const isSelfNote = receiverPhone === vendorBusinessPhone || receiverJid === selfJid;
+
+    if (isSelfNote && isInventorySubmission) {
+      logger.info("[MessageClassifier] Routing Note-to-Self to parseVendorSubmission", { vendorId: vendor.id });
+      await parseVendorSubmission(msg, vendor, sock);
+      return;
+    }
+
+    // Human operator (vendor) replied via their linked WhatsApp device to a customer!
+    // We must pause the AI and log the message.
+    if (receiverJid && !receiverJid.endsWith('@g.us') && receiverJid !== 'status@broadcast' && !isSelfNote) {
       const customerId = jidToPhone(receiverJid);
       const merchantId = vendor.merchant_id;
       const content = extractRawText(msg);
@@ -94,17 +112,22 @@ export async function classifyAndRoute(
   }
 
   const senderPhone = jidToPhone(senderJid);
-  const vendorPersonalPhone = normalisePhone(vendor.personal_number || "");
-  const vendorBusinessPhone = normalisePhone(vendor.business_line_number || "");
 
   // If sender matches personal number (or business line itself)
   const isFromVendor = (senderPhone === vendorPersonalPhone || senderPhone === vendorBusinessPhone) && !isFromMe;
 
   if (isFromVendor) {
-    // ── Biblio Agent Command Center ────────────────────────────────────────
-    // If the vendor's personal number messages the business number, they chat
-    // with the Biblio Agent to manage the store and escalations.
-    await routeToBiblioAgent(msg, vendor, sock);
+    if (isInventorySubmission) {
+      // ── Vendor Inventory Ingestion ─────────────────────────────────────────
+      // Media or catalog push: parse with Whisper / Groq Vision / CLIP and upsert
+      logger.info("[MessageClassifier] Routing vendor media to parseVendorSubmission", { vendorId: vendor.id, senderPhone });
+      await parseVendorSubmission(msg, vendor, sock);
+    } else {
+      // ── Biblio Agent Command Center ────────────────────────────────────────
+      // If the vendor's personal number messages conversational text, they chat
+      // with the Biblio Agent to manage the store and escalations.
+      await routeToBiblioAgent(msg, vendor, sock);
+    }
   } else {
     // ── Customer query path ────────────────────────────────────────────────
     await routeToNegotiator(msg, vendor, sock);

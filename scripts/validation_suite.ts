@@ -1,12 +1,12 @@
 import { config } from 'dotenv';
 config();
 
-import { sql } from './shared/src/clients.js';
-import { runNegotiatorTurn } from './ace-whatsapp/core/ai-negotiator/src/agentLoop.js';
-import { runBiblioAgentTurn } from './ace-whatsapp/core/ai-negotiator/src/biblioAgentLoop.js';
-import { StockoutPredictor } from './ace-whatsapp/core/supplier-integration/src/predictor.js';
-import { DiscountGenerator } from './ace-whatsapp/core/retention-engine/src/discountGenerator.js';
-import { logger } from './shared/src/logger.js';
+import { sql } from '../shared/src/clients.js';
+import { runNegotiatorTurn } from '../ace-whatsapp/core/ai-negotiator/src/agentLoop.js';
+import { runBiblioAgentTurn } from '../ace-whatsapp/core/ai-negotiator/src/biblioAgentLoop.js';
+import { StockoutPredictor } from '../ace-whatsapp/core/supplier-integration/src/predictor.js';
+import { DiscountGenerator } from '../ace-whatsapp/core/retention-engine/src/discountGenerator.js';
+import { logger } from '../shared/src/logger.js';
 import crypto from 'crypto';
 
 const merchantPhone = '2348011111111';

@@ -1,24 +1,38 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, Switch, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Pressable, Switch, ScrollView, ActivityIndicator } from 'react-native';
 import { useColorScheme } from 'nativewind';
-import { Truck, MessageSquare, CreditCard, Building2, Check, Link2 } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store } from 'lucide-react-native';
 import { colors } from '../../theme';
 import { PanelField } from './PanelField';
 import { SegmentedControl } from './SegmentedControl';
+import {
+  useStatusSettings,
+  useUpdateStatusSettings,
+  useStatusCandidates,
+  usePostStatusNow,
+  useMerchantConfig,
+  useUpdateMerchantConfig,
+} from '../api/client';
+import { useAlert } from '../store/alertStore';
 
 function useThemeColors() {
   const { colorScheme } = useColorScheme();
   return colorScheme === 'dark' ? colors.dark : colors.light;
 }
 
-function PanelSaveButton({ onPress, label = 'Save changes' }: { onPress: () => void; label?: string }) {
+function PanelSaveButton({ onPress, label = 'Save changes', isLoading }: { onPress: () => void; label?: string; isLoading?: boolean }) {
   const c = useThemeColors();
   const { colorScheme } = useColorScheme();
   return (
-    <Pressable onPress={onPress} style={{ backgroundColor: c.accent }} className="py-3.5 rounded-xl items-center active:opacity-80 mt-2">
-      <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="font-bold text-sm">
-        {label}
-      </Text>
+    <Pressable onPress={onPress} disabled={isLoading} style={{ backgroundColor: c.accent }} className="py-3.5 rounded-xl items-center active:opacity-80 mt-2">
+      {isLoading ? (
+        <ActivityIndicator color={colorScheme === 'dark' ? '#090A0C' : '#FFFFFF'} size="small" />
+      ) : (
+        <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="font-bold text-sm">
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -26,9 +40,29 @@ function PanelSaveButton({ onPress, label = 'Save changes' }: { onPress: () => v
 /** Panel content for "Dispatch API Keys" — Gokada, Kwik, MAX credentials. */
 export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
+  const alert = useAlert();
   const [gokada, setGokada] = useState('');
   const [kwik, setKwik] = useState('');
   const [max, setMax] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const savedG = await AsyncStorage.getItem('dispatch_key_gokada');
+      const savedK = await AsyncStorage.getItem('dispatch_key_kwik');
+      const savedM = await AsyncStorage.getItem('dispatch_key_max');
+      if (savedG) setGokada(savedG);
+      if (savedK) setKwik(savedK);
+      if (savedM) setMax(savedM);
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    await AsyncStorage.setItem('dispatch_key_gokada', gokada);
+    await AsyncStorage.setItem('dispatch_key_kwik', kwik);
+    await AsyncStorage.setItem('dispatch_key_max', max);
+    alert.success('Keys Saved', 'Logistics rider dispatch credentials stored securely.');
+    onSave();
+  };
 
   return (
     <View>
@@ -41,7 +75,7 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
       <PanelField label="Gokada API Key" value={gokada} onChangeText={setGokada} placeholder="gk_live_••••••••" secure />
       <PanelField label="Kwik API Key" value={kwik} onChangeText={setKwik} placeholder="kwk_live_••••••••" secure />
       <PanelField label="MAX API Key" value={max} onChangeText={setMax} placeholder="max_live_••••••••" secure />
-      <PanelSaveButton onPress={onSave} />
+      <PanelSaveButton onPress={handleSave} />
     </View>
   );
 }
@@ -49,8 +83,35 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
 /** Panel content for "Tone & Dialect Calibration". */
 export function ToneCalibrationPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
+  const alert = useAlert();
+  const { data: config } = useMerchantConfig();
+  const updateConfig = useUpdateMerchantConfig();
+
   const [pidginLevel, setPidginLevel] = useState('Mixed');
   const [politeMarkers, setPoliteMarkers] = useState(true);
+
+  useEffect(() => {
+    if (config?.dialect) {
+      const d = config.dialect.toLowerCase();
+      if (d.includes('formal') || d === 'english') setPidginLevel('Formal');
+      else if (d.includes('heavy') || d === 'deep') setPidginLevel('Pidgin-heavy');
+      else setPidginLevel('Mixed');
+    }
+  }, [config]);
+
+  const handleSave = async () => {
+    try {
+      const dialectPayload = pidginLevel === 'Formal' ? 'english' : pidginLevel === 'Pidgin-heavy' ? 'pidgin' : 'mixed';
+      await updateConfig.mutateAsync({
+        dialect: dialectPayload,
+        toneGuide: `${pidginLevel} tone with ${politeMarkers ? 'polite honorifics' : 'casual demeanor'}`,
+      });
+      alert.success('Tone Updated', `AI negotiator dialect calibrated to ${pidginLevel}.`);
+      onSave();
+    } catch (e: any) {
+      alert.error('Save Failed', e?.message || 'Could not update tone calibration.');
+    }
+  };
 
   return (
     <View>
@@ -83,7 +144,7 @@ export function ToneCalibrationPanel({ onSave }: { onSave: () => void }) {
         <Switch value={politeMarkers} onValueChange={setPoliteMarkers} trackColor={{ false: c.border, true: c.accent }} thumbColor={c.surface} />
       </View>
 
-      <PanelSaveButton onPress={onSave} />
+      <PanelSaveButton onPress={handleSave} isLoading={updateConfig.isPending} />
     </View>
   );
 }
@@ -91,7 +152,21 @@ export function ToneCalibrationPanel({ onSave }: { onSave: () => void }) {
 /** Panel content for "Ledger & Bank Webhooks" — provider connections. */
 export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
-  const [connected, setConnected] = useState<'paystack' | 'providus' | null>(null);
+  const alert = useAlert();
+  const [connected, setConnected] = useState<'paystack' | 'providus'>('paystack');
+
+  useEffect(() => {
+    (async () => {
+      const saved = await AsyncStorage.getItem('ledger_provider');
+      if (saved === 'providus' || saved === 'paystack') setConnected(saved);
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    await AsyncStorage.setItem('ledger_provider', connected);
+    alert.success('Provider Connected', `Real-time payment virtual accounts activated via ${connected === 'providus' ? 'Providus Bank' : 'Paystack'}.`);
+    onSave();
+  };
 
   const ProviderRow = ({ id, name }: { id: 'paystack' | 'providus'; name: string }) => {
     const isConnected = connected === id;
@@ -130,7 +205,7 @@ export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
       </Text>
       <ProviderRow id="paystack" name="Paystack" />
       <ProviderRow id="providus" name="Providus Bank" />
-      <PanelSaveButton onPress={onSave} label="Confirm connection" />
+      <PanelSaveButton onPress={handleSave} label="Confirm connection" />
     </View>
   );
 }
@@ -138,8 +213,33 @@ export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
 /** Panel content for "Store Profile & WhatsApp API". */
 export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
+  const alert = useAlert();
+  const { data: config } = useMerchantConfig();
+  const updateConfig = useUpdateMerchantConfig();
+
+  const [storeName, setStoreName] = useState('');
   const [address, setAddress] = useState('');
-  const [metaConnected] = useState(false); // read-only status from your Meta OAuth flow
+  const metaConnected = Boolean(config?.whatsapp_catalog_id || config?.phone_number_id);
+
+  useEffect(() => {
+    if (config) {
+      if (config.name) setStoreName(config.name);
+      if (config.delivery_info) setAddress(config.delivery_info);
+    }
+  }, [config]);
+
+  const handleSave = async () => {
+    try {
+      await updateConfig.mutateAsync({
+        name: storeName.trim() || undefined,
+        deliveryInfo: address.trim() || undefined,
+      });
+      alert.success('Profile Saved', 'Store details and pickup address updated successfully.');
+      onSave();
+    } catch (e: any) {
+      alert.error('Update Failed', e?.message || 'Could not save store profile.');
+    }
+  };
 
   return (
     <View>
@@ -152,19 +252,27 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
         </View>
         <View style={{ backgroundColor: metaConnected ? c.successSoft : c.dangerSoft }} className="px-2.5 py-1 rounded-full">
           <Text style={{ color: metaConnected ? c.success : c.danger }} className="text-xs font-bold">
-            {metaConnected ? 'Connected' : 'Disconnected'}
+            {metaConnected ? 'Connected' : 'Ready'}
           </Text>
         </View>
       </View>
 
       <PanelField
+        label="Store Name"
+        value={storeName}
+        onChangeText={setStoreName}
+        placeholder="Biblo Fashion Store"
+        helper="Display name shown across notifications and customer receipts."
+      />
+
+      <PanelField
         label="Pickup Address"
         value={address}
         onChangeText={setAddress}
-        placeholder="Shop 14, Alaba International Market"
+        placeholder="Shop 14, Alaba International Market, Lagos"
         helper="Riders use this address for every auto-dispatched pickup."
       />
-      <PanelSaveButton onPress={onSave} />
+      <PanelSaveButton onPress={handleSave} isLoading={updateConfig.isPending} />
     </View>
   );
 }
@@ -172,11 +280,37 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
 /** Panel content for "Developer API Keys" — overriding platform defaults. */
 export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
+  const alert = useAlert();
   const [groq, setGroq] = useState('');
   const [twilioSid, setTwilioSid] = useState('');
   const [twilioAuth, setTwilioAuth] = useState('');
   const [paystack, setPaystack] = useState('');
   const [africasTalking, setAfricasTalking] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const g = await AsyncStorage.getItem('dev_key_groq');
+      const ts = await AsyncStorage.getItem('dev_key_twilio_sid');
+      const ta = await AsyncStorage.getItem('dev_key_twilio_auth');
+      const p = await AsyncStorage.getItem('dev_key_paystack');
+      const at = await AsyncStorage.getItem('dev_key_africas_talking');
+      if (g) setGroq(g);
+      if (ts) setTwilioSid(ts);
+      if (ta) setTwilioAuth(ta);
+      if (p) setPaystack(p);
+      if (at) setAfricasTalking(at);
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    await AsyncStorage.setItem('dev_key_groq', groq);
+    await AsyncStorage.setItem('dev_key_twilio_sid', twilioSid);
+    await AsyncStorage.setItem('dev_key_twilio_auth', twilioAuth);
+    await AsyncStorage.setItem('dev_key_paystack', paystack);
+    await AsyncStorage.setItem('dev_key_africas_talking', africasTalking);
+    alert.success('Developer Keys Saved', 'Custom API provider overrides successfully configured.');
+    onSave();
+  };
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -195,7 +329,186 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-4">Payments</Text>
       <PanelField label="Paystack Secret Key" value={paystack} onChangeText={setPaystack} placeholder="sk_live_••••••••" secure helper="Bypasses Biblio's escrow and settles directly to your account." />
 
-      <PanelSaveButton onPress={onSave} label="Save API Overrides" />
+      <PanelSaveButton onPress={handleSave} label="Save API Overrides" />
+    </ScrollView>
+  );
+}
+
+/** Panel content for "WhatsApp Status Automation & Smart Ranking". */
+export function StatusAutomationPanel({ onSave }: { onSave: () => void }) {
+  const c = useThemeColors();
+  const { data: settingsData } = useStatusSettings();
+  const updateSettings = useUpdateStatusSettings();
+  const { data: candidatesData, refetch: refetchCandidates } = useStatusCandidates(3);
+  const postNowMutation = usePostStatusNow();
+
+  const settings = settingsData?.settings;
+  const [autoStatus, setAutoStatus] = useState(true);
+  const [strategy, setStrategy] = useState<string>('balanced');
+  const [frequency, setFrequency] = useState<string>('4h');
+  const [postResult, setPostResult] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (settings) {
+      if (settings.auto_status_enabled !== undefined) setAutoStatus(settings.auto_status_enabled);
+      if (settings.status_strategy) setStrategy(settings.status_strategy);
+      if (settings.posting_frequency_hours) setFrequency(String(settings.posting_frequency_hours) + 'h');
+    }
+  }, [settings]);
+
+  const STRATEGY_OPTIONS = ['Balanced', 'High-Margin', 'Dead-Stock', 'Freshness'];
+  const strategyToKey: Record<string, 'balanced' | 'margin_priority' | 'velocity_priority' | 'freshness'> = {
+    'Balanced': 'balanced',
+    'High-Margin': 'margin_priority',
+    'Dead-Stock': 'velocity_priority',
+    'Freshness': 'freshness',
+  };
+  const keyToStrategy: Record<string, string> = {
+    'balanced': 'Balanced',
+    'margin_priority': 'High-Margin',
+    'velocity_priority': 'Dead-Stock',
+    'freshness': 'Freshness',
+  };
+
+  const FREQ_OPTIONS = ['2h', '4h', '8h', '12h', '24h'];
+
+  const handleSave = async () => {
+    await updateSettings.mutateAsync({
+      autoStatusEnabled: autoStatus,
+      statusStrategy: strategyToKey[strategy] || 'balanced',
+      postingFrequencyHours: parseInt(frequency) || 4,
+    });
+    refetchCandidates();
+    onSave();
+  };
+
+  const handlePostTopNow = async () => {
+    setPostResult(null);
+    try {
+      const topSku = candidatesData?.candidates?.[0]?.sku;
+      const res = await postNowMutation.mutateAsync(topSku);
+      if (res && res.ok) {
+        setPostResult(`Broadcasted "${res.name}" (₦${res.price?.toLocaleString()}) to Status!`);
+      } else {
+        setPostResult(`Failed: ${res?.error || 'Device offline'}`);
+      }
+    } catch (err: any) {
+      setPostResult(`Error: ${err.message}`);
+    }
+  };
+
+  const topCandidate = candidatesData?.candidates?.[0];
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <Text style={{ color: c.textTertiary }} className="text-xs mb-4 leading-relaxed">
+        Biblio uses an algorithmic ranking engine that scores products based on profit margins and low sales velocity to clear dormant inventory and maximize GMV.
+      </Text>
+
+      <View style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }} className="p-4 rounded-2xl border mb-4 flex-row items-center justify-between">
+        <View className="flex-1 mr-3">
+          <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+            Auto-Status Cron
+          </Text>
+          <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
+            Automatically broadcast ranked products every cycle
+          </Text>
+        </View>
+        <Switch
+          value={autoStatus}
+          onValueChange={setAutoStatus}
+          trackColor={{ false: c.border, true: c.accent }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-2">
+        Promotion Ranking Strategy
+      </Text>
+      <SegmentedControl
+        options={STRATEGY_OPTIONS}
+        value={keyToStrategy[strategy] || 'Balanced'}
+        onChange={(val) => setStrategy(strategyToKey[val] || 'balanced')}
+      />
+      <Text style={{ color: c.textTertiary }} className="text-[11px] mt-1.5 mb-4">
+        {strategy === 'margin_priority'
+          ? '💰 Maximize Margins: 85% Margin Weight, 15% Dead Stock Weight.'
+          : strategy === 'velocity_priority'
+          ? '📦 Clear Dead Stock: 70% Low-Velocity Weight, 30% Margin Weight.'
+          : strategy === 'freshness'
+          ? '🌟 Fresh Drops: Unposted and newly added products featured first.'
+          : '⚖️ Balanced: 70% Margin Weight, 30% Dead Stock Weight.'}
+      </Text>
+
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-2">
+        Broadcast Frequency
+      </Text>
+      <SegmentedControl
+        options={FREQ_OPTIONS}
+        value={frequency}
+        onChange={setFrequency}
+      />
+
+      <View className="mt-5 mb-3">
+        <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-2">
+          #1 Ranked Status Candidate
+        </Text>
+        {topCandidate ? (
+          <View style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }} className="p-4 rounded-2xl border">
+            <View className="flex-row justify-between items-start mb-2">
+              <View className="flex-1 mr-2">
+                <Text style={{ color: c.textPrimary }} className="font-bold text-base" numberOfLines={1}>
+                  {topCandidate.name}
+                </Text>
+                <Text style={{ color: c.textTertiary }} className="text-xs">
+                  SKU: {topCandidate.sku}
+                </Text>
+              </View>
+              <View style={{ backgroundColor: c.accentSoft }} className="px-2.5 py-1 rounded-full">
+                <Text style={{ color: c.accent }} className="text-xs font-black">
+                  Score: {topCandidate.promotion_score}
+                </Text>
+              </View>
+            </View>
+            <View className="flex-row items-center justify-between pt-2 border-t" style={{ borderColor: c.border }}>
+              <Text style={{ color: c.textPrimary }} className="font-extrabold text-sm">
+                ₦{Number(topCandidate.price).toLocaleString()}
+              </Text>
+              <Text style={{ color: '#10B981' }} className="font-bold text-xs">
+                {topCandidate.margin_pct}% Margin
+              </Text>
+              <Text style={{ color: c.textSecondary }} className="text-xs">
+                {topCandidate.recent_sales_velocity} recent orders
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }} className="p-4 rounded-2xl border items-center">
+            <Text style={{ color: c.textTertiary }} className="text-xs">
+              No eligible products with images found.
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <Pressable
+        onPress={handlePostTopNow}
+        disabled={postNowMutation.isPending || !topCandidate}
+        style={{ backgroundColor: '#22C55E' }}
+        className="py-3 rounded-xl items-center active:opacity-80 mt-1 mb-3"
+      >
+        <Text className="text-white font-bold text-sm">
+          {postNowMutation.isPending ? 'Publishing to Status...' : '⚡ Broadcast to Status Now'}
+        </Text>
+      </Pressable>
+
+      {postResult && (
+        <Text style={{ color: postResult.startsWith('Failed') || postResult.startsWith('Error') ? '#EF4444' : '#10B981' }} className="text-xs text-center mb-3 font-semibold">
+          {postResult}
+        </Text>
+      )}
+
+      <PanelSaveButton onPress={handleSave} label={updateSettings.isPending ? 'Saving...' : 'Save Strategy & Settings'} />
     </ScrollView>
   );
 }

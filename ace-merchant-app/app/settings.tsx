@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History } from 'lucide-react-native';
 import { colors } from '../theme';
+import { useAuthStore } from '../src/store/authStore';
+import { useAlert } from '../src/store/alertStore';
+import { useMerchantConfig, useUpdateMerchantConfig } from '../src/api/client';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { Section, ToggleRow, InputRow, NavigationRow } from '../src/components/SettingsRows';
 import { SidePanel } from '../src/components/SidePanel';
@@ -13,9 +16,10 @@ import {
   LedgerWebhooksPanel,
   StoreProfilePanel,
   DeveloperApiKeysPanel,
+  StatusAutomationPanel,
 } from '../src/components/SettingsPanels';
 
-type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | null;
+type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | 'status' | null;
 
 const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: string }> = {
   dispatch: { title: 'Dispatch API Keys', subtitle: 'Gokada, Kwik and MAX logistics credentials.' },
@@ -23,12 +27,17 @@ const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: str
   ledger: { title: 'Ledger & Bank Webhooks', subtitle: 'Connect a provider for real-time virtual accounts.' },
   profile: { title: 'Store Profile & WhatsApp API', subtitle: 'Pickup address and Meta OAuth status.' },
   developer: { title: 'Developer API Keys', subtitle: 'Override platform defaults with your own provider keys.' },
+  status: { title: 'WhatsApp Status Engine', subtitle: 'Smart ranking strategy, auto-broadcast cycles & instant pushes.' },
 };
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const alert = useAlert();
+  const logout = useAuthStore(state => state.logout);
+  const { data: config } = useMerchantConfig();
+  const updateConfigMutation = useUpdateMerchantConfig();
 
   const [activePanel, setActivePanel] = useState<PanelKey>(null);
   const closePanel = () => setActivePanel(null);
@@ -42,6 +51,30 @@ export default function SettingsScreen() {
 
   const [maxAutoValue, setMaxAutoValue] = useState('50000');
   const [maxDiscount, setMaxDiscount] = useState('8');
+
+  useEffect(() => {
+    if (config) {
+      if (config.max_discount_percentage !== undefined) {
+        setMaxDiscount(String(config.max_discount_percentage));
+      }
+      if (config.auto_dispatch_riders !== undefined) {
+        setAutoDispatch(Boolean(config.auto_dispatch_riders));
+      }
+    }
+  }, [config]);
+
+  const handleSignOut = () => {
+    alert.showConfirm({
+      title: 'Sign Out',
+      message: 'Are you sure you want to disconnect this device from your Biblo merchant account?',
+      confirmLabel: 'Sign Out',
+      destructive: true,
+      onConfirm: () => {
+        logout();
+        router.replace('/login');
+      },
+    });
+  };
 
   return (
     <View style={{ backgroundColor: c.bg }} className="flex-1">
@@ -122,6 +155,16 @@ export default function SettingsScreen() {
           />
         </Section>
 
+        <Section title="WhatsApp Status & Merchandising" icon={MessageSquare} delay={220}>
+          <NavigationRow
+            title="Smart Status Ranking & Broadcasts"
+            subtitle="Control profit margin vs dead-stock ranking, frequency, and instant Status pushes."
+            icon={MessageSquare}
+            onPress={() => setActivePanel('status')}
+            isLast
+          />
+        </Section>
+
         <Section title="Payments & Security" icon={ShieldCheck} delay={250}>
           <ToggleRow
             title="New Customer Cooling Period"
@@ -178,6 +221,12 @@ export default function SettingsScreen() {
             onPress={() => router.push('/notifications')}
           />
           <NavigationRow
+            title="Notification History"
+            subtitle="Delivery audit trail for SMS and WhatsApp"
+            icon={History}
+            onPress={() => router.push('/notification-history')}
+          />
+          <NavigationRow
             title="Help & Support"
             subtitle="Guides and contact"
             icon={HelpCircle}
@@ -187,7 +236,7 @@ export default function SettingsScreen() {
             title="Sign out"
             subtitle="Disconnect this device"
             icon={LogOut}
-            onPress={() => {}}
+            onPress={handleSignOut}
             isLast
           />
         </Section>
@@ -204,6 +253,7 @@ export default function SettingsScreen() {
         {activePanel === 'ledger' && <LedgerWebhooksPanel onSave={closePanel} />}
         {activePanel === 'profile' && <StoreProfilePanel onSave={closePanel} />}
         {activePanel === 'developer' && <DeveloperApiKeysPanel onSave={closePanel} />}
+        {activePanel === 'status' && <StatusAutomationPanel onSave={closePanel} />}
       </SidePanel>
     </View>
   );

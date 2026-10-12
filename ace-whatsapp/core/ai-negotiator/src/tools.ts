@@ -773,7 +773,9 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
           amount: customerPayableAmount * 100,
           email: `${ctx.customerId.replace(/[^a-zA-Z0-9]/g, "")}@ace-commerce.app`,
           currency: "NGN",
-          channels: ["bank_transfer"],
+          bank_transfer: {
+            account_expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          },
           metadata: {
             orderId: ctx.orderState.orderId,
             merchantId: ctx.merchantId,
@@ -784,24 +786,27 @@ async function issuePaymentLink(ctx: ToolContext): Promise<ToolResult> {
         }),
       });
       const chargeData = await chargeRes.json() as any;
-      if (!chargeRes.ok) {
+      if (!chargeRes.ok || !chargeData.status) {
         throw new Error(`Paystack API returned ${chargeRes.status}: ${JSON.stringify(chargeData)}`);
       }
 
       // Paystack bank_transfer returns account details under authorization
       virtualAccountNumber =
-        chargeData.data?.authorization?.receiver_bank_account_number ??
+        chargeData.data?.account_number ??
         chargeData.data?.bank_transfer?.account_number ??
-        chargeData.data?.account_number;
+        chargeData.data?.authorization?.account_number;
       
       if (!virtualAccountNumber) {
         throw new Error("Paystack did not return a virtual account number");
       }
 
       bankName =
+        chargeData.data?.bank?.name ??
         chargeData.data?.authorization?.receiver_bank ??
         chargeData.data?.bank_transfer?.bank_name ??
         bankName;
+
+      accountName = chargeData.data?.account_name ?? accountName;
     } catch (err) {
       logger.error("[tools] Paystack charge failed:", err);
       return { output: { ok: false, error: "Payment provider unavailable. Tell the customer to try again in a few minutes." } };

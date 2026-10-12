@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator, Linking, Modal } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Bot, MoreVertical, Phone } from 'lucide-react-native';
+import { ArrowLeft, Bot, MoreVertical, Phone, UserCheck, ShieldAlert, CreditCard, Copy, X } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
-import { useChatDetails, useTakeoverChat, useSendChatMessage } from '../../src/api/client';
+import * as Haptics from 'expo-haptics';
+import { useChatDetails, useTakeoverChat, useReleaseTakeoverChat, useSendChatMessage } from '../../src/api/client';
+import { useAlert } from '../../src/store/alertStore';
 import { colors } from '../../theme';
 import { Avatar } from '../../src/components/Avatar';
 import { MessageBubble, ChatMessage } from '../../src/components/MessageBubble';
@@ -17,18 +19,21 @@ export default function ChatDetailScreen() {
   const customerId = id as string;
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const alert = useAlert();
 
   const { data: chatData, isLoading, refetch } = useChatDetails(customerId);
   const takeoverMutation = useTakeoverChat();
+  const releaseTakeoverMutation = useReleaseTakeoverChat();
   const sendMutation = useSendChatMessage();
 
   const [replyText, setReplyText] = useState('');
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   const isHumanOverride = chatData?.isHumanOverride || false;
   const messages: ChatMessage[] = chatData?.messages || [];
   const customerName = chatData?.customerName || `Customer ${customerId}`;
-  const customerPhone = chatData?.customerPhone;
+  const customerPhone = chatData?.customerPhone || (customerId.startsWith('+') || /^\d+$/.test(customerId) ? customerId : undefined);
   const isAiComposing = chatData?.isAiComposing || false;
   const aiDraftMessage = chatData?.aiDraftMessage || '';
 
@@ -40,8 +45,36 @@ export default function ChatDetailScreen() {
   }, [messages.length, isAiComposing, aiDraftMessage]);
 
   const handleTakeover = async () => {
-    await takeoverMutation.mutateAsync(customerId);
-    refetch();
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await takeoverMutation.mutateAsync(customerId);
+      alert.info('Manual Override Active', 'Biblo AI is paused. You have taken over this chat for the next hour.');
+      refetch();
+    } catch (e: any) {
+      alert.error('Takeover Failed', e?.message || 'Could not pause Biblo AI.');
+    }
+  };
+
+  const handleReleaseTakeover = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await releaseTakeoverMutation.mutateAsync(customerId);
+      alert.success('Biblo AI Resumed', 'Autopilot restored. Biblo AI is now actively handling this customer.');
+      refetch();
+    } catch (e: any) {
+      alert.error('Handback Failed', e?.message || 'Could not resume Biblo AI.');
+    }
+  };
+
+  const handleCall = () => {
+    if (!customerPhone) {
+      alert.warning('No Phone Number', 'No valid phone number recorded for this customer.');
+      return;
+    }
+    const cleanPhone = customerPhone.replace(/[^\d+]/g, '');
+    Linking.openURL(`tel:${cleanPhone}`).catch(() => {
+      alert.error('Dialer Error', 'Could not open native phone dialer.');
+    });
   };
 
   const handleSend = async () => {
@@ -74,16 +107,24 @@ export default function ChatDetailScreen() {
         </View>
 
         {customerPhone && (
-          <Pressable style={{ backgroundColor: c.surfaceAlt }} className="w-9 h-9 rounded-full items-center justify-center mr-2 active:opacity-70">
+          <Pressable
+            onPress={handleCall}
+            style={{ backgroundColor: c.surfaceAlt }}
+            className="w-9 h-9 rounded-full items-center justify-center mr-2 active:opacity-70"
+          >
             <Phone size={16} color={c.textPrimary} />
           </Pressable>
         )}
-        <Pressable style={{ backgroundColor: c.surfaceAlt }} className="w-9 h-9 rounded-full items-center justify-center active:opacity-70">
+        <Pressable
+          onPress={() => setShowOptionsModal(true)}
+          style={{ backgroundColor: c.surfaceAlt }}
+          className="w-9 h-9 rounded-full items-center justify-center active:opacity-70"
+        >
           <MoreVertical size={16} color={c.textPrimary} />
         </Pressable>
       </View>
 
-      {!isHumanOverride && (
+      {!isHumanOverride ? (
         <View style={{ backgroundColor: c.accentSoft }} className="px-4 py-2.5 flex-row items-center justify-between">
           <Text style={{ color: c.textPrimary }} className="text-xs flex-1 mr-3">
             Biblo AI is replying automatically. Take over any time to respond yourself.
@@ -94,6 +135,21 @@ export default function ChatDetailScreen() {
             ) : (
               <Text style={{ color: c.accent }} className="text-xs font-bold">
                 Take over
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      ) : (
+        <View style={{ backgroundColor: '#22C55E1A' }} className="px-4 py-2.5 flex-row items-center justify-between">
+          <Text style={{ color: c.textPrimary }} className="text-xs flex-1 mr-3">
+            Manual takeover active. AI responses paused.
+          </Text>
+          <Pressable onPress={handleReleaseTakeover} disabled={releaseTakeoverMutation.isPending} className="active:opacity-70">
+            {releaseTakeoverMutation.isPending ? (
+              <ActivityIndicator size="small" color="#22C55E" />
+            ) : (
+              <Text style={{ color: '#22C55E' }} className="text-xs font-bold">
+                Hand back to AI
               </Text>
             )}
           </Pressable>
@@ -144,6 +200,111 @@ export default function ChatDetailScreen() {
         onRequestTakeover={handleTakeover}
         isTakingOver={takeoverMutation.isPending}
       />
+
+      {/* Options Sheet Modal */}
+      <Modal visible={showOptionsModal} transparent animationType="fade" onRequestClose={() => setShowOptionsModal(false)}>
+        <Pressable onPress={() => setShowOptionsModal(false)} className="flex-1 bg-black/60 justify-end">
+          <Pressable onPress={e => e.stopPropagation()} style={{ backgroundColor: c.surface, borderColor: c.border }} className="rounded-t-3xl p-6 border-t">
+            <View className="flex-row items-center justify-between pb-4 border-b mb-4" style={{ borderColor: c.border }}>
+              <View>
+                <Text style={{ color: c.textPrimary }} className="text-lg font-bold">
+                  {customerName}
+                </Text>
+                <Text style={{ color: c.textSecondary }} className="text-xs">
+                  {customerPhone || 'Customer Actions'}
+                </Text>
+              </View>
+              <Pressable onPress={() => setShowOptionsModal(false)} className="p-2">
+                <X size={20} color={c.textTertiary} />
+              </Pressable>
+            </View>
+
+            <View className="gap-2">
+              <Pressable
+                onPress={() => {
+                  setShowOptionsModal(false);
+                  if (isHumanOverride) {
+                    handleReleaseTakeover();
+                  } else {
+                    handleTakeover();
+                  }
+                }}
+                style={{ backgroundColor: c.surfaceAlt }}
+                className="flex-row items-center p-3.5 rounded-2xl active:opacity-70"
+              >
+                <Bot size={18} color={c.accent} style={{ marginRight: 12 }} />
+                <View className="flex-1">
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+                    {isHumanOverride ? 'Resume Biblo AI Autopilot' : 'Take Over Conversation'}
+                  </Text>
+                  <Text style={{ color: c.textSecondary }} className="text-xs">
+                    {isHumanOverride ? 'Let AI auto-reply to incoming texts' : 'Pause AI and reply manually'}
+                  </Text>
+                </View>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowOptionsModal(false);
+                  router.push('/crm');
+                }}
+                style={{ backgroundColor: c.surfaceAlt }}
+                className="flex-row items-center p-3.5 rounded-2xl active:opacity-70"
+              >
+                <UserCheck size={18} color="#8B5CF6" style={{ marginRight: 12 }} />
+                <View className="flex-1">
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+                    View in CRM & Catalog
+                  </Text>
+                  <Text style={{ color: c.textSecondary }} className="text-xs">
+                    Inspect product floors and stock
+                  </Text>
+                </View>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowOptionsModal(false);
+                  setReplyText(`Please proceed to complete payment here: https://pay.biblo.ai/order/${customerId.slice(0, 8)}`);
+                }}
+                style={{ backgroundColor: c.surfaceAlt }}
+                className="flex-row items-center p-3.5 rounded-2xl active:opacity-70"
+              >
+                <CreditCard size={18} color={c.success} style={{ marginRight: 12 }} />
+                <View className="flex-1">
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+                    Insert Payment Link Draft
+                  </Text>
+                  <Text style={{ color: c.textSecondary }} className="text-xs">
+                    Pre-fill input with verified payment checkout link
+                  </Text>
+                </View>
+              </Pressable>
+
+              {customerPhone && (
+                <Pressable
+                  onPress={() => {
+                    setShowOptionsModal(false);
+                    handleCall();
+                  }}
+                  style={{ backgroundColor: c.surfaceAlt }}
+                  className="flex-row items-center p-3.5 rounded-2xl active:opacity-70"
+                >
+                  <Phone size={18} color="#3B82F6" style={{ marginRight: 12 }} />
+                  <View className="flex-1">
+                    <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+                      Call Customer
+                    </Text>
+                    <Text style={{ color: c.textSecondary }} className="text-xs">
+                      {customerPhone}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

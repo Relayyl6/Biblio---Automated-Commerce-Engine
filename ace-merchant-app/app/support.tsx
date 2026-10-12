@@ -6,12 +6,12 @@ import {
   Pressable,
   Linking,
   TextInput,
-  Alert,
   Platform,
   LayoutAnimation,
   UIManager,
 } from 'react-native';
 import { useColorScheme } from 'nativewind';
+import { useAlert } from '../src/store/alertStore';
 import {
   Mail,
   PhoneCall,
@@ -28,6 +28,7 @@ import {
 } from 'lucide-react-native';
 import { colors } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
+import { useSubmitSupportTicket } from '../src/api/client';
 
 type C = typeof colors.light;
 
@@ -168,6 +169,8 @@ export default function SupportScreen() {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const isOpen = useIsSupportOpen();
+  const alert = useAlert();
+  const submitTicket = useSubmitSupportTicket();
 
   const [query, setQuery] = useState('');
   const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
@@ -190,18 +193,28 @@ export default function SupportScreen() {
 
   async function handleSubmitTicket() {
     if (!ticketSubject.trim() || !ticketMessage.trim()) {
-      Alert.alert('Almost there', 'Add a subject and a short message so we know what you need.');
+      alert.warning('Almost there', 'Please add a subject and a short message so our team can help you promptly.');
       return;
     }
     setTicketSending(true);
-    // TODO: POST to your support/ticketing endpoint (e.g. Zendesk, Intercom,
-    // or your own API). Simulated here so the UI is fully functional on its
-    // own — swap this block out, nothing else needs to change.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setTicketSending(false);
-    setTicketSent(true);
-    setTicketSubject('');
-    setTicketMessage('');
+    try {
+      const res = await submitTicket.mutateAsync({
+        subject: ticketSubject.trim(),
+        message: ticketMessage.trim(),
+        priority: 'normal',
+      });
+      setTicketSent(true);
+      setTicketSubject('');
+      setTicketMessage('');
+      alert.success(
+        'Inquiry Logged',
+        `Reference: ${res?.reference || 'TKT-QUEUED'}. Your ticket has been logged with Biblo priority support.`
+      );
+    } catch (err: any) {
+      alert.error('Submission Failed', err?.response?.data?.error || err.message || 'Could not submit support ticket.');
+    } finally {
+      setTicketSending(false);
+    }
   }
 
   return (

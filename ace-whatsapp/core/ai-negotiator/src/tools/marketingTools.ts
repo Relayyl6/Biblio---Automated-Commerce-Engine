@@ -23,17 +23,48 @@ export const marketingTools = [
     "type": "function",
     "function": {
       "name": "configure_status_mode",
-      "description": "Toggle auto-posting to Status",
+      "description": "Configure WhatsApp Status auto-posting (enable/disable, frequency in hours, and approval requirement).",
       "parameters": {
         "type": "object",
         "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
+          "enabled": { "type": "boolean", "description": "Whether auto status posting is enabled" },
+          "frequencyHours": { "type": "number", "description": "How often to post in hours (e.g. 2, 4, 8)" },
+          "approveBeforePost": { "type": "boolean", "description": "Whether posts require manual approval" }
         },
-        "required": [
-          "enabled"
-        ]
+        "required": ["enabled"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_status_strategy",
+      "description": "Set the ranking strategy for WhatsApp Status auto-posting: 'balanced' (70% margin, 30% dead stock), 'margin_priority' (maximize profits), 'velocity_priority' (clear dead stock), or 'freshness' (newest additions first).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": ["balanced", "margin_priority", "velocity_priority", "freshness"],
+            "description": "The promotion ranking strategy"
+          },
+          "marginWeight": { "type": "number", "description": "Optional custom margin weight (0.0 to 1.0)" },
+          "velocityWeight": { "type": "number", "description": "Optional custom velocity weight (0.0 to 1.0)" }
+        },
+        "required": ["strategy"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_status_recommendations",
+      "description": "Get the top-ranked products currently recommended for WhatsApp Status based on the active ranking strategy, margin %, and sales velocity.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "number", "description": "Number of recommendations to fetch (default: 3)" }
+        }
       }
     }
   },
@@ -41,17 +72,12 @@ export const marketingTools = [
     "type": "function",
     "function": {
       "name": "post_to_status_now",
-      "description": "Immediately push a specific product",
+      "description": "Immediately broadcast a product to WhatsApp Status. If SKU is omitted, broadcasts the #1 top-ranked candidate product.",
       "parameters": {
         "type": "object",
         "properties": {
-          "sku": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "sku"
-        ]
+          "sku": { "type": "string", "description": "Optional SKU of the product to post. Omit to post top recommendation." }
+        }
       }
     }
   },
@@ -329,26 +355,156 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
     return "Image match confident (96%). Matched SKU: BLUE-SATIN-MIDI-DRESS. Price: 18500.";
   },
   configure_status_mode: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'configure_status_mode'}] Executing (ActionID: ${actionId})`, { merchantId, args });
-    try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'configure_status_mode'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'configure_status_mode'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+    const { enabled, frequencyHours, approveBeforePost } = args;
+    await sql`
+      UPDATE vendors
+      SET auto_status_enabled = ${Boolean(enabled)},
+          posting_frequency_hours = COALESCE(${frequencyHours ? Number(frequencyHours) : null}, posting_frequency_hours),
+          approve_before_post = COALESCE(${approveBeforePost !== undefined ? Boolean(approveBeforePost) : null}, approve_before_post),
+          updated_at = now()
+      WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+    `;
+    return `Auto-Status posting is now ${enabled ? "ENABLED" : "DISABLED"}${frequencyHours ? ` (frequency: every ${frequencyHours}h)` : ""}.`;
+  },
+  set_status_strategy: async (merchantId: string, args: any) => {
+    const strategy = args.strategy || "balanced";
+    let marginWeight = args.marginWeight !== undefined ? Number(args.marginWeight) : 0.70;
+    let velocityWeight = args.velocityWeight !== undefined ? Number(args.velocityWeight) : 0.30;
+
+    if (strategy === "margin_priority" && args.marginWeight === undefined) {
+      marginWeight = 0.85;
+      velocityWeight = 0.15;
+    } else if (strategy === "velocity_priority" && args.marginWeight === undefined) {
+      marginWeight = 0.30;
+      velocityWeight = 0.70;
+    }
+
+    await sql`
+      UPDATE vendors
+      SET status_strategy = ${strategy},
+          margin_weight = ${marginWeight},
+          velocity_weight = ${velocityWeight},
+          updated_at = now()
+      WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+    `;
+    const label = strategy === "margin_priority"
+      ? "Maximize Margins (85% margin / 15% velocity)"
+      : strategy === "velocity_priority"
+      ? "Clear Dead Stock (70% velocity / 30% margin)"
+      : strategy === "freshness"
+      ? "Catalog Freshness (newest arrivals first)"
+      : "Balanced (70% margin / 30% dead stock)";
+
+    return `Status ranking strategy updated to '${label}'. High-priority products will automatically be featured next.`;
+  },
+  get_status_recommendations: async (merchantId: string, args: any) => {
+    const limit = args.limit ? Number(args.limit) : 3;
+    const vendorRows = await sql<{
+      id: string;
+      status_strategy: string | null;
+      margin_weight: number | null;
+      velocity_weight: number | null;
+    }[]>`
+      SELECT id, status_strategy, margin_weight, velocity_weight
+      FROM vendors
+      WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+      LIMIT 1
+    `;
+    if (!vendorRows[0]) return "No active vendor business line found.";
+    const vendor = vendorRows[0];
+    const strategy = vendor.status_strategy || "balanced";
+    let marginWeight = Number(vendor.margin_weight ?? 0.70);
+    let velocityWeight = Number(vendor.velocity_weight ?? 0.30);
+    if (strategy === "margin_priority") { marginWeight = 0.85; velocityWeight = 0.15; }
+    else if (strategy === "velocity_priority") { marginWeight = 0.30; velocityWeight = 0.70; }
+
+    const candidates = await sql<{
+      sku: string;
+      name: string;
+      price: number;
+      margin_pct: number;
+      recent_sales_velocity: number;
+      promotion_score: number;
+    }[]>`
+      WITH eligible_products AS (
+        SELECT
+          p.sku,
+          p.name,
+          p.price,
+          p.image_url,
+          p.last_posted_at,
+          GREATEST(
+            0.10,
+            (p.price - COALESCE(
+              (p.metadata->>'floor')::numeric,
+              (p.metadata->>'cost_price')::numeric,
+              p.price * 0.70
+            )) / GREATEST(p.price, 1.0)
+          ) AS estimated_margin,
+          COALESCE((
+            SELECT COUNT(*)::int
+            FROM orders o
+            WHERE (o.supplier_id = p.supplier_id OR o.product_id = p.id OR o.product_id = p.product_id)
+              AND (o.items::text LIKE ('%' || p.sku || '%') OR o.product_id = p.id OR o.product_id = p.product_id)
+              AND o.created_at > now() - interval '14 days'
+          ), 0) AS recent_sales_velocity
+        FROM products p
+        WHERE (p.merchant_id = ${merchantId}::uuid OR p.merchant_id = ${vendor.id}::uuid)
+          AND (p.active = true OR p.active IS NULL)
+          AND p.image_url IS NOT NULL
+      )
+      SELECT
+        sku,
+        name,
+        price,
+        ROUND((estimated_margin * 100)::numeric, 1)::float as margin_pct,
+        recent_sales_velocity,
+        ROUND((
+          (estimated_margin * (${marginWeight}::numeric * 100.0)) / (1.0 + recent_sales_velocity::numeric * ${velocityWeight}::numeric)
+          + CASE WHEN last_posted_at IS NULL THEN 15.0 ELSE 0.0 END
+        )::numeric, 2)::float AS promotion_score
+      FROM eligible_products
+      ORDER BY
+        ${strategy === "freshness" ? sql`last_posted_at ASC NULLS FIRST, promotion_score DESC` : sql`promotion_score DESC, last_posted_at ASC NULLS FIRST`}
+      LIMIT ${limit}
+    `;
+
+    if (candidates.length === 0) {
+      return "No eligible products with images found in your catalog to recommend.";
+    }
+
+    const itemsText = candidates
+      .map(
+        (c, idx) =>
+          `${idx + 1}. *${c.name}* (SKU: ${c.sku})\n   • Price: ₦${c.price.toLocaleString()}\n   • Est. Margin: ${c.margin_pct}%\n   • Recent Orders: ${c.recent_sales_velocity}\n   • Priority Score: ${c.promotion_score}`
+      )
+      .join("\n\n");
+
+    return `*Current Strategy:* ${strategy.toUpperCase()}\n\n*Top Status Recommendations:*\n\n${itemsText}\n\nTo post immediately, say "Post ${candidates[0].sku} to status" or "Post top product now".`;
   },
   post_to_status_now: async (merchantId: string, args: any) => {
-    const actionId = crypto.randomUUID();
-    await logger.log(`[ToolHandler:${'post_to_status_now'}] Executing (ActionID: ${actionId})`, { merchantId, args });
+    const { sku } = args;
+    const vendorRows = await sql<{ id: string }[]>`
+      SELECT id FROM vendors WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid LIMIT 1
+    `;
+    if (!vendorRows[0]) return "No active vendor line found.";
+    const vendorId = vendorRows[0].id;
+
+    const BAILEYS_GATEWAY_URL = process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
     try {
-        await sql`
-            INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
-            VALUES (${merchantId}, ${actionId}, ${'post_to_status_now'}, ${JSON.stringify(args)}, now())
-        `;
-    } catch(e) { }
-    return `Action ${'post_to_status_now'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+      const res = await fetch(`${BAILEYS_GATEWAY_URL}/status/${vendorId}/post-now`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku })
+      });
+      const data = await res.json() as any;
+      if (res.ok && data.ok) {
+        return `Successfully published *${data.name}* (₦${Number(data.price).toLocaleString()}) to your WhatsApp Status with direct-order deep link!`;
+      }
+      return `Status post could not be published: ${data.error || "Device disconnected or not ready."}`;
+    } catch (err: any) {
+      return `Failed to connect to WhatsApp Status gateway: ${err.message}`;
+    }
   },
   generate_marketing_copy: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

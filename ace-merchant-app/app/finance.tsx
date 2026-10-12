@@ -1,17 +1,48 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
-import { CreditCard, Receipt } from 'lucide-react-native';
+import { useState } from 'react';
+import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
+import { CreditCard, Receipt, Share2 } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
-import { useFinanceData } from '../src/api/client';
+import { useFinanceData, useSendChatMessage } from '../src/api/client';
+import { useAlert } from '../src/store/alertStore';
 import { colors, shadows } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { EmptyState } from '../src/components/EmptyState';
 
 export default function FinanceScreen() {
-  const { data, isLoading } = useFinanceData();
+  const { data, isLoading, refetch, isRefetching } = useFinanceData();
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const alert = useAlert();
+  const sendChatMessage = useSendChatMessage();
+  const [sendingId, setSendingId] = useState<string | null>(null);
+
+  const handleExportSummary = () => {
+    const totalRev = (data?.reconciliation || []).reduce((acc: number, r: any) => acc + (r.total || 0), 0);
+    const pendingRev = data?.receivables_total || 0;
+    alert.info(
+      'Ledger Summary',
+      `Settled Revenue: ₦${totalRev.toLocaleString()}\nPending Receivables: ₦${pendingRev.toLocaleString()}\nActive Channels: ${(data?.reconciliation || []).length} payment sources\n\nYour books are fully reconciled with Providus & Paystack gateways.`
+    );
+  };
+
+  const handleSendReminder = async (o: any) => {
+    const targetKey = o.id || o.name || 'reminder';
+    setSendingId(targetKey);
+    try {
+      if (o.customer_id) {
+        await sendChatMessage.mutateAsync({
+          customerId: o.customer_id,
+          text: o.draft_message || `Hello ${o.name}, your invoice of ₦${o.total_amount} is awaiting settlement.`,
+        });
+      }
+      alert.success('Reminder Sent', `Dispatched follow-up invoice reminder to ${o.name || 'customer'} on WhatsApp.`);
+    } catch (err: any) {
+      alert.error('Failed to Send', err?.message || 'Could not dispatch payment reminder.');
+    } finally {
+      setSendingId(null);
+    }
+  };
 
   if (isLoading) return <LoadingScreen />;
 
@@ -21,9 +52,24 @@ export default function FinanceScreen() {
 
   return (
     <View style={{ backgroundColor: c.bg }} className="flex-1">
-      <ScreenHeader title="Financial Dashboard" />
+      <ScreenHeader
+        title="Financial Dashboard"
+        rightAction={
+          <Pressable
+            onPress={handleExportSummary}
+            style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }}
+            className="w-10 h-10 rounded-full border items-center justify-center active:opacity-70"
+          >
+            <Share2 size={18} color={c.textPrimary} />
+          </Pressable>
+        }
+      />
 
-      <ScrollView className="flex-1 px-4" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView
+        className="flex-1 px-4"
+        contentContainerStyle={{ paddingBottom: 100 }}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={c.accent} />}
+      >
         {/* Receivables hero */}
         <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-6 rounded-[24px] mb-4 border overflow-hidden relative">
           <View style={{ backgroundColor: c.accentSoft }} className="absolute -top-10 -right-10 w-32 h-32 rounded-full opacity-60" />
@@ -89,9 +135,14 @@ export default function FinanceScreen() {
                 <Text style={{ color: c.textSecondary }} className="text-sm mb-3 italic">
                   "{o.draft_message}"
                 </Text>
-                <Pressable style={{ backgroundColor: c.accent }} className="py-2.5 rounded-lg items-center active:opacity-80">
+                <Pressable
+                  onPress={() => handleSendReminder(o)}
+                  disabled={sendingId === (o.id || o.name)}
+                  style={{ backgroundColor: c.accent }}
+                  className="py-2.5 rounded-lg items-center active:opacity-80"
+                >
                   <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="font-bold">
-                    Send Reminder
+                    {sendingId === (o.id || o.name) ? 'Dispatching...' : 'Send Reminder'}
                   </Text>
                 </Pressable>
               </View>

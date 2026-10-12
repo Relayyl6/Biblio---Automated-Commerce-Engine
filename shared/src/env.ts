@@ -38,6 +38,16 @@ const commsSchema = sharedSchema.extend({
   GRAPH_API_VERSION: z.string().default("v22.0"),
 });
 
+const baileysSchema = sharedSchema.extend({
+  // Cloudinary credentials for vendor product image hosting.
+  // All three must be set for uploadImage() to push to the CDN.
+  // If any are absent, uploadImage() logs a warning and returns null
+  // (product is still saved without an image rather than crashing).
+  CLOUDINARY_CLOUD_NAME: z.string().min(1),
+  CLOUDINARY_API_KEY: z.string().min(1),
+  CLOUDINARY_API_SECRET: z.string().min(1),
+});
+
 function loadEnv<T extends z.ZodTypeAny>(schema: T, serviceName: string): z.infer<T> {
   const result = schema.safeParse(process.env);
   if (!result.success) {
@@ -51,3 +61,4 @@ function loadEnv<T extends z.ZodTypeAny>(schema: T, serviceName: string): z.infe
 export const loadIngestionEnv = () => loadEnv(ingestionSchema, "ingestion-service");
 export const loadNegotiatorEnv = () => loadEnv(negotiatorSchema, "ai-negotiator");
 export const loadCommsEnv = () => loadEnv(commsSchema, "comms-router");
+export const loadBaileysEnv = () => loadEnv(baileysSchema, "baileys-gateway");

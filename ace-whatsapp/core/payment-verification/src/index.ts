@@ -21,6 +21,7 @@ import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import { sql, redis, jsonb } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
+import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback";
 import type { OrderState } from "@ace/shared/types";
 
 import { transition, TransitionError } from "../../state-machine/src/orderStateMachine";
@@ -190,6 +191,15 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
       toState: "payment_verified",
       timestamp: Date.now(),
     }).catch(err => app.log.error({ err, merchantId: order.merchantId, orderId: order.orderId }, "Telemetry captureOrderStateChange failed"));
+
+    // Close RL Bandit & RAG Learning Feedback Loop
+    interactionFeedback.recordOrderOutcome({
+      merchantId: order.merchantId,
+      customerId: order.customerId,
+      outcome: 'completed_discount',
+      marginRealized: payment.amountNgn,
+      finalPrice: payment.amountNgn,
+    }).catch(err => app.log.error({ err, orderId: order.orderId }, "interactionFeedback.recordOrderOutcome failed"));
 
     // Publish to Redis Stream so logistics-coordination can auto-book a rider
     await redis.xadd("stream:payments.verified", "*",

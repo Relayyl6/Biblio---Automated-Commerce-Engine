@@ -30,10 +30,35 @@ import type { WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { downloadMediaMessage } from "@whiskeysockets/baileys";
 import P from "pino";
 import { Queue } from "bullmq";
+import { v2 as cloudinary } from "cloudinary";
 import { sql, redis } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import type { VendorConfig } from "./sessionManager.js";
 import { postProductToStatus } from "./statusPoster.js";
+
+// ─── Cloudinary config ────────────────────────────────────────────────────────
+// Configured once at module load. If any credential is absent, uploadImage()
+// will log a warning and return null — the product is still saved without an
+// image URL so the pipeline never hard-crashes due to missing CDN credentials.
+
+let cloudinaryConfigured = false;
+function ensureCloudinaryConfigured(): boolean {
+  if (cloudinaryConfigured) return true;
+  const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } =
+    process.env;
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+    return false;
+  }
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+  cloudinaryConfigured = true;
+  return true;
+}
+
 
 
 const logger = P({ level: "info" });
@@ -363,7 +388,7 @@ async function processGroupedVendorSubmission(
   const statusNote = await scheduleOrSendPost(
     instruction,
     sock,
-    { sku, ...parsed, image_url: imageUrl, imageBuffer },
+    { sku, ...parsed, image_url: imageUrl, imageBuffer, business_phone: vendor.business_line_number },
     vendor
   );
 
@@ -391,7 +416,7 @@ async function processGroupedVendorSubmission(
 async function scheduleOrSendPost(
   instruction: PostInstruction,
   sock: WASocket,
-  product: { sku: string; product_name: string; price: number | null; image_url: string | null; imageBuffer?: Buffer | null },
+  product: { sku: string; product_name: string; price: number | null; image_url: string | null; imageBuffer?: Buffer | null; business_phone?: string | null },
   vendor: VendorConfig
 ): Promise<string> {
   switch (instruction.type) {
@@ -425,7 +450,11 @@ async function scheduleOrSendPost(
       // DM the product directly to the specified WhatsApp number
       const { targetPhone } = instruction;
       const targetJid = `${targetPhone}@s.whatsapp.net`;
-      const caption = buildStatusCaption({ product_name: product.product_name, price: product.price });
+      const caption = buildStatusCaption(
+        { product_name: product.product_name, price: product.price },
+        vendor.business_line_number ?? "",
+        product.sku
+      );
       try {
         if (product.image_url) {
           await sock.sendMessage(targetJid, { image: { url: product.image_url }, caption });
@@ -453,7 +482,11 @@ async function scheduleOrSendPost(
               ${vendor.id},
               ${product.sku},
               ${product.image_url},
-              ${buildStatusCaption({ product_name: product.product_name, price: product.price })},
+              ${buildStatusCaption(
+                { product_name: product.product_name, price: product.price },
+                vendor.business_line_number ?? "",
+                product.sku
+              )},
               now()
             )
           `;
@@ -631,45 +664,88 @@ Description must be customer-facing, not just a label.
 
 // ─── Status caption builder ───────────────────────────────────────────────────
 
-export function buildStatusCaption(product: Pick<ParsedProduct, "product_name" | "price">): string {
+export function buildStatusCaption(
+  product: Pick<ParsedProduct, "product_name" | "price">,
+  businessPhone: string,
+  sku: string
+): string {
   const priceStr = product.price
     ? `₦${product.price.toLocaleString("en-NG")}`
     : "DM for price";
-  return `${product.product_name}\n${priceStr}\n\nDM to order 📦`;
+
+  // Normalise phone: strip leading + and spaces so wa.me accepts it
+  const normalised = businessPhone.replace(/^\+/, "").replace(/\s+/g, "");
+
+  // Pre-filled message customers tap-to-send — includes SKU so the vendor
+  // immediately knows which product is being referenced
+  const prefill = encodeURIComponent(
+    `Hi! I'd like to order ${product.product_name} (ref: ${sku}) — ${priceStr} 🛍️`
+  );
+  const deepLink = `https://wa.me/${normalised}?text=${prefill}`;
+
+  return (
+    `*${product.product_name}*\n` +
+    `${priceStr}\n\n` +
+    `📦 Tap to order:\n${deepLink}`
+  );
 }
 
+
 // ─── Image Storage ────────────────────────────────────────────────────────────
-// Stub: stores the image Buffer locally to /tmp for now.
-// In production: replace with an S3 / Cloudinary / DigitalOcean Spaces upload.
-// The function must return a publicly-accessible URL (used in Status posts).
+// Uploads the image buffer to Cloudinary and returns a publicly-accessible CDN
+// URL that can be stored in products.image_url and used in Status posts.
+//
+// GRACEFUL DEGRADATION:
+// If credentials are missing or the upload fails, returns null so the product
+// is still upserted without an image rather than crashing the pipeline.
+// The vendor receives a confirmation that still shows the product was saved
+// (the confirmation builder notes when no image_url is present).
 
 async function uploadImage(
   buffer: Buffer,
   vendorId: string,
   messageId: string
 ): Promise<string | null> {
-  try {
-    // Production implementation: upload to S3 and return the CDN URL
-    // import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-    // const key = `vendors/${vendorId}/${messageId}.jpg`;
-    // await s3.send(new PutObjectCommand({ Bucket, Key: key, Body: buffer, ContentType: 'image/jpeg' }));
-    // return `https://${CDN_DOMAIN}/${key}`;
-
-    // DEV stub: write to a local temp path and return a relative URL
-    // This will not work for Status posts (which need a public URL) in dev.
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    const dir = `/tmp/ace-vendor-images/${vendorId}`;
-    await fs.mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${messageId}.jpg`);
-    await fs.writeFile(filePath, buffer);
-    logger.info({ filePath }, "Image saved locally (dev mode — replace with S3 in prod)");
-    return null; // null = local file, not postable to Status without a public URL
-  } catch (err) {
-    logger.error({ err }, "Image upload failed — product saved without image");
+  if (!ensureCloudinaryConfigured()) {
+    logger.warn(
+      { vendorId },
+      "Cloudinary credentials not configured — skipping image upload. " +
+        "Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET."
+    );
     return null;
   }
+
+  return new Promise<string | null>((resolve) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: `ace/vendors/${vendorId}`,
+        public_id: messageId,
+        resource_type: "image",
+        // Auto-format + quality for WhatsApp delivery
+        transformation: [{ quality: "auto", fetch_format: "auto" }],
+      },
+      (error, result) => {
+        if (error || !result) {
+          logger.error(
+            { error, vendorId, messageId },
+            "Cloudinary upload failed — product saved without image"
+          );
+          resolve(null);
+        } else {
+          logger.info(
+            { vendorId, messageId, url: result.secure_url },
+            "Image uploaded to Cloudinary"
+          );
+          resolve(result.secure_url);
+        }
+      }
+    );
+
+    uploadStream.end(buffer);
+  });
 }
+
+
 
 // ─── SKU generation ───────────────────────────────────────────────────────────
 

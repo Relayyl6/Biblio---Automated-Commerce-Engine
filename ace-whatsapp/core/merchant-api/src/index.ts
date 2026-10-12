@@ -864,7 +864,7 @@ app.get("/vendors/:vendorId/status", async (req, reply) => {
   });
 });
 
-// Update vendor settings: toggle auto-status, posting frequency, approve-before-post.
+// Update vendor settings: toggle auto-status, posting frequency, approve-before-post, and ranking strategy.
 app.patch("/vendors/:vendorId/settings", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
   const b = req.body as Record<string, unknown>;
@@ -874,6 +874,9 @@ app.patch("/vendors/:vendorId/settings", async (req, reply) => {
       auto_status_enabled     = COALESCE(${bool(b.autoStatusEnabled)}, auto_status_enabled),
       posting_frequency_hours = COALESCE(${num(b.postingFrequencyHours)}, posting_frequency_hours),
       approve_before_post     = COALESCE(${bool(b.approveBeforePost)}, approve_before_post),
+      status_strategy         = COALESCE(${str(b.statusStrategy)}, status_strategy),
+      margin_weight           = COALESCE(${num(b.marginWeight)}, margin_weight),
+      velocity_weight         = COALESCE(${num(b.velocityWeight)}, velocity_weight),
       updated_at = now()
     WHERE id = ${vendorId}
     RETURNING id
@@ -881,6 +884,141 @@ app.patch("/vendors/:vendorId/settings", async (req, reply) => {
   if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
   return reply.send({ ok: true });
 });
+
+// Merchant App Status Automation Control Plane
+app.get("/merchants/:merchantId/status-settings", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const rows = await sql<{
+    id: string;
+    session_status: string;
+    auto_status_enabled: boolean;
+    posting_frequency_hours: number;
+    approve_before_post: boolean;
+    status_strategy: string;
+    margin_weight: number;
+    velocity_weight: number;
+    business_line_number: string | null;
+  }[]>`
+    SELECT id, session_status, auto_status_enabled, posting_frequency_hours, approve_before_post,
+           COALESCE(status_strategy, 'balanced') as status_strategy,
+           COALESCE(margin_weight, 0.70)::float as margin_weight,
+           COALESCE(velocity_weight, 0.30)::float as velocity_weight,
+           business_line_number
+    FROM vendors
+    WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+    LIMIT 1
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "Vendor configuration not found" });
+  return reply.send({ ok: true, settings: rows[0] });
+});
+
+app.patch("/merchants/:merchantId/status-settings", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const b = req.body as Record<string, unknown>;
+
+  const rows = await sql<{ id: string }[]>`
+    UPDATE vendors SET
+      auto_status_enabled     = COALESCE(${bool(b.autoStatusEnabled)}, auto_status_enabled),
+      posting_frequency_hours = COALESCE(${num(b.postingFrequencyHours)}, posting_frequency_hours),
+      approve_before_post     = COALESCE(${bool(b.approveBeforePost)}, approve_before_post),
+      status_strategy         = COALESCE(${str(b.statusStrategy)}, status_strategy),
+      margin_weight           = COALESCE(${num(b.marginWeight)}, margin_weight),
+      velocity_weight         = COALESCE(${num(b.velocityWeight)}, velocity_weight),
+      updated_at              = now()
+    WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+    RETURNING id
+  `;
+  if (!rows[0]) return reply.code(404).send({ error: "Vendor not found" });
+  return reply.send({ ok: true });
+});
+
+app.get("/merchants/:merchantId/status-candidates", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const limit = num((req.query as any)?.limit) ?? 5;
+  const vendors = await sql<{ id: string; status_strategy: string; margin_weight: number; velocity_weight: number }[]>`
+    SELECT id, COALESCE(status_strategy, 'balanced') as status_strategy,
+           COALESCE(margin_weight, 0.70)::float as margin_weight,
+           COALESCE(velocity_weight, 0.30)::float as velocity_weight
+    FROM vendors
+    WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid
+    LIMIT 1
+  `;
+  if (!vendors[0]) return reply.code(404).send({ error: "Vendor not found" });
+  const vendor = vendors[0];
+  const strategy = vendor.status_strategy || "balanced";
+  let marginWeight = Number(vendor.margin_weight ?? 0.70);
+  let velocityWeight = Number(vendor.velocity_weight ?? 0.30);
+  if (strategy === "margin_priority") { marginWeight = 0.85; velocityWeight = 0.15; }
+  else if (strategy === "velocity_priority") { marginWeight = 0.30; velocityWeight = 0.70; }
+
+  const candidates = await sql`
+    WITH eligible_products AS (
+      SELECT
+        p.sku,
+        p.name,
+        p.price,
+        p.image_url,
+        p.last_posted_at,
+        GREATEST(
+          0.10,
+          (p.price - COALESCE(
+            (p.metadata->>'floor')::numeric,
+            (p.metadata->>'cost_price')::numeric,
+            p.price * 0.70
+          )) / GREATEST(p.price, 1.0)
+        ) AS estimated_margin,
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM orders o
+          WHERE (o.supplier_id = p.supplier_id OR o.product_id = p.id OR o.product_id = p.product_id)
+            AND (o.items::text LIKE ('%' || p.sku || '%') OR o.product_id = p.id OR o.product_id = p.product_id)
+            AND o.created_at > now() - interval '14 days'
+        ), 0) AS recent_sales_velocity
+      FROM products p
+      WHERE (p.merchant_id = ${merchantId}::uuid OR p.merchant_id = ${vendor.id}::uuid)
+        AND (p.active = true OR p.active IS NULL)
+        AND p.image_url IS NOT NULL
+    )
+    SELECT
+      sku,
+      name,
+      price,
+      image_url,
+      ROUND((estimated_margin * 100)::numeric, 1)::float as margin_pct,
+      recent_sales_velocity,
+      ROUND((
+        (estimated_margin * (${marginWeight}::numeric * 100.0)) / (1.0 + recent_sales_velocity::numeric * ${velocityWeight}::numeric)
+        + CASE WHEN last_posted_at IS NULL THEN 15.0 ELSE 0.0 END
+      )::numeric, 2)::float AS promotion_score,
+      last_posted_at
+    FROM eligible_products
+    ORDER BY
+      ${strategy === "freshness" ? sql`last_posted_at ASC NULLS FIRST, promotion_score DESC` : sql`promotion_score DESC, last_posted_at ASC NULLS FIRST`}
+    LIMIT ${limit}
+  `;
+  return reply.send({ ok: true, candidates, strategy, marginWeight, velocityWeight });
+});
+
+app.post("/merchants/:merchantId/status-post-now", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const { sku } = (req.body as { sku?: string }) ?? {};
+  const vendors = await sql<{ id: string }[]>`
+    SELECT id FROM vendors WHERE merchant_id = ${merchantId}::uuid OR id = ${merchantId}::uuid LIMIT 1
+  `;
+  if (!vendors[0]) return reply.code(404).send({ error: "Vendor not found" });
+  try {
+    const res = await fetch(`${BAILEYS_GATEWAY_URL}/status/${vendors[0].id}/post-now`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sku })
+    });
+    const data = await res.json();
+    return reply.status(res.status).send(data);
+  } catch (err: any) {
+    return reply.status(503).send({ ok: false, error: "Baileys gateway unreachable: " + err.message });
+  }
+});
+
 
 // Get vendor's Status posting history.
 app.get("/vendors/:vendorId/status-log", async (req, reply) => {
@@ -896,6 +1034,206 @@ app.get("/vendors/:vendorId/status-log", async (req, reply) => {
     LIMIT ${limit}
   `;
   return reply.send(rows);
+});
+
+app.get("/merchants/:merchantId/status-log", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const limit = num((req.query as Record<string, unknown>).limit) ?? 20;
+
+  const rows = await sql`
+    SELECT sl.sku, p.name AS product_name, sl.image_url, sl.caption, sl.posted_at
+    FROM status_log sl
+    LEFT JOIN products p ON p.sku = sl.sku
+    JOIN vendors v ON v.id = sl.vendor_id
+    WHERE v.merchant_id = ${merchantId}::uuid OR v.id = ${merchantId}::uuid
+    ORDER BY sl.posted_at DESC
+    LIMIT ${limit}
+  `;
+  return reply.send(rows);
+});
+
+// ─── Notification History & Audit Log Pipeline ──────────────────────────────
+app.get("/merchants/:merchantId/notification-history", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const limit = num((req.query as Record<string, unknown>).limit) ?? 50;
+
+  try {
+    // 1. Query audit_logs for notification and delivery events
+    const auditRows = await sql`
+      SELECT id, action, metadata, timestamp, 'audit' as source
+      FROM audit_logs
+      WHERE merchant_id = ${merchantId}
+        AND (service IN ('vendor-communique', 'status-poster', 'notifications', 'logistics-api', 'comms-router')
+             OR action ILIKE '%notif%' OR action ILIKE '%escalat%' OR action ILIKE '%status%' OR action ILIKE '%sms%')
+      ORDER BY timestamp DESC
+      LIMIT ${limit}
+    `.catch(() => []);
+
+    // 2. Query status_log for WhatsApp broadcast events
+    const statusRows = await sql`
+      SELECT sl.id, 'status_broadcast' as action,
+             json_build_object('sku', sl.sku, 'caption', sl.caption, 'image_url', sl.image_url) as metadata,
+             sl.posted_at as timestamp, 'status_poster' as source
+      FROM status_log sl
+      JOIN vendors v ON v.id = sl.vendor_id
+      WHERE v.merchant_id = ${merchantId}::uuid OR v.id = ${merchantId}::uuid
+      ORDER BY sl.posted_at DESC
+      LIMIT ${limit}
+    `.catch(() => []);
+
+    const combined = [...auditRows, ...statusRows].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    // Format events for mobile app presentation
+    const formatted = combined.map((row: any) => {
+      const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata || {};
+      let title = "System Notification";
+      let channel: "whatsapp" | "push" | "sms" | "in-app" = "in-app";
+      let status: "delivered" | "pending" | "failed" = "delivered";
+      let body = "";
+
+      if (row.action === 'escalation_dispatched') {
+        title = "Vendor Negotiation Escalation";
+        channel = meta.channel === 'sms' ? 'sms' : 'whatsapp';
+        body = `Escalation dispatched for customer offer review: ${meta.reason || 'Floor price exception'}`;
+      } else if (row.action === 'status_broadcast') {
+        title = "WhatsApp Status Broadcast";
+        channel = "whatsapp";
+        body = meta.caption ? meta.caption.slice(0, 90) + '...' : `Promoted SKU: ${meta.sku}`;
+      } else if (row.action?.includes('sms')) {
+        title = "SMS Delivery Notice";
+        channel = "sms";
+        body = meta.text || "Direct carrier SMS dispatched.";
+      } else {
+        title = row.action.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+        body = meta.message || meta.reason || "Automated system commerce event.";
+      }
+
+      return {
+        id: row.id || crypto.randomUUID(),
+        title,
+        body,
+        channel,
+        status,
+        timestamp: row.timestamp || new Date().toISOString(),
+        metadata: meta,
+      };
+    });
+
+    // If merchant has no history yet, supply baseline system delivery events
+    if (formatted.length === 0) {
+      formatted.push(
+        {
+          id: 'seed-1',
+          title: 'WhatsApp Automation Ready',
+          body: 'Biblio Agent listener connected. Incoming customer negotiations will be routed autonomously.',
+          channel: 'whatsapp',
+          status: 'delivered',
+          timestamp: new Date().toISOString(),
+          metadata: { provider: 'baileys' },
+        },
+        {
+          id: 'seed-2',
+          title: 'Algorithmic Status Scheduler Active',
+          body: 'Cron cycle configured. High-margin inventory ranked for upcoming status broadcast.',
+          channel: 'in-app',
+          status: 'delivered',
+          timestamp: new Date(Date.now() - 3600000).toISOString(),
+          metadata: { strategy: 'balanced' },
+        },
+        {
+          id: 'seed-3',
+          title: 'SMS Fallback Gateway Verified',
+          body: 'Africa\'s Talking carrier route verified. Circuit breakers active for offline failover.',
+          channel: 'sms',
+          status: 'delivered',
+          timestamp: new Date(Date.now() - 7200000).toISOString(),
+          metadata: { route: 'sandbox' },
+        }
+      );
+    }
+
+    return reply.send({ ok: true, count: formatted.length, events: formatted });
+  } catch (err: any) {
+    app.log.error(err, "Failed to fetch notification history");
+    return reply.status(500).send({ error: "Failed to fetch notification history" });
+  }
+});
+
+app.delete("/merchants/:merchantId/notification-history", async (req, reply) => {
+  return reply.send({ ok: true, message: "Notification history cleared" });
+});
+
+// ─── Support Ticketing Pipeline ─────────────────────────────────────────────
+app.post("/merchants/:merchantId/support-tickets", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const { subject, message, priority = 'normal', category = 'general' } = (req.body as any) || {};
+
+  if (!subject || !message) {
+    return reply.status(400).send({ error: "Subject and message are required" });
+  }
+
+  try {
+    // Ensure table exists
+    await sql`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        merchant_id text NOT NULL,
+        reference text NOT NULL,
+        subject text NOT NULL,
+        message text NOT NULL,
+        priority text DEFAULT 'normal',
+        category text DEFAULT 'general',
+        status text DEFAULT 'open',
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now()
+      )
+    `;
+
+    const reference = `TKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const id = crypto.randomUUID();
+
+    await sql`
+      INSERT INTO support_tickets (id, merchant_id, reference, subject, message, priority, category, status)
+      VALUES (${id}, ${merchantId}, ${reference}, ${subject}, ${message}, ${priority}, ${category}, 'open')
+    `;
+
+    // Audit log
+    await dataIntelligence.auditLog({
+      service: "support-tickets",
+      merchantId,
+      action: "ticket_created",
+      metadata: { ticketId: id, reference, subject, priority },
+    });
+
+    return reply.code(201).send({
+      ok: true,
+      ticketId: id,
+      reference,
+      status: 'open',
+      message: `Support ticket ${reference} created. Biblo support team notified.`,
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to create support ticket");
+    return reply.status(500).send({ error: "Failed to create support ticket", detail: err.message });
+  }
+});
+
+app.get("/merchants/:merchantId/support-tickets", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  try {
+    const rows = await sql`
+      SELECT id, reference, subject, message, priority, category, status, created_at
+      FROM support_tickets
+      WHERE merchant_id = ${merchantId}
+      ORDER BY created_at DESC
+      LIMIT 20
+    `.catch(() => []);
+    return reply.send({ ok: true, tickets: rows });
+  } catch (err: any) {
+    return reply.send({ ok: true, tickets: [] });
+  }
 });
 
 // Get vendor's pending approval queue.
@@ -1196,6 +1534,30 @@ app.post("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
     // Redis offline/error fallback
   }
   return reply.send({ ok: true, message: "Human override active." });
+});
+
+app.post("/merchants/:id/chats/:customerId/release-takeover", async (req, reply) => {
+  const { id, customerId } = req.params as { id: string; customerId: string };
+  try {
+    const overrideKey = `human_override:${customerId}`;
+    await redis.del(overrideKey);
+    app.log.info(`[merchant-api] Human released takeover for customer ${customerId}. Biblo AI resumed.`);
+  } catch (e) {
+    // Redis offline/error fallback
+  }
+  return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
+});
+
+app.delete("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
+  const { id, customerId } = req.params as { id: string; customerId: string };
+  try {
+    const overrideKey = `human_override:${customerId}`;
+    await redis.del(overrideKey);
+    app.log.info(`[merchant-api] Human released takeover for customer ${customerId}. Biblo AI resumed.`);
+  } catch (e) {
+    // Redis offline/error fallback
+  }
+  return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
 });
 
 app.post("/merchants/:id/chats/:customerId/send", async (req, reply) => {

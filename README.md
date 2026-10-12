@@ -49,42 +49,46 @@ In Nigeria and across emerging markets, **$2.3 trillion** in commerce happens en
 sequenceDiagram
     autonumber
     actor Customer as Customer (WhatsApp)
-    participant Comms as Comms Router (Debounce)
+    participant Comms as Comms Router (5s Debounce)
     participant Agent as AI Negotiator (Groq Llama 3.3)
-    participant Arc as Negotiation Arc (Strategy State)
-    participant Pricing as Pricing Service & DB
-    participant StateMachine as Order State Machine
-    participant Payment as Payment Gateway / VAN
+    participant Arc as Negotiation Arc (Redis/PG)
+    participant Pricing as Pricing Service & Postgres
+    participant StateMachine as Order State Machine (Pure Reducer)
+    participant Outbound as Outbound Dispatcher
 
     Customer->>Comms: "How much for the black sneakers size 43? Can you do 12k?"
-    Note over Comms: Debounce Window (4.5s burst pool)
-    Comms->>Agent: Dispatches turn payload with customer profile
+    Note over Comms: Sliding Debounce Window (5s per customer buffer)
+    Comms->>Agent: Dispatches ConversationTurn (messages + orderState)
 
-    Agent->>Arc: Load / Hydrate Strategic Arc State
-    Agent->>Pricing: check_inventory(SKU) & computeAuthorizedRange()
-    Pricing-->>Agent: Base: ₦18,000 | Floor: ₦14,500 | Tier: Loyal (Max 22% off)
+    Agent->>Arc: loadOrCreateArc(customerId, merchantId)
+    Note over Agent: Model Tool Iteration Loop (Max 8 iterations)
+    Agent->>Pricing: tool: check_inventory("black sneakers") & get_customer_profile()
+    Pricing-->>Agent: SKU: SNK-BLK-43 | Stock: 10 | Base: ₦18k | Floor: ₦14.5k | Tier: loyal
     Agent->>Arc: projectRangeOntoArc(anchor: 18000, floor: 14500)
 
-    Note over Agent: Groq LLM evaluates available tactics & limits
     Agent->>Arc: availableTactics(arc, stock)
-    Arc-->>Agent: [relationship_anchor, scarcity_signal, soft_close]
+    Arc-->>Agent: [relationship_anchor, bundle_pivot, scarcity_signal]
 
     rect rgb(240, 248, 255)
-        Note over Agent: LLM Tool Selection & Execution
-        Agent->>Arc: advanceArc(AGENT_COUNTERED, offer: 15000, tactic: relationship_anchor)
-        Arc-->>Agent: Updated Arc: Stage = COUNTER (Attempt 1/3)
+        Note over Agent: AI Strategic Action & Arc Advance
+        Agent->>Arc: tool: deploy_tactic(relationship_anchor) + propose_price(15000)
+        Arc-->>Agent: advanceArc(AGENT_COUNTERED, offer: 15000) (Attempt 1/3)
     end
 
-    Agent-->>Customer: "Ah my loyal customer! Regular price is ₦18k, but for you I fit drop am to ₦15k last."
+    Agent->>Outbound: Split into natural chat bubbles (Typing indicator -> Chunks)
+    Outbound-->>Customer: "Ah my loyal customer! Regular price is ₦18k, but for you I fit drop am to ₦15k last."
 
-    Customer->>Agent: "Oya ₦15k is fine, I take am"
+    Customer->>Comms: "Oya ₦15k is fine, I take am"
+    Comms->>Agent: Dispatches customer acceptance turn
 
     rect rgb(240, 255, 240)
-        Note over Agent: Deal Closure & Order Machine Transition
+        Note over Agent: Deal Closure & Two-Stage Order Transition
         Agent->>Arc: advanceArc(DEAL_ACCEPTED, finalPrice: 15000)
-        Agent->>StateMachine: transition(QUOTE_CREATED, { price: 15000, sku: "SNK-BLK-43" })
-        StateMachine->>Payment: Generate Virtual Account Number (VAN)
-        Payment-->>Customer: WhatsApp Checkout Card: Transfer ₦15,000 to Monnify VAN: 9023481234
+        Agent->>StateMachine: tool: close_deal(15000) -> transition(QUOTE_CREATED) -> draft
+        Agent->>StateMachine: tool: issue_payment_link() -> transition(PAYMENT_LINK_ISSUED) -> awaiting_payment
+        Note over StateMachine: Mint dynamic VAN via Paystack DVA / Bank Transfer (Providus/Wema)
+        Agent->>Outbound: Send WhatsApp checkout card
+        Outbound-->>Customer: "Transfer ₦15,000 to Account: 9023481234 (Wema/Providus). Expires in 15 mins."
     end
 ```
 
@@ -94,40 +98,49 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph Inbound["1. Inbound Ingestion (Baileys / Meta)"]
-        A1[Customer WhatsApp] -->|Text / Voice / Image| A2[Baileys Gateway / Ingestion Service]
-        A2 -->|HMAC Verification & Deduplication| A3{Message Type}
-        A3 -->|Voice Note / Audio| B1[Groq Whisper Turbo\nFast Speech-to-Text]
-        A3 -->|Product Image / Photo| B2[Groq Vision Llama 3.2\nImage Extraction]
-        A3 -->|Text / Quote Reply| B3[Normalized MessageContent]
-        B1 --> B3
-        B2 --> B3
+    subgraph Inbound["1. Inbound Channels & Normalization"]
+        direction TB
+        C_WA[Customer WhatsApp] -->|Text / Audio / Photo| GW{Gateway Layer}
+        GW -->|Baileys WebSockets :3005| BG[baileys-gateway]
+        GW -->|Meta Graph Webhook :3001| IS[ingestion-service]
+        
+        BG -->|Voice Note / Audio| W1[Groq Whisper Turbo\nFast Audio STT in mediaProcessor]
+        BG -->|Photo / Image| P1[Resolve Media Buffer\nBase64 Encoding]
+        IS -->|Meta Cloud Webhook| P2[HMAC SHA-256 Verify\nRedis Idempotency Dedup]
+        
+        W1 --> NORM[Normalized InboundMessage]
+        P1 --> NORM
+        P2 --> NORM
     end
 
-    subgraph Buffering["2. Sliding Debounce & Batching"]
-        B3 --> C1[BullMQ Redis Queue]
-        C1 -->|10s Burst Window Consolidation| C2[Atomic ConversationTurn]
+    subgraph Buffering["2. Sliding Debounce & Conversation Turn"]
+        NORM --> DB1[comms-router: debounce.ts]
+        DB1 -->|5s Sliding Window Timer| REDIS[(Redis Scratch Buffer)]
+        REDIS -->|Window Closes| TURN[Atomic ConversationTurn\nMessages + Existing OrderState]
     end
 
-    subgraph Agent["3. AI Negotiator & Strategic Arc"]
-        C2 --> D1[Load Merchant Voice & Dialect\nPidgin / Yoruba / Hausa / Igbo / English]
-        D1 --> D2[Extract Customer Counter-Offer\nRegex 15k, ₦12,000, do 14000]
-        D2 --> D3[advanceArc: CUSTOMER_COUNTERED]
-        D3 --> D4[Groq Llama 3.3 Multi-Tool Loop]
-        D4 --> D5{Tool Execution}
-        D5 -->|check_inventory| E1[Postgres SKU & Price Range Check]
-        D5 -->|propose_price| E2[Deterministic Floor Gate]
-        D5 -->|deploy_tactic| E3[Relationship / Bundle / Scarcity / Credit]
-        D5 -->|escalate_to_merchant| E4[Vendor Communiqué SMS / WhatsApp 1/2/3]
-        D5 -->|close_deal| E5[OrderStateMachine: QUOTE_CREATED]
+    subgraph Agent["3. AI Negotiator Loop (agentLoop.ts)"]
+        TURN --> AG1[Hydrate NegotiationArc & Dialect Tone]
+        AG1 --> AG2[Extract Spoken/Typed Counter-Offer\nRegex 15k, ₦12k]
+        AG2 --> AG3[RAG Exemplar Store\nDynamic Dialect Few-Shot Injection]
+        AG3 --> AG4[Groq Llama 3.3 Multi-Tool Loop]
+        
+        AG4 --> TL{Tool Execution}
+        TL -->|check_inventory| T1[Postgres Catalog + CLIP Embeddings]
+        TL -->|propose_price| T2[Circuit Breaker Hard Floor Gate]
+        TL -->|deploy_tactic| T3[Tactics Guard: Scarcity / Bundle / Credit]
+        TL -->|escalate_to_merchant| T4[Vendor Communiqué SMS / Baileys Direct]
+        TL -->|close_deal| T5[orderStateMachine: QUOTE_CREATED -> draft]
+        TL -->|issue_payment_link| T6[orderStateMachine: PAYMENT_LINK_ISSUED -> awaiting_payment]
     end
 
-    subgraph Payment["4. Payment & Delivery Resolution"]
-        E5 --> F1[Issue Virtual Account Number / Monnify Link]
-        F1 --> F2[Payment Webhook Receiver :3002]
-        F2 -->|HMAC Verified| F3{Payment Amount Check}
-        F3 -->|Exact / Overpay| G1[PAYMENT_CONFIRMED -> payment_verified]
-        F3 -->|Underpay| G2[awaiting_payment preserved -> Balance Prompt]
+    subgraph Payment["4. Payment Verification (:3002)"]
+        T6 --> PY1[Customer Bank Transfer]
+        PY1 --> PY2[Payment Webhook :3002\nPaystack / Monnify HMAC Verify]
+        PY2 --> PY3{Amount Reconciliation}
+        PY3 -->|Exact / Overpayment| PY4[orderStateMachine: PAYMENT_CONFIRMED\nState -> payment_verified]
+        PY3 -->|Underpayment| PY5[State locked in awaiting_payment\nPrompt customer for remaining balance]
+        PY4 --> PY6[Double-Entry Ledger Row in transactions Table]
     end
 ```
 
@@ -138,46 +151,53 @@ flowchart TD
 ```mermaid
 flowchart TB
     subgraph Inbound Channels
-        WA_Cloud["WhatsApp Cloud API (Meta Webhook)"]
-        WA_Baileys["WhatsApp Web (Baileys Business Line)"]
-        PSP_Hook["PSP Webhook (Paystack / Monnify)"]
+        WA_Cloud["WhatsApp Cloud API\n(Meta Webhook :3001)"]
+        WA_Baileys["WhatsApp Multi-Device Web\n(Baileys Socket :3005)"]
+        PSP_Hook["PSP Webhook\n(Paystack / Monnify :3002)"]
+        Vendor_App["Merchant Expo Mobile App\n(REST API :3004)"]
     end
 
-    subgraph Core Engine
-        Ingest["ingestion-service (:3001)"]
-        Baileys["baileys-gateway (:3005)"]
-        Comms["comms-router (BullMQ + Redis)"]
-        Agent["ai-negotiator (Groq SDK)"]
-        Arc["NegotiationArc (Reducer)"]
-        StateMachine["orderStateMachine (Invariants)"]
-        PayVerif["payment-verification (:3002)"]
-        CatSync["catalog-sync (:3003)"]
-        MerchantAPI["merchant-api (:3004)"]
+    subgraph Core Services
+        Ingest["ingestion-service (:3001)\nMeta Webhook Receiver"]
+        Baileys["baileys-gateway (:3005)\nBaileys Sockets & Status Poster"]
+        Comms["comms-router (BullMQ)\nSliding Debounce & Outbound"]
+        Agent["ai-negotiator (Groq SDK)\nAutonomous Multi-Tool Agent Loop"]
+        PayVerif["payment-verification (:3002)\nReconciliation & Ledger"]
+        CatSync["catalog-sync (:3003)\nMeta Commerce Catalog Pull"]
+        MerchantAPI["merchant-api (:3004)\nMerchant Control Plane & App Backend"]
     end
 
-    subgraph Data & Storage
-        PG[("PostgreSQL\n(Orders, Products, Merchants)")]
-        RedisDB[("Redis\n(Debounce, Sessions, Locks)")]
+    subgraph InProcess Engines ["In-Process Deterministic Engines"]
+        Arc["NegotiationArc\nPure Strategy Reducer"]
+        StateMachine["orderStateMachine\nPure Invariant Reducer"]
+        BanditEngine["PricingBandit & ExemplarStore\nLinUCB RL & RAG Memory"]
     end
 
-    WA_Cloud -->|HMAC Verified POST| Ingest
-    WA_Baileys -->|Socket Message| Baileys
-    Ingest -->|Push Raw Turn| Comms
-    Baileys -->|Voice/Text/Media| Comms
+    subgraph Persistence Layer
+        PG[("Neon PostgreSQL\n(merchants, products, orders,\ntransactions, conversation_outcomes)")]
+        RedisDB[("Redis Cache & BullMQ\n(Debounce scratch, Locks,\nSessions, Idempotency)")]
+    end
+
+    WA_Cloud -->|HMAC POST| Ingest
+    WA_Baileys -->|WebSocket Events| Baileys
+    Ingest -->|Enqueue Message| Comms
+    Baileys -->|Inbound Customer Turns| Comms
+    Vendor_App <-->|REST API + JWT| MerchantAPI
+
     Comms -->|Debounced Turn| Agent
+    Agent <--> Arc
+    Agent <--> BanditEngine
+    Agent --> StateMachine
+    Agent <--> PG
+    Comms <--> RedisDB
 
-    Agent <-->|Strategic Working Memory| Arc
-    Agent <-->|Rules & Stock| PG
-    Agent -->|On Deal Close| StateMachine
-    StateMachine -->|State Updates| PG
-
-    PSP_Hook -->|Credit Webhook| PayVerif
-    PayVerif -->|PAYMENT_CONFIRMED| StateMachine
-    PayVerif -->|Double-entry Ledger| PG
+    PSP_Hook -->|HMAC POST| PayVerif
+    PayVerif --> StateMachine
+    PayVerif --> PG
 
     MerchantAPI <--> PG
     CatSync <-->|Sync Catalog| PG
-    Comms <--> RedisDB
+    Baileys <--> RedisDB
 ```
 
 ---
@@ -188,28 +208,41 @@ flowchart TB
 sequenceDiagram
     autonumber
     actor Customer as Customer (WhatsApp)
-    participant Agent as AI Negotiator
+    participant Agent as AI Negotiator (agentLoop.ts)
     participant Arc as Negotiation Arc
-    participant Comms as Vendor Communiqué
-    actor Merchant as Merchant (SMS / WhatsApp)
+    participant Comms as Vendor Communiqué Engine
+    actor Merchant as Merchant Phone (SMS / WhatsApp)
+    participant Router as Comms Router (debounce.ts)
 
     Customer->>Agent: "Do ₦10k for the dress (Floor is ₦14,250)"
     Agent->>Arc: Check tactical attempts (Bundle + Credit)
-    Arc-->>Agent: Both tactics exhausted, price < floor
-    Agent->>Comms: Trigger below-floor escalation
-    Comms->>Merchant: SMS: "Customer Amaka offers ₦10k (floor: ₦14.25k). Reply: 1-Approve, 2-Counter ₦12k, 3-Reject"
-    Agent-->>Customer: "Hold on small make I check with my oga..."
+    Arc-->>Agent: Both tactics attempted & exhausted, price < floor
+    Agent->>Comms: escalate_to_merchant(customerOffer: 10000, reason)
+    
+    rect rgb(255, 245, 230)
+        Note over Comms: Dispatch SMS (Africa's Talking) / Baileys
+        Comms->>Merchant: "ACE ESCALATION ⚠️ Customer Amaka wants Dress at ₦10,000 (floor: ₦14,250).\nReply: 1-Approve exception, 2-Hold firm at floor, 3-Offer bundle pivot"
+        Comms-->>Arc: advanceArc(ESCALATED_TO_MERCHANT)
+        Agent-->>Customer: "Hold on small, let me check with my oga..."
+    end
 
-    alt Merchant Replies "1"
+    alt Merchant Replies "1" (Approve exception)
         Merchant->>Comms: "1"
-        Comms->>Arc: overrideFloorApproved(₦10,000)
-        Comms->>Customer: "Oga don agree! Deal confirmed at ₦10,000. Generating payment details..."
-    else Merchant Replies "2"
+        Comms->>Comms: Log choice to vendor_decisions table & clear Redis session
+        Comms->>Router: enqueueInboundMessage("[SYSTEM: Merchant approved exception at ₦10,000]")
+        Router->>Agent: Resume Agent Loop with approved override
+        Agent->>StateMachine: close_deal(10000) -> issue_payment_link()
+        Agent-->>Customer: "Oga don agree! Deal confirmed at ₦10,000. Generating payment details..."
+    else Merchant Replies "2" (Hold firm)
         Merchant->>Comms: "2"
-        Comms->>Arc: setCounterTarget(₦12,000)
-        Comms->>Customer: "Oga say lowest we fit do na ₦12,000 last last. How you see am?"
-    else Timeout / Reject
-        Comms->>Customer: "I beg we no fit reach that amount, ₦14,250 na our final price."
+        Comms->>Router: enqueueInboundMessage("[SYSTEM: Merchant rejected exception. Hold firm at floor ₦14,250]")
+        Router->>Agent: Resume Agent Loop
+        Agent-->>Customer: "Oga say lowest we fit do na ₦14,250 last last. How you see am?"
+    else Merchant Replies "3" (Offer bundle pivot)
+        Merchant->>Comms: "3"
+        Comms->>Router: enqueueInboundMessage("[SYSTEM: Merchant requested bundle pivot]")
+        Router->>Agent: Resume Agent Loop
+        Agent-->>Customer: "If you add matching scarf with am, I fit give you both for ₦16,000!"
     end
 ```
 
@@ -220,20 +253,29 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> no_order
-    no_order --> draft: ORDER_CREATED (Item selected)
-    draft --> draft: QUOTE_CREATED (Re-quote / price update)
-    draft --> awaiting_payment: INVOICE_GENERATED (VAN Issued)
     
-    awaiting_payment --> payment_verified: PAYMENT_CONFIRMED (Exact / Overpayment)
-    awaiting_payment --> cancelled: ORDER_CANCELLED (Timeout / Explicit)
+    no_order --> draft: QUOTE_CREATED (Item selected & quote generated)
+    draft --> draft: QUOTE_CREATED (Price updated / re-quoted)
+    draft --> awaiting_payment: PAYMENT_LINK_ISSUED (Virtual Account assigned)
+    draft --> cancelled: ORDER_CANCELLED (Explicit cancellation)
     
-    payment_verified --> processing: FULFILLMENT_STARTED
-    processing --> out_for_delivery: DISPATCHED (Rider assigned)
-    out_for_delivery --> delivered: DELIVERY_CONFIRMED
+    awaiting_payment --> payment_verified: PAYMENT_CONFIRMED (Amount >= total)
+    awaiting_payment --> cancelled: PAYMENT_TIMEOUT (15-min window expired)
+    awaiting_payment --> cancelled: ORDER_CANCELLED (Customer cancelled)
     
-    draft --> cancelled: ORDER_CANCELLED
+    payment_verified --> out_for_delivery: RIDER_ASSIGNED (Dispatch tracking URL linked)
+    payment_verified --> cancelled: ORDER_CANCELLED (Merchant refund/cancel)
+    
+    out_for_delivery --> delivered: DELIVERY_CONFIRMED (Delivery verified)
+    out_for_delivery --> cancelled: ORDER_CANCELLED (Delivery aborted)
+    
     delivered --> [*]
     cancelled --> [*]
+
+    note right of draft
+        Pure reducer in orderStateMachine.ts
+        Compiler-enforced exhaustiveness (assertNever)
+    end note
 ```
 
 ---
@@ -245,20 +287,30 @@ sequenceDiagram
     autonumber
     actor Vendor as Merchant / Vendor (WhatsApp)
     participant Gateway as Baileys Gateway (:3005)
-    participant Parser as Multimodal Parser (Groq Vision / Whisper)
-    participant Catalog as PostgreSQL Catalog
-    participant Cron as Auto-Status Scheduler
+    participant Parser as Multimodal Parser (inventoryParser.ts)
+    participant Storage as Cloudinary CDN
+    participant Catalog as PostgreSQL Catalog (products)
+    participant Cron as Auto-Status Scheduler (statusPoster.ts)
 
-    Vendor->>Gateway: Sends product photos with Pidgin voice note:<br/>"I get 10 pieces of this original sneaker, selling for 18k"
-    Gateway->>Parser: Media + Audio Extraction
-    Parser->>Parser: Whisper STT + Llama 3.2 Vision classification
-    Parser->>Catalog: Upserts SKU, Stock (10), Price (₦18,000), Generated Tags & Description
-    Catalog-->>Gateway: Ingestion Confirmed
-    Gateway-->>Vendor: WhatsApp Reply: "✅ Added 'Classic Black Sneaker' (₦18,000, 10 in stock) to your catalog!"
+    Note over Vendor,Gateway: [Phase 1 Pipeline - Live in core/baileys-gateway]
+    Vendor->>Gateway: Sends product photo with voice note / caption:<br/>"I get 10 pieces of this original sneaker, selling for 18k"
+    Gateway->>Gateway: 10s sliding debounce (vendorBuffers)
+    Gateway->>Parser: Media + Audio Extraction (Hooked in messageClassifier)
+    Parser->>Parser: Groq Whisper Turbo STT + Groq Vision (Llama 3.2 11B)
+    Parser->>Storage: uploadImage() (Streams to Cloudinary CDN -> secure_url)
+    Parser->>Parser: Generate 512-dim CLIP embedding (embeddings.ts)
+    Parser->>Catalog: Upsert SKU, Stock (10), Price (₦18k), Tags & Embedding
+    Catalog-->>Gateway: Upsert Confirmed
+    Gateway-->>Vendor: WhatsApp Confirmation: "✅ Added 'Classic Black Sneaker' (₦18,000) to catalog!"
 
-    Note over Cron: Scheduled Status Trigger
-    Cron->>Catalog: Fetch low-velocity / high-margin products
-    Cron->>Gateway: Post WhatsApp Status Story with catalog caption & automated direct buy trigger
+    Note over Cron: 30-Minute Status Cron (statusPoster.ts)
+    rect rgb(245, 255, 245)
+        Note over Cron,Catalog: Algorithmic Promotion & Direct-Buy Execution
+        Cron->>Catalog: SELECT product via Sales Velocity & Gross Margin CTE (ORDER BY promotion_score DESC)
+        Note over Catalog: Prioritizes low-velocity, high-margin inventory for status promotion
+        Cron->>Gateway: Post to status@broadcast with pre-filled wa.me deep-link
+        Note over Gateway: Direct-Buy WhatsApp link: https://wa.me/{phone}?text=Buy%20SKU...
+    end
 ```
 
 ---
@@ -267,7 +319,7 @@ sequenceDiagram
 
 ### 1. Regional Dialect & Cultural Persona (`Pidgin`, `English`, `Yoruba`, `Hausa`, `Igbo`)
 - **Dialect Guidance**: [`dialectGuidance()`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/ai-negotiator/src/agentLoop.ts#L329) injects culture-specific prompt framing based on the merchant's configuration:
-  - **Pidgin**: Warm Nigerian Pidgin (*"abeg"*, *"o"*, *"sharp sharp"*, *"no wahala"*).
+  - **Pidgin**: Street-smart Nigerian English with subtle Pidgin flair (*"no wahala"*, *"I don hear"* — strict anti-pattern guards avoid clichés like *"sharp sharp"* or forced slang).
   - **Yoruba**: Yoruba-inflected English (*"ẹ kú iṣẹ́"*, *"ó dára"*).
   - **Igbo**: Igbo-inflected English (*"daalụ"*, *"ọ dị mma"*).
   - **Hausa**: Hausa-inflected English (*"sannu"*, *"madalla"*).
@@ -298,35 +350,35 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph Inbound["Inbound Message"]
-        M1[Customer Message] --> M2[Comms Router Debounce]
+    subgraph Inbound["Inbound Customer Message"]
+        M1[Customer Message] --> M2[Comms Router: 5s Sliding Debounce]
     end
 
-    subgraph RAG_Layer["RAG Exemplar Memory"]
-        M2 --> R1[Exemplar Store]
-        R1 -->|Dialect + Tier + Scenario| R2[(interaction_exemplars Table)]
-        R2 -->|Dynamic Few-Shot Prompts| A1[System Prompt Injection]
+    subgraph Active_RAG["RAG Exemplar Memory (ACTIVE IN RUNTIME)"]
+        M2 --> R1[Exemplar Store: exemplarStore.ts]
+        R1 -->|Query by Dialect, Tier & Scenario| R2[(interaction_exemplars Table)]
+        R2 -->|Dynamic Nigerian Dialogue Few-Shots| A1[System Prompt Injection in agentLoop.ts]
     end
 
-    subgraph RL_Layer["LinUCB Contextual Bandit"]
-        M2 --> B1[Feature Extractor\n6D Context Vector]
-        B1 --> B2[LinUCB Pricing Bandit]
-        B2 -->|Action Selection UCB| B3[7 Discrete Discount Arms\n0% to 30%]
-        B3 --> A1
+    subgraph RL_Bandit["LinUCB Contextual Bandit (ACTIVE IN RUNTIME)"]
+        M2 -->|Context Extraction| B1[Feature Extractor: 6D Context Vector\nLTV, recency, margin, value, dialect, hour]
+        B1 --> B2[LinUCB Pricing Bandit: pricingBandit.ts]
+        B2 -->|Select Arm with Matrix Inversion| B3[7 Discrete Arms: 0% to 30%]
+        B3 -->|Proposed Arm Signal| A1
     end
 
-    subgraph Execution["Negotiator & Safety Circuit"]
-        A1 --> EX1[Groq Llama 3.3 LLM]
-        EX1 --> CB{Circuit Breaker\nHard Floor Gate}
-        CB -->|Valid Margin| OUT1[Send Counter-Offer]
-        CB -->|Breaches Floor| OUT2[Floor Mask: Clamped to Max Permitted]
+    subgraph Safety_Execution["Execution & Circuit Breakers (ACTIVE IN RUNTIME)"]
+        A1 --> EX1[Groq Llama 3.3 Versatile LLM]
+        EX1 --> CB{Circuit Breaker Gate: pricingService.ts}
+        CB -->|Valid Margin (>= Floor)| OUT1[propose_price Tool: Send Counter-Offer]
+        CB -->|Breaches Floor| OUT2[Circuit Breaker Trip: Force Bundle / Credit / Escalate]
     end
 
-    subgraph Feedback["Feedback & Reward Loop"]
-        OUT1 --> FB1[interactionFeedback Service]
-        FB1 --> FB2[(conversation_outcomes Table)]
-        ORD[Payment Confirmed / Deal Closed] -->|Backdated Outcome| FB3[Margin-Based Reward Calculation]
-        FB3 -->|r = margin * outcome - λ * override| B2
+    subgraph Feedback_Loop["Telemetry & Outcome Feedback (ACTIVE RUNTIME FEEDBACK)"]
+        OUT1 --> FB1[interactionFeedback.recordInteraction]
+        FB1 --> FB2[(conversation_outcomes Table with bandit_arm)]
+        ORD[Payment Confirmed / Deal Closed] -->|Backdated Outcome| FB3[Margin-Based Reward: recordOrderOutcome]
+        FB3 -->|Reward Update & Weight Inversion| B2
     end
 ```
 
@@ -342,12 +394,78 @@ flowchart TD
   - **Upper Confidence Bound**: Action selection via $UCB_a = \hat{\theta}_a^T x + \alpha \sqrt{x^T A_a^{-1} x}$.
   - **Circuit-Breaker Masking**: Clamps proposed discount to prevent any violation of the merchant's configured absolute floor price.
   - **Dual Persistence**: Matrix states persisted in Redis with zero-downtime in-memory caching.
-- **Interaction Feedback Loop ([`shared/src/feedback/interactionFeedback.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/feedback/interactionFeedback.ts))**:
+  - **Interaction Feedback Loop ([`shared/src/feedback/interactionFeedback.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/feedback/interactionFeedback.ts))**:
   - Tracks live turns and merchant manual overrides from the Exception Queue.
   - Backdates order outcomes when a transaction clears, calculating realized margin and updating the LinUCB model:
     $$r = \mathbf{1}_{\{\text{order\_completed}\}} \cdot \text{margin\_realized} - \lambda \cdot \mathbf{1}_{\{\text{merchant\_override}\}}$$
 
-### 7. Biblio Mobile App Architecture & Hardware Polish
+### 7. Graceful Offline Fallback & Edge Resilience Architecture
+
+ACE and Biblio are engineered specifically for emerging market connectivity (cellular volatility, power cuts, WhatsApp session drops). A multi-tier offline-first pipeline protects commerce transactions across every layer:
+
+```mermaid
+flowchart TD
+    subgraph MobileApp ["📱 Merchant Mobile App (Expo / React Native)"]
+        UI[Merchant Screens: Inbox, Catalog, Settings]
+        RQ["React Query (networkMode: 'offlineFirst')"]
+        Persist["AsyncStorage Cache (24h gcTime)"]
+        NetBanner["Offline Banner (Pill Indicator)"]
+        NativeLink["wa.me Deep-Link Native WhatsApp"]
+    end
+
+    subgraph Backend ["⚡ Biblio Backend & Gateway"]
+        BullMQ["BullMQ + Redis Persistent Queues"]
+        Debounce["Inbound Debounce Buffer"]
+        Poster["Status Poster Engine"]
+        Communique["Vendor Communiqué Engine"]
+    end
+
+    subgraph Fallbacks ["🛡️ Fallback Channels"]
+        SMS["Africa's Talking / Termii SMS"]
+        NativeWA["Merchant's Native WhatsApp App"]
+        InternalLogistics["Internal Manual Dispatch"]
+    end
+
+    UI --> RQ
+    RQ <--> Persist
+    RQ -.->|No Internet| NetBanner
+    UI -->|Baileys Socket Offline| NativeLink --> NativeWA
+
+    Poster -->|Socket Connected| Baileys[Baileys Outbound Socket]
+    Poster -->|Socket Offline| NativeLink
+
+    Communique -->|Primary| Baileys
+    Communique -->|Socket Offline / 5m Timeout| SMS
+
+    Debounce --> BullMQ
+    BullMQ -.->|Retry Exponential Backoff| DB[(Neon Postgres)]
+```
+
+- **Client Persistence**: React Query with `networkMode: 'offlineFirst'` and a 24-hour `AsyncStorage` persistence layer renders cached inventory, drafts, and analytics instantaneously when offline.
+- **Deep-Link Failover**: If the Baileys gateway socket is disconnected during a status broadcast, the engine returns a pre-filled `wa.me` deep-link opening the native WhatsApp app directly on the merchant's physical phone.
+- **Vendor Communiqué SMS Dual-Track**: Escalations attempt WhatsApp delivery via business line socket first; on socket failure, the engine immediately dispatches via Africa's Talking / Termii SMS with an automated 5-minute delayed BullMQ safety reminder.
+
+---
+
+## Production Execution & Architecture Verification Matrix
+
+The table below details all 9 architectural pipelines and confirms their live implementation, active hooks, and production readiness across the physical codebase on disk.
+
+| # | Flow / Claim | Codebase Location | Current Reality on Disk | Status | Production Implementation Details |
+|---|--------------|-------------------|-------------------------|:------:|-----------------------------------|
+| **1** | **Vendor WhatsApp Intake Dispatching** | [`messageClassifier.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/messageClassifier.ts#L7)<br/>[`inventoryParser.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L134) | Pipeline logic is fully written and **live-hooked** in `messageClassifier.ts`. Inbound media, voice notes, and Note-to-Self messages from vendor business/personal lines automatically route into `parseVendorSubmission` for Whisper transcription, Groq Vision parsing, CLIP embeddings, and database upserts. | ✅ **LIVE & HOOKED** | Extend vendor command vocabulary (e.g. multi-variant stock updates) as needed. |
+| **2** | **Persistent Media Storage (Cloudinary CDN)** | [`inventoryParser.ts:uploadImage`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L693) | Upgraded to production Cloudinary SDK v2. Images are streamed directly to Cloudinary (`ace/vendors/{vendorId}`) using `upload_stream` and return permanent public HTTPS CDN URLs (`secure_url`) stored in `products.image_url`. | ✅ **LIVE (Cloudinary)** | Optional: Configure custom CNAME CDN domain in Cloudinary dashboard. |
+| **3** | **Sales-Velocity & Margin Status Scheduler** | [`statusPoster.ts:postNextProduct`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/statusPoster.ts#L154) | 30-minute cron scheduler runs an algorithmic ranking CTE. It calculates gross margins `(price - floor)/price` and evaluates 14-day sales velocity (`orders` table lookup) to prioritize slow-moving, high-margin inventory for WhatsApp Status broadcasts. | ✅ **LIVE (Algorithmic)** | Tune promotion scoring weights based on merchant seasonality feedback. |
+| **4** | **Automated Direct-Buy Status Trigger** | [`inventoryParser.ts:buildStatusCaption`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L657) | Status post captions dynamically generate pre-filled `wa.me` click-to-chat deep-links (`https://wa.me/{phone}?text=...`) carrying the exact SKU, product name, and formatted price. Tapping the link instantly opens the chat with pre-filled buyer intent. | ✅ **LIVE (wa.me Deep-Link)** | Optional: Generate short-links with UTM analytics tracking. |
+| **5** | **LinUCB Contextual Bandit Live Action Gating** | [`pricingBandit.ts`](file:///c:/Users/USER/Documents/Biblio/shared/src/rl/pricingBandit.ts)<br/>[`agentLoop.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/ai-negotiator/src/agentLoop.ts#L180) | Live in runtime! `agentLoop.ts` computes the 6D context vector (LTV, order recency, product margin, order value, dialect, time of day) and invokes `proposeBanditPrice` to inject learned pricing signals into the system prompt. Every turn records `bandit_arm`, and `recordOrderOutcome` backdates margin rewards into Redis. | ✅ **LIVE & GATING** | Periodic automated hyperparameter sweeps for exploration factor `alpha`. |
+| **6** | **Live Bank Virtual Account Provisioning (VAN)** | [`tools.ts:issuePaymentLink`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/ai-negotiator/src/tools.ts#L757)<br/>[`payment-verification`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/payment-verification/src/index.ts) | Integrates with Paystack's Charge API (`bank_transfer` channel) to generate real dynamic dedicated virtual accounts (Providus/Wema). Inbound webhooks on `:3002` verify HMAC signatures and reconcile payments automatically. | ✅ **LIVE (Paystack DVA)** | Add Monnify / Wema Bank direct API backup adapters for multi-PSP redundancy. |
+| **7** | **Meta Cloud API Voice Note STT** | [`debounce.ts:turnWorker`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/comms-router/src/debounce.ts#L201)<br/>[`ingestion-service`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/ingestion-service/src/index.ts) | Meta Cloud API inbound audio notes are downloaded from the Graph API using per-merchant system tokens, buffered into memory, and transcribed in real-time via Groq Whisper (`mediaProcessor.ts`). | ✅ **LIVE (Graph API + Whisper)** | Cache transcribed audio buffers in Redis to prevent re-fetching on replays. |
+| **8** | **Automated Rider Dispatch & Carrier Booking** | [`logistics/src/streamConsumer.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/logistics/src/streamConsumer.ts)<br/>[`dispatchService.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/logistics/src/dispatchService.ts) | Redis Stream `stream:payments.verified` publishes verified orders on `PAYMENT_CONFIRMED`. The logistics stream consumer auto-dispatches riders via Sendstack/Kwik APIs, transitions order state to `out_for_delivery`, and notifies customers with live tracking URLs. | ✅ **LIVE (Redis Stream + Sendstack)** | Add courier webhooks to advance state machine from `out_for_delivery` to `delivered`. |
+| **9** | **Offline-First Resilience & Deep-Link Failover** | [`_layout.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/app/_layout.tsx)<br/>[`statusPoster.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/statusPoster.ts)<br/>[`vendorCommunique.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/comms-router/src/vendorCommunique.ts) | React Query `offlineFirst` with 24h `AsyncStorage` cache; automatic `wa.me` deep-link failover on socket drop; dual-track SMS escalation with 5-minute delayed BullMQ reminder. | ✅ **LIVE & ACTIVE** | Zero-downtime offline continuity across volatile network conditions. |
+
+---
+
+### 8. Biblio Mobile App Architecture & Hardware Polish
 - **Full-Height Modal Drawers ([`SidePanel.tsx`](file:///c:/Users/USER/Documents/Biblio/ace-merchant-app/src/components/SidePanel.tsx))**:
   - Converted the slide-in drawer to a root `<Modal visible transparent statusBarTranslucent>` with `position: 'absolute', top: 0, bottom: 0, right: 0, height: '100%'`.
   - Fixes the Android/iOS hardware navigation bar gap where drawers were previously raised above the screen bottom.

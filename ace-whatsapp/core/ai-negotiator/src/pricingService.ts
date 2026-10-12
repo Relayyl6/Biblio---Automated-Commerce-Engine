@@ -218,13 +218,14 @@ export function validateBundlePivot(
 
 import {
   pricingBandit,
-  BanditArm,
+  type BanditArm,
   BANDIT_ARMS,
-  BanditContextInput,
-  BanditArmSelection,
+  type BanditContextInput,
+  type BanditArmSelection,
 } from "@ace/shared/rl/pricingBandit.js";
 
-export { BanditArm, BANDIT_ARMS, BanditContextInput, BanditArmSelection };
+export { BANDIT_ARMS };
+export type { BanditArm, BanditContextInput, BanditArmSelection };
 
 /**
  * Stage 1 Contextual Bandit Selection (LinUCB)

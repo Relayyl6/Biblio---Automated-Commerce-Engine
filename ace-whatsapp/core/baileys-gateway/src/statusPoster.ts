@@ -38,6 +38,7 @@ interface StatusProduct {
   price: number | null;
   image_url: string | null;
   imageBuffer?: Buffer | null; // preferred over image_url — works without a CDN
+  business_phone?: string | null; // vendor's WhatsApp business number for wa.me deep-link
 }
 
 // ─── Core Status Posting ──────────────────────────────────────────────────────
@@ -56,10 +57,11 @@ async function sendStatusPost(
     return;
   }
 
-  const caption = buildStatusCaption({
-    product_name: product.product_name,
-    price: product.price,
-  });
+  const caption = buildStatusCaption(
+    { product_name: product.product_name, price: product.price },
+    product.business_phone ?? "",
+    product.sku
+  );
 
   // Post to WhatsApp Status (Stories)
   // Baileys accepts either a Buffer or a { url } object for the image field
@@ -97,6 +99,7 @@ export async function postProductToStatus(
     price: number | null;
     image_url: string | null;
     imageBuffer?: Buffer | null;
+    business_phone?: string | null;
   },
   vendorId: string
 ): Promise<void> {
@@ -143,40 +146,190 @@ export async function runStatusCron(): Promise<void> {
   }
 }
 
+export interface StatusCandidate {
+  sku: string;
+  name: string;
+  price: number;
+  image_url: string | null;
+  margin_pct: number;
+  recent_sales_velocity: number;
+  promotion_score: number;
+  last_posted_at: string | null;
+  business_line_number: string | null;
+}
+
+export async function getStatusCandidates(vendorId: string, limit: number = 5): Promise<StatusCandidate[]> {
+  const vendorRows = await sql<{
+    status_strategy: string | null;
+    margin_weight: number | null;
+    velocity_weight: number | null;
+  }[]>`
+    SELECT status_strategy, margin_weight, velocity_weight
+    FROM vendors
+    WHERE id = ${vendorId}
+    LIMIT 1
+  `;
+  const strategy = vendorRows[0]?.status_strategy || "balanced";
+  let marginWeight = Number(vendorRows[0]?.margin_weight ?? 0.70);
+  let velocityWeight = Number(vendorRows[0]?.velocity_weight ?? 0.30);
+
+  if (strategy === "margin_priority") {
+    marginWeight = 0.85;
+    velocityWeight = 0.15;
+  } else if (strategy === "velocity_priority") {
+    marginWeight = 0.30;
+    velocityWeight = 0.70;
+  }
+
+  const rows = await sql<{
+    sku: string;
+    name: string;
+    price: number;
+    image_url: string | null;
+    margin_pct: number;
+    recent_sales_velocity: number;
+    promotion_score: number;
+    last_posted_at: string | null;
+    business_line_number: string | null;
+  }[]>`
+    WITH eligible_products AS (
+      SELECT
+        p.sku,
+        p.name,
+        p.price,
+        p.image_url,
+        p.last_posted_at,
+        v.business_line_number,
+        GREATEST(
+          0.10,
+          (p.price - COALESCE(
+            (p.metadata->>'floor')::numeric,
+            (p.metadata->>'cost_price')::numeric,
+            (p.metadata->>'cost')::numeric,
+            p.price * 0.70
+          )) / GREATEST(p.price, 1.0)
+        ) AS estimated_margin,
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM orders o
+          WHERE (
+              o.supplier_id = p.supplier_id
+              OR o.product_id = p.id
+              OR o.product_id = p.product_id
+            )
+            AND (
+              o.items::text LIKE ('%' || p.sku || '%')
+              OR o.product_id = p.id
+              OR o.product_id = p.product_id
+            )
+            AND o.created_at > now() - interval '14 days'
+        ), 0) AS recent_sales_velocity
+      FROM products p
+      JOIN vendors v ON v.merchant_id = p.merchant_id
+      WHERE v.id = ${vendorId}
+        AND (p.active = true OR p.active IS NULL)
+        AND p.image_url IS NOT NULL
+    )
+    SELECT
+      sku,
+      name,
+      price,
+      image_url,
+      ROUND((estimated_margin * 100)::numeric, 1)::float as margin_pct,
+      recent_sales_velocity,
+      ROUND((
+        (estimated_margin * (${marginWeight}::numeric * 100.0)) / (1.0 + recent_sales_velocity::numeric * ${velocityWeight}::numeric)
+        + CASE WHEN last_posted_at IS NULL THEN 15.0 ELSE 0.0 END
+      )::numeric, 2)::float AS promotion_score,
+      last_posted_at::text,
+      business_line_number
+    FROM eligible_products
+    ORDER BY
+      ${strategy === "freshness" ? sql`last_posted_at ASC NULLS FIRST, promotion_score DESC` : sql`promotion_score DESC, last_posted_at ASC NULLS FIRST`}
+    LIMIT ${limit}
+  `;
+
+  return rows;
+}
+
+export async function postProductToStatusBySku(
+  vendorId: string,
+  sku?: string
+): Promise<{ ok: boolean; sku?: string; name?: string; price?: number; error?: string }> {
+  const sock = getSession(vendorId);
+  if (!sock) {
+    logger.warn({ vendorId }, "Cannot post to status: Baileys session not connected");
+    return { ok: false, error: "WhatsApp business session is currently disconnected. Please re-pair your WhatsApp device." };
+  }
+
+  let targetProduct: {
+    sku: string;
+    name: string;
+    price: number;
+    image_url: string | null;
+    business_line_number: string | null;
+  } | undefined;
+
+  if (sku) {
+    const rows = await sql<{
+      sku: string;
+      name: string;
+      price: number;
+      image_url: string | null;
+      business_line_number: string | null;
+    }[]>`
+      SELECT p.sku, p.name, p.price, p.image_url, v.business_line_number
+      FROM products p
+      JOIN vendors v ON v.merchant_id = p.merchant_id
+      WHERE v.id = ${vendorId} AND p.sku = ${sku}
+      LIMIT 1
+    `;
+    if (!rows[0]) {
+      return { ok: false, error: `Product with SKU '${sku}' not found in catalog.` };
+    }
+    targetProduct = rows[0];
+  } else {
+    const candidates = await getStatusCandidates(vendorId, 1);
+    if (candidates.length === 0) {
+      return { ok: false, error: "No eligible products with images found in catalog." };
+    }
+    targetProduct = candidates[0];
+  }
+
+  if (!targetProduct.image_url) {
+    return { ok: false, error: `Product '${targetProduct.name}' does not have an image URL.` };
+  }
+
+  try {
+    await sendStatusPost(
+      sock,
+      {
+        sku: targetProduct.sku,
+        product_name: targetProduct.name,
+        price: targetProduct.price,
+        image_url: targetProduct.image_url,
+        business_phone: targetProduct.business_line_number,
+      },
+      vendorId
+    );
+    return { ok: true, sku: targetProduct.sku, name: targetProduct.name, price: targetProduct.price };
+  } catch (err: any) {
+    logger.error({ err, vendorId, sku: targetProduct.sku }, "Manual status post failed");
+    return { ok: false, error: err.message };
+  }
+}
+
 async function postNextProduct(
   vendorId: string,
   frequencyHours: number,
   sock: WASocket
 ): Promise<void> {
-  // Select the product least recently posted for this vendor.
-  // Enforces per-vendor frequency: only eligible if last_posted_at was more
-  // than posting_frequency_hours ago (or never posted at all).
-  const products = await sql<{
-    sku: string;
-    name: string;
-    price: number;
-    image_url: string | null;
-  }[]>`
-    SELECT p.sku, p.name, p.price, p.image_url
-    FROM products p
-    JOIN vendors v ON v.merchant_id = p.merchant_id
-    WHERE v.id = ${vendorId}
-      AND p.active = true
-      AND p.image_url IS NOT NULL
-      AND (
-        p.last_posted_at IS NULL
-        OR p.last_posted_at < now() - (${frequencyHours} || ' hours')::interval
-      )
-    ORDER BY p.last_posted_at ASC NULLS FIRST
-    LIMIT 1
-  `;
-
-  if (products.length === 0) {
+  const candidates = await getStatusCandidates(vendorId, 1);
+  if (candidates.length === 0) {
     logger.debug({ vendorId }, "Status cron: no eligible products to post");
     return;
   }
-
-  const product = products[0];
+  const product = candidates[0];
   await sendStatusPost(
     sock,
     {
@@ -184,10 +337,12 @@ async function postNextProduct(
       product_name: product.name,
       price: product.price,
       image_url: product.image_url,
+      business_phone: product.business_line_number,
     },
     vendorId
   );
 }
+
 
 // ─── Process approved queue items ─────────────────────────────────────────────
 // For vendors with approve_before_post = true, the dashboard marks items

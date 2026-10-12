@@ -120,6 +120,16 @@ export default function SuppliersScreen() {
     setPendingDeleteId(null);
   };
 
+  const handleSoftDelete = async () => {
+    if (pendingDeleteId) {
+      await updateMutation.mutateAsync({
+        id: pendingDeleteId,
+        autoRestockEnabled: false,
+      });
+    }
+    setPendingDeleteId(null);
+  };
+
   const canSubmit = form.name.trim().length > 0 && !addMutation.isPending && !updateMutation.isPending;
 
   return (
@@ -265,9 +275,12 @@ export default function SuppliersScreen() {
 
       <ConfirmDialog
         visible={pendingDeleteId !== null}
-        title="Remove this node?"
-        message="The AI will stop sourcing from this channel. This can't be undone."
-        confirmLabel="Remove"
+        title="Remove Procurement Node"
+        message="Choose whether to pause auto-restocking (soft-delete / keep channel on standby) or permanently remove this supplier node."
+        itemName={safeNodes.find((s) => s.id === pendingDeleteId)?.name}
+        confirmLabel="🗑️ Permanently Delete"
+        softDeleteLabel="⏸️ Pause Channel (Soft Delete)"
+        onSoftDelete={handleSoftDelete}
         onConfirm={confirmDelete}
         onCancel={() => setPendingDeleteId(null)}
       />

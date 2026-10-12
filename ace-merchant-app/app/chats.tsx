@@ -13,20 +13,36 @@ import { LoadingScreen } from '../src/components/LoadingScreen';
 
 export default function ChatsScreen() {
   const router = useRouter();
-  const { data: chats, isLoading } = useChats();
+  const { data: chats, isLoading, refetch, isRefetching } = useChats();
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const [query, setQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'takeover'>('all');
 
-  // Search bar existed visually before but did nothing — now it actually
-  // filters, matching the pattern used in the Inbox/CRM rewrites.
+  const unreadCount = useMemo(() => (chats || []).filter((ch: any) => Number(ch.unread) > 0).length, [chats]);
+  const takeoverCount = useMemo(() => (chats || []).filter((ch: any) => ch.isHumanOverride).length, [chats]);
+
+  const cycleFilter = () => {
+    setActiveFilter(prev => {
+      if (prev === 'all') return 'unread';
+      if (prev === 'unread') return 'takeover';
+      return 'all';
+    });
+  };
+
   const filteredChats = useMemo(() => {
     if (!chats) return [];
-    if (!query) return chats;
-    return chats.filter(
-      (chat: any) => chat.name?.toLowerCase().includes(query.toLowerCase()) || chat.message?.toLowerCase().includes(query.toLowerCase())
-    );
-  }, [chats, query]);
+    return chats.filter((chat: any) => {
+      const matchesQuery = !query ||
+        chat.name?.toLowerCase().includes(query.toLowerCase()) ||
+        chat.message?.toLowerCase().includes(query.toLowerCase());
+
+      if (!matchesQuery) return false;
+      if (activeFilter === 'unread') return Number(chat.unread) > 0;
+      if (activeFilter === 'takeover') return !!chat.isHumanOverride;
+      return true;
+    });
+  }, [chats, query, activeFilter]);
 
   if (isLoading) return <LoadingScreen />;
 
@@ -36,19 +52,78 @@ export default function ChatsScreen() {
         title="Chats"
         rightAction={
           <Pressable
-            style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }}
+            onPress={cycleFilter}
+            style={{
+              backgroundColor: activeFilter !== 'all' ? c.accentSoft : c.surface,
+              borderColor: activeFilter !== 'all' ? c.accent : c.border,
+              ...shadows.sm,
+            }}
             className="w-10 h-10 rounded-full border items-center justify-center active:opacity-70"
           >
-            <Filter size={20} color={c.textPrimary} />
+            <Filter size={18} color={activeFilter !== 'all' ? c.accent : c.textPrimary} />
           </Pressable>
         }
       />
 
-      <View className="px-6 mb-6">
+      <View className="px-6 mb-3">
         <SearchBar value={query} onChangeText={setQuery} placeholder="Search conversations..." variant="pill" />
       </View>
 
-      <ScrollView className="flex-1 px-4" contentContainerStyle={{ paddingBottom: 100 }}>
+      {/* Quick Filter Pills */}
+      <View className="px-6 mb-4 flex-row items-center gap-2">
+        <Pressable
+          onPress={() => setActiveFilter('all')}
+          style={{
+            backgroundColor: activeFilter === 'all' ? c.accent : c.surface,
+            borderColor: activeFilter === 'all' ? c.accent : c.border,
+          }}
+          className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
+        >
+          <Text
+            style={{ color: activeFilter === 'all' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            className="text-xs font-bold"
+          >
+            All ({(chats || []).length})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setActiveFilter('unread')}
+          style={{
+            backgroundColor: activeFilter === 'unread' ? c.accent : c.surface,
+            borderColor: activeFilter === 'unread' ? c.accent : c.border,
+          }}
+          className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
+        >
+          <Text
+            style={{ color: activeFilter === 'unread' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            className="text-xs font-bold"
+          >
+            Unread ({unreadCount})
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setActiveFilter('takeover')}
+          style={{
+            backgroundColor: activeFilter === 'takeover' ? c.accent : c.surface,
+            borderColor: activeFilter === 'takeover' ? c.accent : c.border,
+          }}
+          className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
+        >
+          <Text
+            style={{ color: activeFilter === 'takeover' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            className="text-xs font-bold"
+          >
+            Manual ({takeoverCount})
+          </Text>
+        </Pressable>
+      </View>
+
+      <ScrollView
+        className="flex-1 px-4"
+        contentContainerStyle={{ paddingBottom: 100 }}
+      >
         {filteredChats.length === 0 ? (
           <EmptyState
             icon={MessageCircleOff}

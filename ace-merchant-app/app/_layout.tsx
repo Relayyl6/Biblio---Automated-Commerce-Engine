@@ -12,12 +12,18 @@ import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persi
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeSync } from '../src/hooks/useThemeSync';
 import { useAuthGate } from '../src/hooks/useAuthGate';
+import { GlobalAlertModal } from '../src/components/GlobalAlertModal';
 import { colors } from '../theme';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       gcTime: 1000 * 60 * 60 * 24, // 24 hours
+      staleTime: 1000 * 60 * 5, // 5 minutes fresh window
+      networkMode: 'offlineFirst',
+    },
+    mutations: {
+      networkMode: 'offlineFirst',
     },
   },
 });
@@ -78,9 +84,11 @@ function RootNavigator() {
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="support" options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ headerShown: false }} />
+          <Stack.Screen name="notification-history" options={{ headerShown: false }} />
           <Stack.Screen name="search" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
         </Stack>
+        <GlobalAlertModal />
       </View>
     </ThemeProvider>
   );

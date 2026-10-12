@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { useColorScheme } from 'nativewind';
+import { useAlert } from '../src/store/alertStore';
 import {
   Plus,
   PackageSearch,
@@ -56,6 +57,7 @@ export default function CRMScreen() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
+  const alert = useAlert();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [panelVisible, setPanelVisible] = useState(false);
@@ -103,12 +105,12 @@ export default function CRMScreen() {
 
   const handleSave = async () => {
     if (!form.name.trim()) {
-      Alert.alert('Required Field', 'Please enter a product name.');
+      alert.warning('Required Field', 'Please enter a product name.');
       return;
     }
     const numPrice = Number(form.price);
     if (isNaN(numPrice) || numPrice <= 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid retail price in Naira.');
+      alert.warning('Invalid Price', 'Please enter a valid retail price in Naira.');
       return;
     }
 
@@ -124,8 +126,9 @@ export default function CRMScreen() {
       });
       setPanelVisible(false);
       setForm(EMPTY_FORM);
+      alert.success('Product Saved', `"${form.name.trim()}" has been saved to your catalog.`);
     } catch (err: any) {
-      Alert.alert('Save Failed', err?.response?.data?.error || err.message || 'Could not save product.');
+      alert.error('Save Failed', err?.response?.data?.error || err.message || 'Could not save product.');
     }
   };
 
@@ -134,8 +137,27 @@ export default function CRMScreen() {
     try {
       await deleteMutation.mutateAsync(pendingDeleteSku);
       setPendingDeleteSku(null);
+      alert.success('Product Removed', 'Product has been permanently removed.');
     } catch (err: any) {
-      Alert.alert('Delete Failed', err?.message || 'Could not delete product.');
+      alert.error('Delete Failed', err?.message || 'Could not delete product.');
+    }
+  };
+
+  const handleSoftDelete = async () => {
+    if (!pendingDeleteSku) return;
+    try {
+      const itemToArchive = inventory?.find((i: any) => (i.sku || i.id) === pendingDeleteSku);
+      if (itemToArchive) {
+        await addMutation.mutateAsync({
+          ...itemToArchive,
+          stock: 0,
+          description: `[ARCHIVED] ${itemToArchive.description || ''}`.trim(),
+        });
+      }
+      setPendingDeleteSku(null);
+      alert.success('Product Archived', 'Item has been soft-deleted and hidden from live WhatsApp negotiation.');
+    } catch (err: any) {
+      alert.error('Archive Failed', err?.message || 'Could not archive product.');
     }
   };
 
@@ -449,12 +471,15 @@ export default function CRMScreen() {
         </View>
       </SidePanel>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Confirmation Dialog with Soft-Delete / Archive support */}
       <ConfirmDialog
         visible={pendingDeleteSku !== null}
-        title="Remove Product?"
-        message="This product will be archived from your active catalog and the AI will stop offering it."
-        confirmLabel="Remove"
+        title="Remove Product"
+        message="Choose whether to archive this product (hides from WhatsApp catalog while preserving past sales data) or permanently delete it."
+        itemName={inventory?.find((i: any) => (i.sku || i.id) === pendingDeleteSku)?.name || pendingDeleteSku || undefined}
+        confirmLabel="🗑️ Permanently Delete"
+        softDeleteLabel="📦 Archive (Soft Delete)"
+        onSoftDelete={handleSoftDelete}
         onConfirm={handleDelete}
         onCancel={() => setPendingDeleteSku(null)}
       />

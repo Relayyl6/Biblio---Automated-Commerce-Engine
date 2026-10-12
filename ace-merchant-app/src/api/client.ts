@@ -224,6 +224,16 @@ export const useTakeoverChat = () => {
   });
 };
 
+export const useReleaseTakeoverChat = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async (customerId: string) => {
+      const res = await api.post(`/merchants/${merchantId}/chats/${customerId}/release-takeover`);
+      return res.data;
+    }
+  });
+};
+
 export const useSendChatMessage = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
@@ -291,3 +301,146 @@ export const usePairWhatsApp = () => {
     }
   });
 };
+
+// --- WHATSAPP STATUS AUTOMATION & SMART RANKING ---
+export const useStatusSettings = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery({
+    queryKey: ['statusSettings', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/status-settings`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useUpdateStatusSettings = () => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async (data: {
+      autoStatusEnabled?: boolean;
+      postingFrequencyHours?: number;
+      approveBeforePost?: boolean;
+      statusStrategy?: 'balanced' | 'margin_priority' | 'velocity_priority' | 'freshness';
+      marginWeight?: number;
+      velocityWeight?: number;
+    }) => {
+      const res = await api.patch(`/merchants/${merchantId}/status-settings`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['statusSettings', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['statusCandidates', merchantId] });
+    },
+  });
+};
+
+export const useStatusCandidates = (limit = 5) => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery({
+    queryKey: ['statusCandidates', merchantId, limit],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/status-candidates?limit=${limit}`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const usePostStatusNow = () => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async (sku?: string) => {
+      const res = await api.post(`/merchants/${merchantId}/status-post-now`, { sku });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['statusCandidates', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['statusLog', merchantId] });
+    },
+  });
+};
+
+export const useStatusLog = (limit = 10) => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery({
+    queryKey: ['statusLog', merchantId, limit],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/status-log?limit=${limit}`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+// --- NOTIFICATION HISTORY & AUDIT PIPELINE ---
+export interface NotificationEvent {
+  id: string;
+  title: string;
+  body: string;
+  channel: 'whatsapp' | 'push' | 'sms' | 'in-app';
+  status: 'delivered' | 'pending' | 'failed';
+  timestamp: string;
+  metadata?: Record<string, any>;
+}
+
+export const useNotificationHistory = (limit = 50) => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery({
+    queryKey: ['notificationHistory', merchantId, limit],
+    queryFn: async (): Promise<{ ok: boolean; count: number; events: NotificationEvent[] }> => {
+      const res = await api.get(`/merchants/${merchantId}/notification-history?limit=${limit}`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useClearNotificationHistory = () => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async () => {
+      const res = await api.delete(`/merchants/${merchantId}/notification-history`);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.setQueryData(['notificationHistory', merchantId, 50], { ok: true, count: 0, events: [] });
+    },
+  });
+};
+
+// --- SUPPORT TICKETING PIPELINE ---
+export interface SupportTicketInput {
+  subject: string;
+  message: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  category?: string;
+}
+
+export const useSubmitSupportTicket = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async (data: SupportTicketInput) => {
+      const res = await api.post(`/merchants/${merchantId}/support-tickets`, data);
+      return res.data;
+    },
+  });
+};
+
+export const useSupportTickets = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery({
+    queryKey: ['supportTickets', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/support-tickets`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+

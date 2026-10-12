@@ -26,7 +26,7 @@ import rateLimit from "@fastify/rate-limit";
 import P from "pino";
 import { sql } from "@ace/shared/clients";
 import { createSession, getSession, getAllActiveSessions, pairVendorNumber } from "./sessionManager.js";
-import { startStatusCron, runStatusCron } from "./statusPoster.js";
+import { startStatusCron, runStatusCron, getStatusCandidates, postProductToStatusBySku } from "./statusPoster.js";
 import { sendViaBaileys, canSendViaBaileys } from "./outboundAdapter.js";
 import type { OutboundMessage } from "@ace/shared/types";
 
@@ -116,6 +116,33 @@ app.post("/sessions/:vendorId/connect", async (req, reply) => {
 app.post("/status/cron", async (_req, reply) => {
   await runStatusCron();
   return reply.send({ ok: true, message: "Status cron run completed" });
+});
+
+
+// ─── Status Candidates & Immediate Post ──────────────────────────────────────
+app.get("/status/:vendorId/candidates", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const limit = Number((req.query as any)?.limit ?? 5);
+  try {
+    const candidates = await getStatusCandidates(vendorId, limit);
+    return reply.send({ ok: true, candidates });
+  } catch (err: any) {
+    return reply.code(500).send({ ok: false, error: err.message });
+  }
+});
+
+app.post("/status/:vendorId/post-now", async (req, reply) => {
+  const { vendorId } = req.params as { vendorId: string };
+  const { sku } = (req.body as { sku?: string }) ?? {};
+  try {
+    const res = await postProductToStatusBySku(vendorId, sku);
+    if (!res.ok) {
+      return reply.code(400).send(res);
+    }
+    return reply.send(res);
+  } catch (err: any) {
+    return reply.code(500).send({ ok: false, error: err.message });
+  }
 });
 
 // ─── Outbound send (called by comms-router across process boundary) ───────────

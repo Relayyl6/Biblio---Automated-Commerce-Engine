@@ -30,9 +30,12 @@ import { sendCustomerMessage, setTypingIndicator } from "../../comms-router/src/
 import { executeTool, toolDefinitions, type ToolContext } from "./tools";
 import {
   computeAuthorizedRange,
+  proposeBanditPrice,
   type MerchantPricingRules,
   type AuthorizedPriceRange,
   type CustomerTier,
+  type BanditContextInput,
+  type BanditArm,
 } from "./pricingService";
 import {
   advanceArc,
@@ -135,9 +138,10 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   await setTypingIndicator(turn.customerId, turn.merchantId).catch(logger.warn);
 
   const arc = await loadOrCreateArc(turn);
-  const [pricingRules, merchant] = await Promise.all([
+  const [pricingRules, merchant, customerStats] = await Promise.all([
     loadMerchantPricingRules(turn.merchantId),
     loadMerchantContext(turn.merchantId),
+    loadCustomerStats(turn.customerId, turn.merchantId),
   ]);
 
   let currentBasePrice = 0;
@@ -175,6 +179,52 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
     authorizedRange: sentinelRange,
   };
 
+  // ── LinUCB Contextual Bandit: Propose optimal opening discount ────────────
+  // Runs whenever we already know the product's anchor price (i.e. the arc
+  // has been primed by a previous check_inventory call or the customer gave
+  // a SKU). For fresh sessions the arc.anchorPrice is 0 — we skip the bandit
+  // and let the agent call check_inventory first as normal, then the NEXT
+  // turn will have a primed arc and the bandit fires.
+  let banditArm: BanditArm | null = null;
+  let banditPricingHint = "";
+
+  if (arc.anchorPrice > 0 && arc.floor > 0) {
+    try {
+      const banditRange = computeAuthorizedRange(
+        { ...pricingRules, basePrice: arc.anchorPrice },
+        currentTier
+      );
+      const banditContext: BanditContextInput = {
+        customerLtv: customerStats.ltv,
+        orderCount: customerStats.orderCount,
+        daysSinceLastOrder: customerStats.daysSinceLastOrder,
+        productMargin: arc.anchorPrice > 0
+          ? (arc.anchorPrice - arc.floor) / arc.anchorPrice
+          : 0.35,
+        basePrice: arc.anchorPrice,
+        dialect: merchant.dialect,
+        timeOfDayHour: new Date().getHours(),
+      };
+
+      const { banditSelection } = await proposeBanditPrice(banditRange, banditContext);
+      banditArm = banditSelection.arm;
+
+      const discountPct = Math.round(banditSelection.arm * 100);
+      const suggestedPrice = banditSelection.proposedPrice;
+
+      banditPricingHint = discountPct === 0
+        ? `RL PRICING SIGNAL: Hold full anchor (₦${arc.anchorPrice.toLocaleString()}). Data shows this customer segment responds to value framing, not discounts.`
+        : `RL PRICING SIGNAL: Bandit recommends up to ${discountPct}% discount based on ${customerStats.orderCount} past orders and ₦${customerStats.ltv.toLocaleString()} LTV. Suggested floor offer: ₦${suggestedPrice.toLocaleString()}. Only go this low if needed — always anchor high first.`;
+
+      logger.info(
+        "[Bandit] 🎰 Discount arm selected",
+        { customerId: turn.customerId, arm: banditArm, suggestedPrice, discountPct }
+      );
+    } catch (err) {
+      logger.warn("[Bandit] Bandit selection failed — proceeding without RL signal", err);
+    }
+  }
+
   // ── Dynamic RAG Few-Shot Exemplars ────────────────────────────────────
   const exemplars = await exemplarStore.getSuccessfulExemplars({
     dialect: merchant.dialect,
@@ -184,7 +234,7 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
   });
   const exemplarsBlock = exemplarStore.formatExemplarsForPrompt(exemplars);
 
-  const systemPrompt = buildSystemPrompt(turn, currentArc, merchant, exemplarsBlock);
+  const systemPrompt = buildSystemPrompt(turn, currentArc, merchant, exemplarsBlock, banditPricingHint);
   const userContent = buildUserContent(turn);
 
   const messages: Groq.Chat.ChatCompletionMessageParam[] = [
@@ -219,7 +269,7 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
 
     if (!toolCalls || toolCalls.length === 0) {
       const replyText = assistantMsg.content || "";
-      await finalizeTurn(turn, currentOrderState, currentArc, replyText);
+      await finalizeTurn(turn, currentOrderState, currentArc, replyText, banditArm, customerStats);
       return;
     }
 
@@ -265,6 +315,25 @@ async function _runTurn(turn: ConversationTurn): Promise<void> {
           const range = computeAuthorizedRange(updatedRules, currentTier);
           ctx.authorizedRange = range;
           currentArc = projectRangeOntoArc(currentArc, range, productSku);
+
+          if (banditArm === null && currentArc.anchorPrice > 0 && currentArc.floor > 0) {
+            try {
+              const banditContext: BanditContextInput = {
+                customerLtv: customerStats.ltv,
+                orderCount: customerStats.orderCount,
+                daysSinceLastOrder: customerStats.daysSinceLastOrder,
+                productMargin: (currentArc.anchorPrice - currentArc.floor) / currentArc.anchorPrice,
+                basePrice: currentArc.anchorPrice,
+                dialect: merchant.dialect,
+                timeOfDayHour: new Date().getHours(),
+              };
+              const { banditSelection } = await proposeBanditPrice(ctx.authorizedRange, banditContext);
+              banditArm = banditSelection.arm;
+              logger.info("[Bandit] 🎰 Arm selected after inventory lookup", { customerId: turn.customerId, arm: banditArm });
+            } catch (err) {
+              logger.warn("[Bandit] Mid-turn bandit selection failed", err);
+            }
+          }
         }
       }
 
@@ -424,6 +493,7 @@ function buildSystemPrompt(
   arc: NegotiationArc,
   merchant: MerchantContext,
   exemplarsBlock: string = "",
+  banditPricingHint: string = "",
 ): string {
   const tactics = availableTactics({ arc, currentStockLevel: 0 });
 
@@ -435,6 +505,9 @@ function buildSystemPrompt(
     : "";
 
   const ragSection = exemplarsBlock ? `\n\n${exemplarsBlock}` : "";
+  const banditSection = banditPricingHint
+    ? `\n\n══ RL PRICING SIGNAL (data-driven, from learned outcomes) ══\n${banditPricingHint}`
+    : "";
 
   return `You are the autonomous sales & negotiation agent for ${merchant.name}, a WhatsApp business.
 You are a skilled, relationship-aware market trader acting on behalf of ${merchant.name}.
@@ -495,6 +568,7 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
 → Below floor: bundle pivot first, then credit offer, then escalate if both fail
 → Customer accepts: close_deal → issue_payment_link
 ${ragSection}
+${banditSection}
 ══ ORDER STATE ══
 ${JSON.stringify(turn.orderState)}`;
 }
@@ -656,6 +730,8 @@ async function finalizeTurn(
   finalOrderState: OrderState,
   finalArc: NegotiationArc,
   replyText: string,
+  banditArm: BanditArm | null = null,
+  customerStats?: { ltv: number; orderCount: number },
 ): Promise<void> {
   if (finalOrderState !== turn.orderState && finalOrderState.status !== "no_order") {
     await sql`
@@ -681,7 +757,9 @@ async function finalizeTurn(
       ? lastMsg.content.text
       : "Customer message";
 
-
+  // banditArm is the LinUCB arm that was active this turn (null on fresh sessions
+  // before check_inventory has primed the arc). When non-null it is stored in
+  // the conversation_outcomes row so recordOrderOutcome can backdate the reward.
   await interactionFeedback.recordInteraction({
     merchantId: turn.merchantId,
     customerId: turn.customerId,
@@ -693,6 +771,11 @@ async function finalizeTurn(
       tier: finalArc.tier,
       anchorPrice: finalArc.anchorPrice,
       floor: finalArc.floor,
+      productMargin: finalArc.anchorPrice > 0 && finalArc.floor > 0
+        ? (finalArc.anchorPrice - finalArc.floor) / finalArc.anchorPrice
+        : undefined,
+      customerLtv: customerStats?.ltv,
+      orderCount: customerStats?.orderCount,
       tacticsDeployed: finalArc.tacticsDeployed,
       customerMessage: lastCustomerText,
     },
@@ -705,6 +788,7 @@ async function finalizeTurn(
     discountOffered: finalArc.anchorPrice > 0 && finalArc.agentLastOffer
       ? (finalArc.anchorPrice - finalArc.agentLastOffer) / finalArc.anchorPrice
       : 0,
+    banditArm: banditArm !== null ? banditArm : undefined,
   }).catch((err) => logger.warn("[AgentLoop] Non-fatal interaction logging warning:", err));
 
   if (replyText.trim().length > 0) {
@@ -939,3 +1023,46 @@ async function loadMerchantPricingRules(merchantId: string): Promise<MerchantPri
   };
 }
 
+// ─── Customer Stats (for LinUCB Bandit context vector) ───────────────────────
+// Lightweight aggregate read. Supplies the 6-D context vector's LTV, order
+// count, and recency dimensions. Falls back to conservative zeros if the
+// customer is brand-new or if the DB is momentarily unreachable — the bandit
+// will simply pick the most-explored arm (usually 0% discount) until it has
+// real signal.
+
+async function loadCustomerStats(
+  customerId: string,
+  merchantId: string
+): Promise<{ ltv: number; orderCount: number; daysSinceLastOrder: number }> {
+  try {
+    const rows = await sql<{
+      order_count: number;
+      lifetime_value: number;
+      last_order_at: string | null;
+    }[]>`
+      SELECT
+        COUNT(*)::int AS order_count,
+        COALESCE(SUM(
+          CASE WHEN state->>'status' IN ('delivered', 'payment_verified')
+               THEN (state->'quote'->>'agreedPrice')::numeric
+               ELSE 0 END
+        ), 0) AS lifetime_value,
+        MAX(updated_at) AS last_order_at
+      FROM orders
+      WHERE customer_id = ${customerId}
+        AND merchant_id = ${merchantId}
+    `;
+    const row = rows[0];
+    if (!row) return { ltv: 0, orderCount: 0, daysSinceLastOrder: 999 };
+
+    const ltv = Number(row.lifetime_value) || 0;
+    const orderCount = Number(row.order_count) || 0;
+    const daysSinceLastOrder = row.last_order_at
+      ? Math.floor((Date.now() - new Date(row.last_order_at).getTime()) / 86_400_000)
+      : 999;
+
+    return { ltv, orderCount, daysSinceLastOrder };
+  } catch {
+    return { ltv: 0, orderCount: 0, daysSinceLastOrder: 999 };
+  }
+}
