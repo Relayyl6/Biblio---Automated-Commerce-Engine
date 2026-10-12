@@ -521,28 +521,55 @@ export const useResolveDispute = () => {
 };
 
 // --- MERCHANT INTEGRATIONS & API KEYS ---
+export type CredentialStatus = 'custom_override' | 'managed_pool' | 'unconfigured';
+
 export interface MerchantIntegrationsData {
   dispatch: {
     gokada: string;
     hasGokada: boolean;
+    statusGokada?: CredentialStatus;
+    hasPlatformDefaultGokada?: boolean;
+
     kwik: string;
     hasKwik: boolean;
+    statusKwik?: CredentialStatus;
+    hasPlatformDefaultKwik?: boolean;
+
     max: string;
     hasMax: boolean;
+    statusMax?: CredentialStatus;
+    hasPlatformDefaultMax?: boolean;
+
     sendstack: string;
     hasSendstack: boolean;
+    statusSendstack?: CredentialStatus;
+    hasPlatformDefaultSendstack?: boolean;
   };
   developer: {
     groq: string;
     hasGroq: boolean;
+    statusGroq?: CredentialStatus;
+    hasPlatformDefaultGroq?: boolean;
+
     twilioSid: string;
     hasTwilioSid: boolean;
+    statusTwilioSid?: CredentialStatus;
+    hasPlatformDefaultTwilioSid?: boolean;
+
     twilioAuth: string;
     hasTwilioAuth: boolean;
+    statusTwilioAuth?: CredentialStatus;
+    hasPlatformDefaultTwilioAuth?: boolean;
+
     paystack: string;
     hasPaystack: boolean;
+    statusPaystack?: CredentialStatus;
+    hasPlatformDefaultPaystack?: boolean;
+
     africasTalking: string;
     hasAfricasTalking: boolean;
+    statusAfricasTalking?: CredentialStatus;
+    hasPlatformDefaultAfricasTalking?: boolean;
   };
   fulfillment: {
     supportsPickup: boolean;

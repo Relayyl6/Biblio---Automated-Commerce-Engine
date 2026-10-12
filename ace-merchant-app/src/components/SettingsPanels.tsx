@@ -39,6 +39,74 @@ function PanelSaveButton({ onPress, label = 'Save changes', isLoading }: { onPre
   );
 }
 
+function CredentialStatusBadge({
+  status,
+  hasCustomKey,
+}: {
+  status?: 'custom_override' | 'managed_pool' | 'unconfigured';
+  hasCustomKey?: boolean;
+}) {
+  const c = useThemeColors();
+
+  if (hasCustomKey || status === 'custom_override') {
+    return (
+      <View style={{ backgroundColor: c.accentSoft }} className="px-2.5 py-0.5 rounded-full flex-row items-center">
+        <View className="w-1.5 h-1.5 rounded-full mr-1.5" style={{ backgroundColor: c.accent }} />
+        <Text style={{ color: c.accent }} className="text-[10px] font-bold">
+          Custom Override
+        </Text>
+      </View>
+    );
+  }
+
+  if (status === 'managed_pool' || !hasCustomKey) {
+    return (
+      <View style={{ backgroundColor: c.successSoft }} className="px-2.5 py-0.5 rounded-full flex-row items-center">
+        <View className="w-1.5 h-1.5 rounded-full mr-1.5" style={{ backgroundColor: c.success }} />
+        <Text style={{ color: c.success }} className="text-[10px] font-bold">
+          Biblio Managed Default
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ backgroundColor: c.surfaceAlt }} className="px-2.5 py-0.5 rounded-full flex-row items-center">
+      <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold">
+        Optional
+      </Text>
+    </View>
+  );
+}
+
+function ManagedPoolBanner({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  const c = useThemeColors();
+  return (
+    <View
+      style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
+      className="p-3.5 rounded-2xl border mb-5 flex-row items-start"
+    >
+      <View style={{ backgroundColor: c.successSoft }} className="w-7 h-7 rounded-full items-center justify-center mr-3 mt-0.5">
+        <Check size={14} color={c.success} />
+      </View>
+      <View className="flex-1">
+        <Text style={{ color: c.textPrimary }} className="text-xs font-bold mb-1">
+          {title}
+        </Text>
+        <Text style={{ color: c.textSecondary }} className="text-[11px] leading-relaxed">
+          {description}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 /** Panel content for "Dispatch API Keys" — Gokada, Kwik, MAX credentials. */
 export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
@@ -86,19 +154,41 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
     }
   };
 
+  const d = integrations?.dispatch;
+
   return (
-    <View>
-      <View className="flex-row items-center mb-5">
-        <Truck size={16} color={c.textTertiary} />
-        <Text style={{ color: c.textTertiary }} className="text-xs ml-2 flex-1 leading-relaxed">
-          Keys are stored encrypted on your server instance and used directly to auto-book riders on your behalf.
-        </Text>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
+      <ManagedPoolBanner
+        title="Zero-Setup Dispatch Active"
+        description="Biblio automatically books nearest riders via our managed fleet pool (Kwik, Gokada, MAX). Delivery fees are calculated dynamically and billed to the buyer. Enter keys below only if you wish to bill riders directly to your corporate courier accounts."
+      />
+
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">Gokada</Text>
+          <CredentialStatusBadge status={d?.statusGokada} hasCustomKey={!!gokada.trim()} />
+        </View>
+        <PanelField label="" value={gokada} onChangeText={setGokada} placeholder="gk_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
       </View>
-      <PanelField label="Gokada API Key" value={gokada} onChangeText={setGokada} placeholder="gk_live_••••••••" secure />
-      <PanelField label="Kwik API Key" value={kwik} onChangeText={setKwik} placeholder="kwk_live_••••••••" secure />
-      <PanelField label="MAX API Key" value={max} onChangeText={setMax} placeholder="max_live_••••••••" secure />
-      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} />
-    </View>
+
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">Kwik Delivery</Text>
+          <CredentialStatusBadge status={d?.statusKwik} hasCustomKey={!!kwik.trim()} />
+        </View>
+        <PanelField label="" value={kwik} onChangeText={setKwik} placeholder="kwk_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
+      </View>
+
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">MAX.ng</Text>
+          <CredentialStatusBadge status={d?.statusMax} hasCustomKey={!!max.trim()} />
+        </View>
+        <PanelField label="" value={max} onChangeText={setMax} placeholder="max_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
+      </View>
+
+      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save Dispatch Settings" />
+    </ScrollView>
   );
 }
 
@@ -398,22 +488,50 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
     }
   };
 
+  const dev = integrations?.developer;
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-      <Text style={{ color: c.textTertiary }} className="text-xs mb-5 leading-relaxed">
-        Leave these blank to use the default Biblio platform keys. If you enter your own keys, your account will use your dedicated billing instances across AI, SMS, and payments.
-      </Text>
+      <ManagedPoolBanner
+        title="Managed AI & SMS Engine Active"
+        description="Biblio provides high-speed Llama 3 negotiator instances, automated customer SMS notifications, and escrow virtual accounts automatically. Enter private keys only if you wish to route usage through your dedicated accounts."
+      />
 
-      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">AI Intelligence</Text>
-      <PanelField label="Groq API Key" value={groq} onChangeText={setGroq} placeholder="gsk_••••••••" secure helper="Used for Llama 3 Negotiator." />
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-1">AI Intelligence</Text>
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Groq API Key (Llama 3)</Text>
+          <CredentialStatusBadge status={dev?.statusGroq} hasCustomKey={!!groq.trim()} />
+        </View>
+        <PanelField label="" value={groq} onChangeText={setGroq} placeholder="gsk_••••••••" secure helper="Leave empty to use Biblio's managed negotiator pool." />
+      </View>
 
-      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-4">Communications & SMS</Text>
-      <PanelField label="Twilio Account SID" value={twilioSid} onChangeText={setTwilioSid} placeholder="AC••••••••" secure />
-      <PanelField label="Twilio Auth Token" value={twilioAuth} onChangeText={setTwilioAuth} placeholder="••••••••" secure />
-      <PanelField label="Africa's Talking API Key" value={africasTalking} onChangeText={setAfricasTalking} placeholder="atsk_••••••••" secure helper="Used for out-of-band SMS escalation." />
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">Communications & SMS</Text>
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Africa's Talking API Key</Text>
+          <CredentialStatusBadge status={dev?.statusAfricasTalking} hasCustomKey={!!africasTalking.trim()} />
+        </View>
+        <PanelField label="" value={africasTalking} onChangeText={setAfricasTalking} placeholder="atsk_••••••••" secure helper="Leave empty to use Biblio's out-of-band SMS escalation line." />
+      </View>
 
-      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-4">Payments</Text>
-      <PanelField label="Paystack Secret Key" value={paystack} onChangeText={setPaystack} placeholder="sk_live_••••••••" secure helper="Bypasses Biblio's escrow and settles directly to your account." />
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Twilio SID & Auth (International)</Text>
+          <CredentialStatusBadge status={dev?.statusTwilioSid} hasCustomKey={!!twilioSid.trim()} />
+        </View>
+        <PanelField label="" value={twilioSid} onChangeText={setTwilioSid} placeholder="AC••••••••" secure />
+        <PanelField label="" value={twilioAuth} onChangeText={setTwilioAuth} placeholder="Auth Token ••••••••" secure helper="Optional Twilio fallback for international messages." />
+      </View>
+
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">Payments & Escrow</Text>
+      <View className="mb-4">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Paystack Secret Key</Text>
+          <CredentialStatusBadge status={dev?.statusPaystack} hasCustomKey={!!paystack.trim()} />
+        </View>
+        <PanelField label="" value={paystack} onChangeText={setPaystack} placeholder="sk_live_••••••••" secure helper="Leave empty to use Biblio's automated escrow & instant bank payouts." />
+      </View>
 
       <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save API Overrides" />
     </ScrollView>

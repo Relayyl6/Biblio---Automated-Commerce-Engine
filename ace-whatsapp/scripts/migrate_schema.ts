@@ -117,6 +117,20 @@ async function runMigration() {
       expires_at TIMESTAMP,
       metadata JSONB DEFAULT '{}'::jsonb,
       PRIMARY KEY (merchant_id, provider)
+    );
+  `;
+
+  // 8. Platform Master Credentials Table
+  console.log("8. Ensuring platform_credentials table exists...");
+  await sql`
+    CREATE TABLE IF NOT EXISTS platform_credentials (
+      provider VARCHAR(50) PRIMARY KEY,
+      api_key TEXT NOT NULL,
+      secret_key TEXT,
+      environment VARCHAR(20) DEFAULT 'production',
+      description TEXT,
+      is_active BOOLEAN DEFAULT true,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;
 

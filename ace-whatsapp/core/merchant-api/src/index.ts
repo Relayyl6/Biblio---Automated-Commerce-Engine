@@ -23,7 +23,12 @@ import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback.js";
 import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop.js";
-import { maskApiKey, isMaskedKey } from "@ace/shared/integrations/credentials.js";
+import {
+  maskApiKey,
+  isMaskedKey,
+  isPlatformDefaultAvailable,
+  upsertPlatformCredential,
+} from "@ace/shared/integrations/credentials.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
@@ -507,28 +512,74 @@ app.get("/merchants/:id/integrations", async (req, reply) => {
 
   const getKey = (name: string): string => intMap[name] || apiKeys[name] || "";
 
+  const [
+    kwikDefault, gokadaDefault, maxDefault, sendstackDefault,
+    groqDefault, twilioSidDefault, twilioAuthDefault, paystackDefault, africasTalkingDefault
+  ] = await Promise.all([
+    isPlatformDefaultAvailable("kwik"),
+    isPlatformDefaultAvailable("gokada"),
+    isPlatformDefaultAvailable("max"),
+    isPlatformDefaultAvailable("sendstack"),
+    isPlatformDefaultAvailable("groq"),
+    isPlatformDefaultAvailable("twilio_sid"),
+    isPlatformDefaultAvailable("twilio_auth"),
+    isPlatformDefaultAvailable("paystack"),
+    isPlatformDefaultAvailable("africas_talking"),
+  ]);
+
+  const getStatus = (customVal: string, hasDefault: boolean): "custom_override" | "managed_pool" | "unconfigured" => {
+    if (customVal && customVal.trim() !== "") return "custom_override";
+    if (hasDefault) return "managed_pool";
+    return "unconfigured";
+  };
+
   return reply.send({
     dispatch: {
       gokada: maskApiKey(getKey("gokada")),
       hasGokada: !!getKey("gokada"),
+      statusGokada: getStatus(getKey("gokada"), gokadaDefault),
+      hasPlatformDefaultGokada: gokadaDefault,
+
       kwik: maskApiKey(getKey("kwik")),
       hasKwik: !!getKey("kwik"),
+      statusKwik: getStatus(getKey("kwik"), kwikDefault),
+      hasPlatformDefaultKwik: kwikDefault,
+
       max: maskApiKey(getKey("max")),
       hasMax: !!getKey("max"),
+      statusMax: getStatus(getKey("max"), maxDefault),
+      hasPlatformDefaultMax: maxDefault,
+
       sendstack: maskApiKey(getKey("sendstack")),
       hasSendstack: !!getKey("sendstack"),
+      statusSendstack: getStatus(getKey("sendstack"), sendstackDefault),
+      hasPlatformDefaultSendstack: sendstackDefault,
     },
     developer: {
       groq: maskApiKey(getKey("groq")),
       hasGroq: !!getKey("groq"),
+      statusGroq: getStatus(getKey("groq"), groqDefault),
+      hasPlatformDefaultGroq: groqDefault,
+
       twilioSid: maskApiKey(getKey("twilio_sid")),
       hasTwilioSid: !!getKey("twilio_sid"),
+      statusTwilioSid: getStatus(getKey("twilio_sid"), twilioSidDefault),
+      hasPlatformDefaultTwilioSid: twilioSidDefault,
+
       twilioAuth: maskApiKey(getKey("twilio_auth")),
       hasTwilioAuth: !!getKey("twilio_auth"),
+      statusTwilioAuth: getStatus(getKey("twilio_auth"), twilioAuthDefault),
+      hasPlatformDefaultTwilioAuth: twilioAuthDefault,
+
       paystack: maskApiKey(getKey("paystack")),
       hasPaystack: !!getKey("paystack"),
+      statusPaystack: getStatus(getKey("paystack"), paystackDefault),
+      hasPlatformDefaultPaystack: paystackDefault,
+
       africasTalking: maskApiKey(getKey("africas_talking")),
       hasAfricasTalking: !!getKey("africas_talking"),
+      statusAfricasTalking: getStatus(getKey("africas_talking"), africasTalkingDefault),
+      hasPlatformDefaultAfricasTalking: africasTalkingDefault,
     },
     fulfillment: {
       supportsPickup: m.supports_pickup ?? true,
@@ -621,6 +672,60 @@ app.patch("/merchants/:id/integrations", async (req, reply) => {
   `;
 
   return reply.send({ ok: true, message: "Integrations updated successfully" });
+});
+
+// ─── Platform Master Credentials Admin Management ────────────────────────────
+
+app.get("/admin/platform-credentials", async (req, reply) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  const providedKey = req.headers["x-admin-key"] as string | undefined;
+  if (adminKey && providedKey !== adminKey) {
+    return reply.code(403).send({ error: "Forbidden: admin key required" });
+  }
+
+  const rows = await sql<{
+    provider: string;
+    api_key: string;
+    is_active: boolean;
+    description: string | null;
+    updated_at: Date | null;
+  }[]>`
+    SELECT provider, api_key, is_active, description, updated_at
+    FROM platform_credentials
+    ORDER BY provider ASC
+  `;
+
+  return reply.send({
+    credentials: rows.map((r) => ({
+      provider: r.provider,
+      maskedKey: maskApiKey(r.api_key),
+      isActive: r.is_active,
+      description: r.description,
+      updatedAt: r.updated_at,
+    })),
+  });
+});
+
+app.patch("/admin/platform-credentials", async (req, reply) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  const providedKey = req.headers["x-admin-key"] as string | undefined;
+  if (adminKey && providedKey !== adminKey) {
+    return reply.code(403).send({ error: "Forbidden: admin key required" });
+  }
+
+  const { provider, apiKey, secretKey, description } = req.body as {
+    provider: string;
+    apiKey: string;
+    secretKey?: string;
+    description?: string;
+  };
+
+  if (!provider || !apiKey) {
+    return reply.code(400).send({ error: "provider and apiKey are required" });
+  }
+
+  await upsertPlatformCredential(provider, apiKey, secretKey, description);
+  return reply.send({ ok: true, message: `Platform master default updated for ${provider}` });
 });
 
 // ─── Bank Onboarding (Escrow/Transfer Setup) ─────────────────────────────────

@@ -15,6 +15,14 @@ const ENV_PROVIDER_MAP: Record<string, string> = {
   africas_talking: "AT_API_KEY",
 };
 
+// In-memory cache for platform default credentials to avoid redundant DB roundtrips (60s TTL)
+interface CachedPlatformKey {
+  key: string | null;
+  expiresAt: number;
+}
+const platformKeyCache = new Map<string, CachedPlatformKey>();
+const CACHE_TTL_MS = 60 * 1000;
+
 /**
  * Masks an API key for safe client display, showing only prefix and last 4 characters.
  */
@@ -36,11 +44,62 @@ export function isMaskedKey(val: string | undefined | null): boolean {
 }
 
 /**
+ * Resolves the platform master default key for a given provider.
+ * Checks DB table `platform_credentials` first, then falls back to `process.env`.
+ */
+export async function getPlatformDefaultKey(provider: string): Promise<string | null> {
+  const normalizedProvider = provider.toLowerCase();
+  const now = Date.now();
+
+  const cached = platformKeyCache.get(normalizedProvider);
+  if (cached && cached.expiresAt > now) {
+    return cached.key;
+  }
+
+  try {
+    const rows = await sql<{ api_key: string; is_active: boolean }[]>`
+      SELECT api_key, is_active
+      FROM platform_credentials
+      WHERE provider = ${normalizedProvider}
+      LIMIT 1
+    `;
+    if (rows.length > 0 && rows[0].is_active && rows[0].api_key && rows[0].api_key.trim() !== "") {
+      const dbKey = rows[0].api_key.trim();
+      platformKeyCache.set(normalizedProvider, { key: dbKey, expiresAt: now + CACHE_TTL_MS });
+      return dbKey;
+    }
+  } catch (err) {
+    // If table doesn't exist yet or query fails, quietly fall back to env
+    logger.debug(`[getPlatformDefaultKey] DB lookup skipped for ${normalizedProvider}:`, err);
+  }
+
+  // Fallback to process.env
+  const envVar = ENV_PROVIDER_MAP[normalizedProvider] || `${normalizedProvider.toUpperCase()}_API_KEY`;
+  const envVal = process.env[envVar];
+  if (envVal && !envVal.includes("dummy_") && !envVal.includes("your_") && envVal.trim() !== "") {
+    const clean = envVal.trim();
+    platformKeyCache.set(normalizedProvider, { key: clean, expiresAt: now + CACHE_TTL_MS });
+    return clean;
+  }
+
+  platformKeyCache.set(normalizedProvider, { key: null, expiresAt: now + CACHE_TTL_MS });
+  return null;
+}
+
+/**
+ * Checks whether a platform default credential exists and is active for the given provider.
+ */
+export async function isPlatformDefaultAvailable(provider: string): Promise<boolean> {
+  const key = await getPlatformDefaultKey(provider);
+  return Boolean(key && key.trim() !== "");
+}
+
+/**
  * Dynamically resolves an API key for a merchant.
  * Order of precedence:
- * 1. Specific integration entry in `merchant_integrations` table
- * 2. Key entry in `merchants.api_keys` JSONB column
- * 3. Platform fallback in `process.env[ENV_KEY]`
+ * 1. Specific integration entry in `merchant_integrations` table (BYOK)
+ * 2. Key entry in `merchants.api_keys` JSONB column (App Settings)
+ * 3. Platform Master Default Pool (`platform_credentials` table -> `process.env[ENV_KEY]`)
  */
 export async function getMerchantApiKey(
   merchantId: string | undefined | null,
@@ -50,7 +109,7 @@ export async function getMerchantApiKey(
 
   if (merchantId) {
     try {
-      // 1. Check merchant_integrations table
+      // 1. Check merchant_integrations table (Custom BYOK)
       const rows = await sql<{ access_token: string }[]>`
         SELECT access_token
         FROM merchant_integrations
@@ -80,14 +139,72 @@ export async function getMerchantApiKey(
     }
   }
 
-  // 3. Fallback to process.env
-  const envVar = ENV_PROVIDER_MAP[normalizedProvider] || `${normalizedProvider.toUpperCase()}_API_KEY`;
-  const envVal = process.env[envVar];
-  if (envVal && !envVal.includes("dummy_") && !envVal.includes("your_") && envVal.trim() !== "") {
-    return envVal.trim();
+  // 3. Fallback to Platform Master Default Pool
+  return await getPlatformDefaultKey(normalizedProvider);
+}
+
+/**
+ * Resolves credential status and source for a merchant.
+ */
+export async function getMerchantCredentialStatus(
+  merchantId: string | undefined | null,
+  provider: string
+): Promise<{
+  source: "custom_override" | "managed_pool" | "unconfigured";
+  maskedKey: string;
+  isPlatformDefaultActive: boolean;
+}> {
+  const normalizedProvider = provider.toLowerCase();
+  let customKey: string | null = null;
+
+  if (merchantId) {
+    try {
+      const rows = await sql<{ access_token: string }[]>`
+        SELECT access_token
+        FROM merchant_integrations
+        WHERE merchant_id = ${merchantId}::uuid AND provider = ${normalizedProvider}
+        LIMIT 1
+      `;
+      if (rows[0]?.access_token?.trim()) {
+        customKey = rows[0].access_token.trim();
+      } else {
+        const mRows = await sql<{ api_keys: Record<string, string> }[]>`
+          SELECT api_keys FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+        `;
+        const val = mRows[0]?.api_keys?.[normalizedProvider] || mRows[0]?.api_keys?.[provider];
+        if (typeof val === "string" && val.trim() !== "") {
+          customKey = val.trim();
+        }
+      }
+    } catch (err) {
+      logger.error(`[getMerchantCredentialStatus] Query failed:`, err);
+    }
   }
 
-  return null;
+  const platformKey = await getPlatformDefaultKey(normalizedProvider);
+  const isPlatformDefaultActive = Boolean(platformKey);
+
+  if (customKey) {
+    return {
+      source: "custom_override",
+      maskedKey: maskApiKey(customKey),
+      isPlatformDefaultActive,
+    };
+  }
+
+  if (isPlatformDefaultActive) {
+    return {
+      source: "managed_pool",
+      maskedKey: maskApiKey(platformKey),
+      isPlatformDefaultActive: true,
+    };
+  }
+
+  return {
+    source: "unconfigured",
+    maskedKey: "",
+    isPlatformDefaultActive: false,
+  };
 }
 
 /**
@@ -115,4 +232,27 @@ export async function getMerchantIntegration(
     logger.error(`[getMerchantIntegration] Failed for ${merchantId}:`, err);
   }
   return null;
+}
+
+/**
+ * Updates or registers a platform master default credential.
+ */
+export async function upsertPlatformCredential(
+  provider: string,
+  apiKey: string,
+  secretKey?: string,
+  description?: string
+): Promise<void> {
+  const normalizedProvider = provider.toLowerCase();
+  await sql`
+    INSERT INTO platform_credentials (provider, api_key, secret_key, description, is_active, updated_at)
+    VALUES (${normalizedProvider}, ${apiKey.trim()}, ${secretKey?.trim() || null}, ${description || null}, true, NOW())
+    ON CONFLICT (provider) DO UPDATE SET
+      api_key = EXCLUDED.api_key,
+      secret_key = COALESCE(EXCLUDED.secret_key, platform_credentials.secret_key),
+      description = COALESCE(EXCLUDED.description, platform_credentials.description),
+      is_active = true,
+      updated_at = NOW()
+  `;
+  platformKeyCache.delete(normalizedProvider);
 }
