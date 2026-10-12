@@ -71,9 +71,10 @@ Return ONLY a JSON object: { "score": 0.85 }
       temperature: 0,
       response_format: { type: 'json_object' }
     });
-    const parsed = JSON.parse(completion.choices[0].message.content || '{"score":0}');
-    return parsed.score || 0;
+    const parsed = JSON.parse(completion.choices[0]?.message?.content || '{"score":0.75}');
+    return typeof parsed.score === 'number' ? parsed.score : 0.75;
   } catch (e) {
-    return 0; // Safe fallback on LLM failure
+    console.error("[evaluate] LLM evaluation call failed, placing candidate on hold for human review:", e);
+    return 0.75; // Route to 'hold' for human review instead of false hard rejection
   }
 }

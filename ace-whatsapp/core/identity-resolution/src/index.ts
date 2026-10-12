@@ -1,5 +1,7 @@
 import { PlatformChannel } from "@ace/shared/types";
 import { sql } from "@ace/shared/clients";
+import { logger } from "@ace/shared/logger.js";
+import crypto from "crypto";
 
 export interface ResolvedIdentity {
   globalBuyerId: string;
@@ -26,29 +28,20 @@ export async function resolveGlobalBuyerId(
       select customer_id, merchant_id from customer_merchant_links
       where customer_id = ${normalizedId}
     `;
-  } catch {
-    // If DB is offline or table unmigrated, gracefully fallback
+  } catch (err: any) {
+    logger.warn(`[IdentityResolution] DB link lookup failed for ${normalizedId}, using deterministic ID:`, err.message);
   }
 
-  const globalBuyerId = `GBI-${hashString(normalizedId)}`;
+  const hash = crypto.createHash("sha256").update(normalizedId).digest("hex").slice(0, 16).toUpperCase();
+  const globalBuyerId = `GBI-${hash}`;
   const isNewPlatformLink = existingLinks.length === 0;
 
-  console.info(`[IdentityResolution] 🆔 Resolved ${channel}:${normalizedId} -> ${globalBuyerId} (isNewLink: ${isNewPlatformLink})`);
+  await logger.log(`[IdentityResolution] 🆔 Resolved ${channel}:${normalizedId} -> ${globalBuyerId} (isNewLink: ${isNewPlatformLink})`);
 
   return {
     globalBuyerId,
     isNewPlatformLink,
     linkedPlatforms: [channel],
   };
-}
-
-function hashString(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash).toString(16).padStart(8, "0");
 }
 

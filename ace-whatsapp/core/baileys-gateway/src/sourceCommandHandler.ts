@@ -180,7 +180,7 @@ async function handleAddSource(
   const typeLabel = type === "whatsapp_individual" ? "WhatsApp contact"
     : type === "whatsapp_group" ? "WhatsApp group"
     : type === "warehouse_api" ? "Warehouse API"
-    : "yourself (fallback)";
+    : "Direct Merchant Inventory";
 
   await sock.sendMessage(selfJid, {
     text: `✅ *Source added: ${name}*\n\nType: ${typeLabel}${contact ? `\nContact: ${contact}` : ""}${description ? `\nHandles: ${description}` : ""}${isDefault ? "\n\n⭐ Set as your default source (first source auto-becomes default)." : ""}\n\nTo set pricing rules, send:\n*source pricing: ${name}, >500000 → +30000, rest → +22500*`

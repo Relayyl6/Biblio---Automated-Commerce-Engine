@@ -1531,10 +1531,11 @@ app.post("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
     const overrideKey = `human_override:${customerId}`;
     await redis.set(overrideKey, "1", "EX", 3600);
     app.log.info(`[merchant-api] Human took over chat for customer ${customerId}. Lock set for 1h.`);
-  } catch (e) {
-    // Redis offline/error fallback
+    return reply.send({ ok: true, message: "Human override active." });
+  } catch (e: any) {
+    app.log.error({ err: e, customerId }, "[merchant-api] Failed to persist human_override in Redis");
+    return reply.status(500).send({ ok: false, error: "Failed to set human override" });
   }
-  return reply.send({ ok: true, message: "Human override active." });
 });
 
 app.post("/merchants/:id/chats/:customerId/release-takeover", async (req, reply) => {
@@ -1543,10 +1544,11 @@ app.post("/merchants/:id/chats/:customerId/release-takeover", async (req, reply)
     const overrideKey = `human_override:${customerId}`;
     await redis.del(overrideKey);
     app.log.info(`[merchant-api] Human released takeover for customer ${customerId}. Biblo AI resumed.`);
-  } catch (e) {
-    // Redis offline/error fallback
+    return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
+  } catch (e: any) {
+    app.log.error({ err: e, customerId }, "[merchant-api] Failed to remove human_override from Redis");
+    return reply.status(500).send({ ok: false, error: "Failed to release human override" });
   }
-  return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
 });
 
 app.delete("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
@@ -1555,10 +1557,11 @@ app.delete("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
     const overrideKey = `human_override:${customerId}`;
     await redis.del(overrideKey);
     app.log.info(`[merchant-api] Human released takeover for customer ${customerId}. Biblo AI resumed.`);
-  } catch (e) {
-    // Redis offline/error fallback
+    return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
+  } catch (e: any) {
+    app.log.error({ err: e, customerId }, "[merchant-api] Failed to remove human_override from Redis");
+    return reply.status(500).send({ ok: false, error: "Failed to release human override" });
   }
-  return reply.send({ ok: true, message: "Biblo AI autopilot resumed." });
 });
 
 app.post("/merchants/:id/chats/:customerId/send", async (req, reply) => {

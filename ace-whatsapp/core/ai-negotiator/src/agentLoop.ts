@@ -90,6 +90,13 @@ const groqTools: Groq.Chat.ChatCompletionTool[] = toolDefinitions.map((t) => ({
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export async function runNegotiatorTurn(turn: ConversationTurn): Promise<void> {
+  // Check if human merchant has actively taken over this conversation
+  const isHumanOverride = await redis.get(`human_override:${turn.customerId}`).catch(() => null);
+  if (isHumanOverride) {
+    logger.info(`[negotiator] Human override active for customer ${turn.customerId} — suppressing autonomous AI turn`);
+    return;
+  }
+
   const lockKey = `lock:negotiation:${turn.customerId}`;
   const lockAcquired = await redis.set(lockKey, "1", "EX", LOCK_TTL_SECONDS, "NX");
 

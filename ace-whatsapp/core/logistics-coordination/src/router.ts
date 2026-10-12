@@ -48,11 +48,22 @@ export class DispatchRouter {
     try {
       const result = await provider.dispatch(order);
       if (!result.success) {
-        logger.error({ orderId: order.orderId, provider: providerName, error: result.error }, 'Dispatch failed');
-        // Fallback logic could go here (e.g. try Sendbox if Kwik fails)
-      } else {
-        logger.info({ orderId: order.orderId, trackingNumber: result.trackingNumber }, 'Dispatch successful');
+        logger.warn({ orderId: order.orderId, primaryProvider: providerName, error: result.error }, 'Primary logistics dispatch failed, attempting secondary provider as last option');
+        const secondaryProviderName = providerName === 'kwik' ? 'sendbox' : 'kwik';
+        const secondaryProvider = this.getProvider(secondaryProviderName);
+        const secondaryResult = await secondaryProvider.dispatch(order);
+        if (secondaryResult.success) {
+          logger.info({ orderId: order.orderId, secondaryProvider: secondaryProviderName, trackingNumber: secondaryResult.trackingNumber }, 'Secondary provider dispatch succeeded');
+          return secondaryResult;
+        }
+        logger.error({ orderId: order.orderId, primaryError: result.error, secondaryError: secondaryResult.error }, 'All automated logistics providers failed');
+        return {
+          success: false,
+          provider: providerName,
+          error: `Primary (${providerName}): ${result.error}; Secondary (${secondaryProviderName}): ${secondaryResult.error}`,
+        };
       }
+      logger.info({ orderId: order.orderId, trackingNumber: result.trackingNumber }, 'Dispatch successful');
       return result;
     } catch (err: any) {
       logger.error({ err, orderId: order.orderId }, 'Unhandled exception during dispatch');

@@ -427,14 +427,27 @@ Extract structured JSON strictly with these fields:
       });
       extracted = JSON.parse(completion.choices[0]?.message?.content || "{}");
     } catch (err: any) {
-      await logger.error("[extract_and_enrich_product] Groq inference error", err);
-      // Fallback simple parsing
+      await logger.error("[extract_and_enrich_product] Groq inference error, attempting deterministic parsing as last resort", err);
+      const kMatch = rawText.match(/(\d+(?:\.\d+)?)\s*k\b/i);
+      const mMatch = rawText.match(/(\d+(?:\.\d+)?)\s*m\b/i);
+      const nairaMatch = rawText.match(/[₦#]?\s*(\d{1,3}(?:[,_]\d{3})+|\d{4,})/);
+      const parsedPrice = mMatch
+        ? Math.round(parseFloat(mMatch[1]) * 1_000_000)
+        : kMatch
+        ? Math.round(parseFloat(kMatch[1]) * 1_000)
+        : nairaMatch
+        ? parseInt(nairaMatch[1].replace(/[,_]/g, ""), 10)
+        : 0;
+
+      const qtyMatch = rawText.match(/(\d+)\s*(yards?|pcs?|pieces?|pairs?|items?|units?|left|remain)\b/i);
+      const parsedStock = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+
       extracted = {
-        title: rawText.slice(0, 50),
+        title: rawText.replace(/[₦#]?\d+.*$/i, "").trim() || rawText.slice(0, 50),
         category: "General",
-        price: 0,
-        floor: 0,
-        stock: 1,
+        price: parsedPrice,
+        floor: parsedPrice > 0 ? Math.round(parsedPrice * 0.85) : 0,
+        stock: parsedStock,
         colors: [],
         sizes: [],
         custom_specifications: [],

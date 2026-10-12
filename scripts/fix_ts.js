@@ -33,9 +33,9 @@ if (fs.existsSync(rulesPath)) {
   fs.writeFileSync(rulesPath, rulesContent);
 }
 
-// 4. Overwrite fallback/resolve.ts with a compatible version
-const resolvePath = 'ace-whatsapp/core/payment-verification/src/receipt/fallback/resolve.ts';
-if (fs.existsSync(resolvePath)) {
+// 4. Overwrite fallback/resolve.ts disabled (resolve.ts is productionized)
+const resolvePath = '';
+if (resolvePath && fs.existsSync(resolvePath)) {
   const resolveCode = \
 import { StructuredReceipt } from '../parse/types.js';
 import { ReconciliationResult } from '../reconcile/types.js';

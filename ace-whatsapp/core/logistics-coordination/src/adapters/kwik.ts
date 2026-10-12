@@ -10,7 +10,14 @@ export class KwikAdapter implements LogisticsProvider {
   }
 
   async quote(order: OrderPayload): Promise<number> {
-    if (!this.apiKey) return 1500.00; // Fallback if no API key configured
+    const weight = order.totalWeightKg || 1;
+    const baseBenchmark = 1500.00 + (weight > 2 ? (weight - 2) * 250.00 : 0);
+
+    if (!this.apiKey) {
+      console.warn(`[KwikAdapter] KWIK_API_KEY unconfigured; calculating regional benchmark estimate of ₦${baseBenchmark}`);
+      return baseBenchmark;
+    }
+
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/tasks/quote`, {
         method: 'POST',
@@ -20,11 +27,15 @@ export class KwikAdapter implements LogisticsProvider {
           delivery_address: order.dropoffAddress.street + ', ' + order.dropoffAddress.city,
         })
       });
-      if (!res.ok) return 1500.00;
+      if (!res.ok) {
+        console.warn(`[KwikAdapter] Live quote API returned ${res.status}; falling back to benchmark rate ₦${baseBenchmark}`);
+        return baseBenchmark;
+      }
       const data = (await res.json()) as any;
-      return parseFloat(data?.data?.amount) || 1500.00;
-    } catch {
-      return 1500.00; // Graceful fallback
+      return parseFloat(data?.data?.amount) || baseBenchmark;
+    } catch (err) {
+      console.warn(`[KwikAdapter] Live quote failed (${(err as Error).message}); using benchmark rate ₦${baseBenchmark}`);
+      return baseBenchmark;
     }
   }
 

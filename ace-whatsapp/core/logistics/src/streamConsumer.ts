@@ -112,13 +112,35 @@ async function handlePaymentVerifiedEvent(payload: Record<string, string>) {
       WHERE id = ${orderId}
     `;
 
-    // 5. Notify Customer
-    await sendCustomerMessage({
-      toPhone: customerId,
-      text: `🏍️ Good news! Your order has been dispatched.\n\nRider: ${providerRes.riderName}\nTracking Link: ${providerRes.trackingUrl}\n\nThank you for shopping with us! 🎉`
-    }, phoneNumberId, merchantId);
+    // 5. Notify Customer & Vendor appropriately
+    if (providerRes.trackingUrl === "MANUAL_DISPATCH") {
+      await sendCustomerMessage({
+        toPhone: customerId,
+        text: `📦 Good news! Your payment is confirmed. The store is packaging your order and arranging direct delivery. You will receive dispatch updates shortly! 🎉`
+      }, phoneNumberId, merchantId);
 
-    logger.info({ orderId, trackingUrl: providerRes.trackingUrl }, "Order successfully dispatched");
+      // Alert vendor of manual dispatch requirement
+      try {
+        const vendor = await sql<{ contact_phone: string }[]>`
+          SELECT contact_phone FROM merchants WHERE id = ${merchantId} LIMIT 1
+        `;
+        if (vendor.length && vendor[0].contact_phone) {
+          await sendCustomerMessage({
+            toPhone: vendor[0].contact_phone,
+            text: `⚠️ *Biblio Logistics Alert:* Automated courier dispatch was unavailable for Order #${orderId.slice(0, 8)} (Customer: ${customerId}). Please arrange direct courier dispatch for this package.`
+          }, phoneNumberId, merchantId);
+        }
+      } catch (alertErr) {
+        logger.error({ alertErr, orderId }, "Failed to alert vendor of manual dispatch");
+      }
+    } else {
+      await sendCustomerMessage({
+        toPhone: customerId,
+        text: `🏍️ Good news! Your order has been dispatched.\n\nRider: ${providerRes.riderName}\nTracking Link: ${providerRes.trackingUrl}\n\nThank you for shopping with us! 🎉`
+      }, phoneNumberId, merchantId);
+    }
+
+    logger.info({ orderId, trackingUrl: providerRes.trackingUrl }, "Order dispatch state transition completed");
   } catch (err) {
     logger.error({ err, orderId }, "Failed to dispatch order");
   } finally {
