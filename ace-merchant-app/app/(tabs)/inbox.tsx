@@ -135,55 +135,58 @@ export default function InboxScreen() {
         </View>
 
         {/* Scrollable Filter Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="pl-6 mb-4"
-          contentContainerStyle={{ paddingRight: 24 }}
-        >
-          {FILTERS.map((f) => {
-            const isActive = activeFilter === f.key;
-            return (
-              <Pressable
-                key={f.key}
-                onPress={() => setActiveFilter(f.key)}
-                style={{
-                  backgroundColor: isActive ? c.textPrimary : c.surface,
-                  borderColor: isActive ? c.textPrimary : c.border,
-                }}
-                className="px-4 py-2 rounded-full border mr-2 active:opacity-80 flex-row items-center"
-              >
-                <Text
-                  style={{ color: isActive ? c.bg : c.textSecondary }}
-                  className="font-semibold text-sm"
-                >
-                  {f.label}
-                </Text>
-                <View
+        <View style={{ height: 44 }} className="mb-3">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="pl-6"
+            contentContainerStyle={{ paddingRight: 24, alignItems: 'center' }}
+          >
+            {FILTERS.map((f) => {
+              const isActive = activeFilter === f.key;
+              return (
+                <Pressable
+                  key={f.key}
+                  onPress={() => setActiveFilter(f.key)}
                   style={{
-                    backgroundColor: isActive ? (isDark ? '#090A0C' : '#FFFFFF') : c.surfaceAlt,
+                    backgroundColor: isActive ? c.textPrimary : c.surface,
+                    borderColor: isActive ? c.textPrimary : c.border,
+                    height: 36,
                   }}
-                  className="ml-2 px-2 py-0.5 rounded-full"
+                  className="px-4 rounded-full border mr-2 active:opacity-80 flex-row items-center justify-center self-center"
                 >
                   <Text
-                    style={{
-                      color: isActive ? (isDark ? '#FFFFFF' : '#090A0C') : c.textTertiary,
-                    }}
-                    className="text-[10px] font-bold"
+                    style={{ color: isActive ? c.bg : c.textSecondary }}
+                    className="font-semibold text-sm"
                   >
-                    {counts[f.key]}
+                    {f.label}
                   </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+                  <View
+                    style={{
+                      backgroundColor: isActive ? (isDark ? '#090A0C' : '#FFFFFF') : c.surfaceAlt,
+                    }}
+                    className="ml-2 px-2 py-0.5 rounded-full"
+                  >
+                    <Text
+                      style={{
+                        color: isActive ? (isDark ? '#FFFFFF' : '#090A0C') : c.textTertiary,
+                      }}
+                      className="text-[10px] font-bold"
+                    >
+                      {counts[f.key]}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
 
         {/* Cards or Empty State */}
         {visibleCards.length > 0 ? (
           <ScrollView
             className="flex-1 px-6 pt-2"
-            contentContainerStyle={{ paddingBottom: 140 }}
+            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 88 }}
             showsVerticalScrollIndicator={false}
           >
             {visibleCards.map((card: any, i: number) => (
@@ -201,7 +204,16 @@ export default function InboxScreen() {
             ))}
           </ScrollView>
         ) : (
-          <View className="flex-1 px-6 justify-center items-center pb-20">
+          <ScrollView
+            className="flex-1 px-6"
+            contentContainerStyle={{
+              flexGrow: 1,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingBottom: Math.max(insets.bottom, 16) + 88,
+            }}
+            showsVerticalScrollIndicator={false}
+          >
             <View
               style={{ backgroundColor: c.surface, borderColor: c.border }}
               className="w-full p-8 rounded-[28px] border items-center text-center"
@@ -257,7 +269,7 @@ export default function InboxScreen() {
                 </Pressable>
               </View>
             </View>
-          </View>
+          </ScrollView>
         )}
 
         {/* Undo Toast */}
@@ -265,8 +277,11 @@ export default function InboxScreen() {
           <Animated.View
             entering={SlideInDown.springify().damping(16)}
             exiting={SlideOutDown}
-            style={{ backgroundColor: isDark ? c.surfaceAlt : c.textPrimary }}
-            className="absolute bottom-10 left-6 right-6 rounded-2xl flex-row items-center justify-between px-5 py-4 shadow-lg"
+            style={{
+              backgroundColor: isDark ? c.surfaceAlt : c.textPrimary,
+              bottom: Math.max(insets.bottom, 16) + 76,
+            }}
+            className="absolute left-6 right-6 rounded-2xl flex-row items-center justify-between px-5 py-4 shadow-lg"
           >
             <Text className="text-white text-sm font-medium">
               Action applied ({undoToast.action})
