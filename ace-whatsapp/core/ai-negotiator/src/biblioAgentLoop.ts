@@ -13,14 +13,14 @@ const MODEL = env.GROQ_MODEL || process.env.GROQ_MODEL || "llama3-70b-8192";
 const MAX_BIBLIO_ITERATIONS = 10;
 const LOCK_TTL_SECONDS = 120;
 
-export async function runBiblioAgentTurn(turn: ConversationTurn): Promise<void> {
+export async function runBiblioAgentTurn(turn: ConversationTurn, channel: "whatsapp" | "in_app" = "whatsapp"): Promise<string> {
   const { customerId: merchantPhone, merchantId, messages } = turn;
   
-  if (messages.length === 0) return;
+  if (messages.length === 0) return "";
   const lastMsg = messages[messages.length - 1];
   
   if ((lastMsg as any).fromMe || !(lastMsg.content as any)?.text) {
-    return; // Only process inbound text from the merchant
+    return ""; // Only process inbound text from the merchant
   }
 
   const userText = (lastMsg.content as any).text;
@@ -34,18 +34,88 @@ export async function runBiblioAgentTurn(turn: ConversationTurn): Promise<void> 
     textToProcess += `\n\n(Attached images: ${imageUrls.join(", ")})`;
   }
 
+  // 1. Fetch live merchant profile & settings
+  const merchantRows = await sql<{
+    name: string;
+    owner_first_name: string;
+    bank_details: any;
+    payout_frequency: string;
+    fee_padding_model: string;
+    platform_fee_percent: number;
+    onboarding_state: string;
+  }[]>`
+    SELECT name, owner_first_name, bank_details, payout_frequency,
+           fee_padding_model, platform_fee_percent, onboarding_state
+    FROM merchants WHERE id = ${merchantId} LIMIT 1
+  `;
+  const m = merchantRows[0] || {
+    name: "Your Store",
+    owner_first_name: "Merchant",
+    bank_details: {},
+    payout_frequency: "instant",
+    fee_padding_model: "customer_padded",
+    platform_fee_percent: 3.0,
+    onboarding_state: "completed"
+  };
+
+  const hourWAT = (new Date().getUTCHours() + 1) % 24;
+  const timeOfDay = hourWAT < 12 ? "Good morning" : hourWAT < 17 ? "Good afternoon" : "Good evening";
+  const ownerName = m.owner_first_name && m.owner_first_name !== "Merchant" ? m.owner_first_name : "";
+  const personalizedGreeting = ownerName ? `${timeOfDay} ${ownerName}` : `${timeOfDay}`;
+
+  // Log inbound turn to transcript table
+  await sql`
+    INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+    VALUES (${merchantId}, ${channel}, 'vendor', ${textToProcess}, ${JSON.stringify({ phone: merchantPhone })}::jsonb)
+  `.catch(e => logger.warn("[BiblioAgent] Transcript insert failed", e));
+
   // --- STEP 1: ROUTER AGENT ---
-  const routerSystemPrompt = `You are the ACE Hierarchical Router Agent.
-Your job is to analyze the vendor's request and route it to the correct specialized sub-agent.
-If the vendor is just saying hello or asking a general non-operational question, use the direct_reply tool.
-Otherwise, select exactly ONE routing tool that best matches their intent.`;
+  const routerSystemPrompt = `You are Biblio, the autonomous AI business assistant for ${ownerName || "the store owner"}.
+Store: "${m.name}"
+Owner: "${ownerName || 'Merchant'}"
+Fee Padding Model: ${m.fee_padding_model} (${m.platform_fee_percent}% Biblio platform take rate)
+Bank Account: ${m.bank_details?.bankName ? `${m.bank_details.bankName} (${m.bank_details.accountNumber})` : 'Not configured yet'}
+Payout Frequency: ${m.payout_frequency || 'instant'}
+Onboarding State: ${m.onboarding_state || 'completed'}
+
+ADDRESSING & IDENTITY RULES:
+1. Always address the owner as "${personalizedGreeting}" if this is a greeting or initial request.
+2. If the user asks about fees or payments, or if onboarding_state is 'pending', make them aware of Biblio's Zero-Deduction Fee Padding Model: "When you price an item at ₦20,000, your buyer is invoiced ₦21,000 (2% VAN fee + Biblio platform fee padded on top). You receive 100% of your ₦20,000 directly into your bank without deductions!"
+3. If onboarding_state is 'pending' or 'tutorial_offered', prompt them to set their profile/bank or ask if they'd like a quick 2-minute interactive demo to learn how Biblio manages their store.
+4. Analyze the vendor's request and route it to the correct specialized sub-agent.
+5. If the vendor is just saying hello, asking a general question, or replying to onboarding, use direct_reply. Otherwise, select exactly ONE routing tool.`;
 
   const conversation: any[] = [
     { role: "user", content: textToProcess }
   ];
 
+  let finalReplyText = "";
+
+  const dispatchReply = async (text: string) => {
+    finalReplyText = text;
+    if (channel === "whatsapp" && merchantPhone) {
+      await sendCustomerMessage({
+        toPhone: merchantPhone,
+        text
+      });
+    }
+    // Record outbound to transcript
+    await sql`
+      INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+      VALUES (${merchantId}, ${channel}, 'agent', ${text}, ${JSON.stringify({ timestamp: Date.now() })}::jsonb)
+    `.catch(e => logger.warn("[BiblioAgent] Outbound transcript insert failed", e));
+
+    // Publish to Redis for real-time mobile app sync
+    await redis.publish(`agent:stream:${merchantId}`, JSON.stringify({
+      channel,
+      sender_role: "agent",
+      content: text,
+      created_at: new Date().toISOString()
+    })).catch(e => logger.warn("[BiblioAgent] PubSub failed", e));
+  };
+
   try {
-    await logger.log(`[BiblioAgent] Invoking Router Agent for merchant ${merchantId}...`, { merchantId });
+    await logger.log(`[BiblioAgent] Invoking Router Agent for merchant ${merchantId} (${ownerName})...`, { merchantId });
     
     const routerResponse = await groq.chat.completions.create({
       model: MODEL,
@@ -63,14 +133,10 @@ Otherwise, select exactly ONE routing tool that best matches their intent.`;
     const toolCalls = routerMessage.tool_calls;
 
     if (!toolCalls || toolCalls.length === 0) {
-      // LLM decided not to use a tool, just send its text reply
       if (routerMessage.content) {
-        await sendCustomerMessage({
-          toPhone: merchantPhone,
-          text: routerMessage.content as string
-        });
+        await dispatchReply(routerMessage.content as string);
       }
-      return;
+      return finalReplyText;
     }
 
     const toolCall = toolCalls[0];
@@ -79,25 +145,23 @@ Otherwise, select exactly ONE routing tool that best matches their intent.`;
     // Handle direct reply
     if (routeName === "direct_reply") {
       const args = JSON.parse(toolCall.function.arguments);
-      await sendCustomerMessage({
-        toPhone: merchantPhone,
-        text: args.reply
-      });
-      return;
+      await dispatchReply(args.reply);
+      return finalReplyText;
     }
 
     // Check if it's a valid sub-agent route
     if (!subAgentToolsets[routeName]) {
       await logger.error(`[BiblioAgent] Unknown route ${routeName}`, { merchantId });
-      return;
+      return "";
     }
 
     // --- STEP 2: SUB-AGENT EXECUTION ---
     const subAgentTools = subAgentToolsets[routeName];
     const subAgentSystemPrompt = subAgentPrompts[routeName] + `
-You are talking directly to the merchant on WhatsApp. Keep your responses extremely concise, professional, and actionable.
-Call the appropriate tools to fulfill their request.
-If you need to extract images to add to the inventory, use the image URLs provided in the vendor's message string.`;
+You are talking directly to ${ownerName || "the merchant"}. Address them warmly as "${personalizedGreeting}" when greeting.
+Store: "${m.name}"
+Fee Padding Model: ${m.fee_padding_model} (${m.platform_fee_percent}% platform cut)
+Keep responses extremely concise, professional, and actionable. Call the appropriate tools to fulfill their request.`;
 
     await logger.log(`[BiblioAgent] Routing to Sub-Agent: ${routeName}`, { merchantId });
 
@@ -134,7 +198,7 @@ If you need to extract images to add to the inventory, use the image URLs provid
             await logger.error(`[BiblioAgent] Tool execution failed`, { merchantId, name, err });
           }
         } else {
-          toolResult = `Error: Tool '${name}' is not registered in this agent's toolHandlers. Please check routerConfig.`;
+          toolResult = `Error: Tool '${name}' is not registered in toolHandlers.`;
           await logger.warn(`[BiblioAgent] Unregistered tool called`, { merchantId, name });
         }
 
@@ -152,20 +216,17 @@ If you need to extract images to add to the inventory, use the image URLs provid
         });
 
         if (finalResponse.choices[0].message.content) {
-          await sendCustomerMessage({
-            toPhone: merchantPhone,
-            text: finalResponse.choices[0].message.content
-          });
+          await dispatchReply(finalResponse.choices[0].message.content);
         }
       }
     } else if (subAgentMessage.content) {
-      await sendCustomerMessage({
-        toPhone: merchantPhone,
-        text: subAgentMessage.content as string
-      });
+      await dispatchReply(subAgentMessage.content as string);
     }
+
+    return finalReplyText;
 
   } catch (err) {
     await logger.error(`[biblioAgentLoop] Error running agent turn:`, { merchantId, err });
+    return "";
   }
 }

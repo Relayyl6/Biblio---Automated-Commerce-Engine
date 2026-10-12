@@ -1,6 +1,12 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import Groq from "groq-sdk";
+import { loadNegotiatorEnv } from "@ace/shared/env.js";
+
+const env = loadNegotiatorEnv();
+const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
+const GROQ_MODEL = env.GROQ_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 export const inventoryTools = [
 
@@ -337,10 +343,116 @@ export const inventoryTools = [
         ]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "extract_and_enrich_product",
+      "description": "Extract structured product details from unstructured natural language (e.g. 'Blue Ankara with white shine shine 45k 3 yards left') or voice note transcription and image. Auto-extracts title, category, price, floor price, stock, colors, custom specifications, custom properties, and tags. Auto-saves to catalog unless autoSave is false.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rawText": {
+            "type": "string",
+            "description": "The raw unstructured description of the item"
+          },
+          "imageUrl": {
+            "type": "string",
+            "description": "Optional image URL if vendor sent a photo"
+          },
+          "autoSave": {
+            "type": "boolean",
+            "description": "Whether to automatically insert/upsert the product into the catalog (defaults to true)"
+          }
+        },
+        "required": ["rawText"]
+      }
+    }
   }
 ];
 
 export const inventoryHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+
+  extract_and_enrich_product: async (merchantId: string, args: { rawText: string; imageUrl?: string; autoSave?: boolean }) => {
+    const { rawText, imageUrl, autoSave = true } = args;
+    await logger.log(`[ToolHandler:extract_and_enrich_product] Parsing raw input for merchant ${merchantId}`, { rawText, imageUrl });
+
+    const systemPrompt = `You are the Biblio Catalog Structuring Engine for African / Nigerian social commerce.
+A merchant has provided an informal or voice-transcribed product description:
+"${rawText}"
+${imageUrl ? `Attached Image URL: ${imageUrl}` : ""}
+
+Extract structured JSON strictly with these fields:
+- "title": Clean, compelling, search-friendly title (e.g. "Blue Ankara Fabric with White Shine-Shine Embellishments")
+- "category": Standard commerce category (e.g. "Fabrics & Textiles", "Fashion", "Electronics", "Footwear")
+- "subcategory": Specific sub-type (e.g. "Ankara Prints", "Sneakers")
+- "price": Extracted price in NGN as a positive number (parse "45k" as 45000, "20 thousand" as 20000). If no price can be inferred, set 0.
+- "floor": Derived negotiation floor price (default to 85% of price if unspecified, e.g. price * 0.85)
+- "stock": Extracted available stock count (parse "3 yards", "5 pairs" as number, default 1)
+- "colors": Array of objects: [{"name": "Blue", "hexCode": "#1E40AF"}, {"name": "White", "hexCode": "#FFFFFF"}]
+- "sizes": Array of strings (e.g. ["3 Yards"] or ["42", "43"] or ["M", "L"])
+- "custom_specifications": Array of [{"name": "Pattern", "value": "Shine Shine / Embellished"}, {"name": "Length", "value": "3 Yards"}]
+- "custom_properties": Array of [{"propertyName": "Material", "values": ["Cotton"]}]
+- "tags": Array of search keywords (e.g. ["ankara", "shine shine", "blue", "lace", "nigerian fabric"])
+- "description": Polished 1-2 sentence description highlighting the value.`;
+
+    let extracted: any = {};
+    try {
+      const completion = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        messages: [{ role: "system", content: systemPrompt }],
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+      });
+      extracted = JSON.parse(completion.choices[0]?.message?.content || "{}");
+    } catch (err: any) {
+      await logger.error("[extract_and_enrich_product] Groq inference error", err);
+      // Fallback simple parsing
+      extracted = {
+        title: rawText.slice(0, 50),
+        category: "General",
+        price: 0,
+        floor: 0,
+        stock: 1,
+        colors: [],
+        sizes: [],
+        custom_specifications: [],
+        custom_properties: [],
+        tags: [rawText.slice(0, 20)],
+        description: rawText,
+      };
+    }
+
+    if (autoSave && extracted.title && extracted.price > 0) {
+      const sku = `SKU-${Date.now().toString().slice(-6)}`;
+      const imagesJson = imageUrl ? JSON.stringify([{ file_id: crypto.randomUUID(), url: imageUrl }]) : JSON.stringify([]);
+      const colorsJson = JSON.stringify(extracted.colors || []);
+      const specsJson = JSON.stringify(extracted.custom_specifications || []);
+      const propsJson = JSON.stringify(extracted.custom_properties || []);
+      const tagsArr = Array.isArray(extracted.tags) ? extracted.tags : [];
+      const sizesArr = Array.isArray(extracted.sizes) ? extracted.sizes : [];
+
+      await sql`
+        INSERT INTO products (
+          merchant_id, sku, name, title, description, detailed_description,
+          price, regular_price, floor, quantity, category, subcategory,
+          images, colors, sizes, custom_specifications, custom_properties, tags,
+          image_url, available, status, updated_at
+        ) VALUES (
+          ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
+          ${extracted.description || rawText}, ${extracted.description || rawText},
+          ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
+          ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
+          ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
+          ${imageUrl || null}, true, 'Active', now()
+        )
+      `;
+
+      return `✅ Extracted & Cataloged Successfully!\n• Product: ${extracted.title} (SKU: ${sku})\n• Price: ₦${extracted.price.toLocaleString()} (Floor: ₦${Math.round(extracted.floor).toLocaleString()})\n• Stock: ${extracted.stock}\n• Category: ${extracted.category} > ${extracted.subcategory || 'General'}\n• Colors: ${(extracted.colors || []).map((c: any) => c.name).join(', ') || 'N/A'}\n• Specifications: ${(extracted.custom_specifications || []).map((s: any) => `${s.name}: ${s.value}`).join('; ') || 'N/A'}`;
+    }
+
+    return `Extracted Details:\n${JSON.stringify(extracted, null, 2)}`;
+  },
 
   predict_stockouts: async (merchantId: string, args: any) => {
     const actionId = crypto.randomUUID();

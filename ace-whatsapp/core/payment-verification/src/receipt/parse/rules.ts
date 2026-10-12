@@ -1,17 +1,18 @@
 import { OcrToken } from '../ocr/types.js';
 
 export const PATTERNS = {
-  // Currency symbols or codes commonly found in Nigeria (NGN, Naira)
-  CURRENCY: /(?:NGN|Naira|#)\s*/i,
+  // Currency symbols or codes commonly found in Nigeria (NGN, Naira, ₦)
+  CURRENCY: /(?:NGN|Naira|#|₦)\s*/i,
   // Match amounts like 1,500.00 or 1500 or 1,500
   AMOUNT: /((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?)/,
   // Dates like 12/Oct/2023, 2023-10-12, 12-10-2023, Oct 12, 2023
   DATE: /(?:\d{1,4}[-/\\.]\d{1,2}[-/\\.]\d{1,4}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b)/i,
   // Times like 14:30, 2:30 PM, 14:30:45
   TIME: /\b((?:[01]?\d|2[0-3]):[0-5]\d(?:|\:[0-5]\d)\s*(?:AM|PM|am|pm)?)\b/,
-  // Transaction References (typically long alphanumerics)
-  REF_MARKER: /(?:ref(?:erence)?|txn|transaction|rrn|trace)\s*(?:no|id|#|:)?\s*/i,
-  REF_VALUE: /([A-Z0-9]{8,30})/i,
+  // Transaction References (typically long alphanumerics or 30-digit Nigerian NIP session IDs)
+  REF_MARKER: /(?:ref(?:erence)?|txn|transaction|session\s*(?:id)?|rrn|trace)\s*(?:no|id|#|:)?\s*/i,
+  REF_VALUE: /([A-Z0-9]{8,36})/i,
+  NIP_SESSION_ID: /\b(999\d{27}|\d{30})\b/,
   // Names
   SENDER_MARKER: /(?:from|sender|payer)\s*:/i,
   RECEIVER_MARKER: /(?:to|receiver|beneficiary|payee)\s*:/i,

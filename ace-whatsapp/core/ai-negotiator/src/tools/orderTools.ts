@@ -293,10 +293,112 @@ export const orderTools = [
         "required": ["orderId"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "request_refund_or_dispute",
+      "description": "Record a customer's refund request or defective product dispute. Locks escrow funds in 'disputed' state, opens an order_dispute record, and triggers an urgent inbox action for the merchant.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "The order ID being disputed" },
+          "customerId": { "type": "string", "description": "Customer phone number" },
+          "reason": { "type": "string", "description": "Reason given by customer (e.g. defective, wrong size, late delivery)" },
+          "refundAmount": { "type": "number", "description": "Amount in NGN requested for refund" }
+        },
+        "required": ["orderId", "reason"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "resolve_dispute",
+      "description": "Resolve an order dispute (merchant can approve refund or reject).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "disputeId": { "type": "string", "description": "Dispute record ID" },
+          "decision": { "type": "string", "enum": ["approve", "reject"], "description": "Approve refund or reject" },
+          "note": { "type": "string", "description": "Resolution note" }
+        },
+        "required": ["disputeId", "decision"]
+      }
+    }
   }
 ];
 
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+  request_refund_or_dispute: async (merchantId: string, args: { orderId: string; customerId?: string; reason: string; refundAmount?: number }) => {
+    const { orderId, customerId = "", reason, refundAmount } = args;
+    await logger.log(`[ToolHandler:request_refund_or_dispute] Opening dispute for order ${orderId}`, { merchantId, args });
+
+    // Look up order total if refundAmount was not provided
+    let amount = refundAmount;
+    if (!amount) {
+      const orderRows = await sql<{ state: any }[]>`
+        SELECT state FROM orders WHERE id = ${orderId} LIMIT 1
+      `;
+      amount = Number(orderRows[0]?.state?.total ?? 0);
+    }
+
+    // Insert dispute record
+    const disputeRows = await sql<{ id: string }[]>`
+      INSERT INTO order_disputes (order_id, merchant_id, customer_id, reason, refund_amount_ngn, status)
+      VALUES (${orderId}, ${merchantId}, ${customerId}, ${reason}, ${amount || 0}, 'pending_review')
+      RETURNING id
+    `;
+    const disputeId = disputeRows[0]?.id;
+
+    // Lock Escrow status to 'disputed'
+    await sql`
+      UPDATE escrow_accounts SET status = 'disputed', updated_at = now()
+      WHERE order_id = ${orderId}
+    `;
+
+    // Insert urgent action for Merchant App Inbox
+    const actionId = crypto.randomUUID();
+    await sql`
+      INSERT INTO system_actions (merchant_id, action_id, action_type, payload, created_at)
+      VALUES (
+        ${merchantId}, ${actionId}, 'dispute_review_required',
+        ${JSON.stringify({ disputeId, orderId, customerId, reason, amount })},
+        now()
+      )
+    `;
+
+    return `⚠️ Refund request of ₦${(amount || 0).toLocaleString()} recorded for Order #${orderId.slice(0, 8)}.\n• Reason: ${reason}\n• Escrow Status: Locked (Disputed)\n• An urgent action card has been dispatched to the merchant's mobile app for review.`;
+  },
+
+  resolve_dispute: async (merchantId: string, args: { disputeId: string; decision: string; note?: string }) => {
+    const { disputeId, decision, note } = args;
+    const newStatus = decision === "approve" ? "approved" : "rejected";
+
+    const rows = await sql<{ order_id: string; refund_amount_ngn: number }[]>`
+      UPDATE order_disputes
+      SET status = ${newStatus}, resolved_at = now()
+      WHERE id = ${disputeId} AND merchant_id = ${merchantId}
+      RETURNING order_id, refund_amount_ngn
+    `;
+
+    if (rows.length === 0) return `Dispute #${disputeId} not found.`;
+    const { order_id, refund_amount_ngn } = rows[0];
+
+    if (decision === "approve") {
+      await sql`
+        UPDATE escrow_accounts SET status = 'refunded', updated_at = now()
+        WHERE order_id = ${order_id}
+      `;
+      return `✅ Dispute #${disputeId.slice(0, 8)} approved. Refund of ₦${Number(refund_amount_ngn).toLocaleString()} unlocked for customer.`;
+    } else {
+      await sql`
+        UPDATE escrow_accounts SET status = 'held', updated_at = now()
+        WHERE order_id = ${order_id}
+      `;
+      return `❌ Dispute #${disputeId.slice(0, 8)} rejected. Escrow returned to standard hold. Note: ${note || 'None'}`;
+    }
+  },
   request_visual_confirmation: async (merchantId: string, args: any) => {
     // Inserts a pending action into system_actions for the Merchant App inbox to surface
     const actionId = crypto.randomUUID();

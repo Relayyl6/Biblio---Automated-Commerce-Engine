@@ -150,9 +150,23 @@ async function handlePayment(payment: NormalizedPayment): Promise<void> {
         on conflict (provider_ref) do nothing
       `;
       
-      // Create Escrow Hold
-      const platformFeeRate = 0.05;
-      const dealPrice = Math.floor(payment.amountNgn / (1 + platformFeeRate));
+      // Dynamic Fee Padding & Escrow Hold Calculation
+      const mFeeRows = await tx<{ platform_fee_percent: number; fee_padding_model: string }[]>`
+        SELECT platform_fee_percent, fee_padding_model FROM merchants WHERE id = ${order.merchantId} LIMIT 1
+      `;
+      const feeModel = mFeeRows[0]?.fee_padding_model || "customer_padded";
+      const biblioFeeRate = Number(mFeeRows[0]?.platform_fee_percent ?? 3.0) / 100.0;
+      const vanFeeRate = 0.02; // Providus / Paystack VAN service fee
+
+      let dealPrice = payment.amountNgn;
+      if (feeModel === "customer_padded") {
+        // Customer paid (price * (1 + 0.02 + biblioFeeRate)); vendor receives 100% of price
+        dealPrice = Math.floor(payment.amountNgn / (1 + vanFeeRate + biblioFeeRate));
+      } else {
+        // Vendor absorbs fees; vendor receives price * (1 - 0.02 - biblioFeeRate)
+        dealPrice = Math.floor(payment.amountNgn * (1 - vanFeeRate - biblioFeeRate));
+      }
+
       await tx`
         insert into escrow_accounts
           (order_id, merchant_id, customer_id, amount, status)
@@ -358,22 +372,16 @@ app.post("/logistics/webhook", async (req, reply) => {
 
     const newState = transition(order.state, { type: "DELIVERY_CONFIRMED" });
     
-    // 2. Fetch merchant recipient code and deal price
+    // 2. Fetch merchant recipient code and exact escrow held amount
     const merchantRows = await sql<{ paystack_recipient_code: string }[]>`
       select paystack_recipient_code from merchants where id = ${order.merchant_id} limit 1
     `;
     const recipientCode = merchantRows[0]?.paystack_recipient_code;
-    
-    // We only transfer the deal total (excluding the 5% platform fee the customer paid)
-    // For 'out_for_delivery', 'total' property doesn't exist directly on state in TS,
-    // but we know it's in the DB JSON or we can fetch it from transactions.
-    const txRows = await sql<{ amount: number }[]>`
-      select amount from transactions where order_id = ${orderId} and status = 'confirmed' limit 1
+
+    const escrowHeldRows = await sql<{ amount: number }[]>`
+      select amount from escrow_accounts where order_id = ${orderId} and status = 'held' limit 1
     `;
-    const customerPaid = txRows[0]?.amount ?? 0;
-    const platformFeeRate = 0.05;
-    // Deal price is derived: customerPaid = dealPrice * 1.05
-    const dealPrice = Math.floor(customerPaid / (1 + platformFeeRate));
+    const dealPrice = escrowHeldRows[0]?.amount ?? 0;
 
     if (recipientCode && dealPrice > 0) {
       // 3. Initiate Transfer (Atomic Lock)

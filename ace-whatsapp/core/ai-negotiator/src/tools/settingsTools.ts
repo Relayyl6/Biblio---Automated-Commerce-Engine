@@ -188,6 +188,48 @@ export const settingsTools = [
         ]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_vendor_profile",
+      "description": "Configure the merchant/vendor's profile: owner first name (e.g. 'Jane'), store/business name, bank details (bank name, account number, account name), payout frequency ('instant', 'daily', 'weekly', 'manual'), fee padding model ('customer_padded' or 'vendor_absorbed'), and platform fee percentage.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ownerFirstName": { "type": "string", "description": "Owner first name to address them by" },
+          "businessName": { "type": "string", "description": "Official business/store name" },
+          "bankName": { "type": "string", "description": "Bank name (e.g. Access Bank, Kuda, GTBank)" },
+          "accountNumber": { "type": "string", "description": "10-digit account number" },
+          "accountName": { "type": "string", "description": "Account holder name if known" },
+          "payoutFrequency": { "type": "string", "enum": ["instant", "daily", "weekly", "manual"], "description": "Payout schedule" },
+          "feePaddingModel": { "type": "string", "enum": ["customer_padded", "vendor_absorbed"], "description": "Fee model: 'customer_padded' means customer pays VAN + Biblio fees padded on top of item price so vendor receives 100% of price without deduction; 'vendor_absorbed' means fees deducted from payout." },
+          "platformFeePercent": { "type": "number", "description": "Biblio fee percentage (e.g. 3.0 for 3%)" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "configure_fee_padding",
+      "description": "Configure the fee padding strategy and Biblio take-rate percentage for payments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": ["customer_padded", "vendor_absorbed"],
+            "description": "'customer_padded' (Zero-Deduction Model: price + 2% VAN + Biblio % padded to customer invoice) or 'vendor_absorbed' (fees deducted from vendor payout)"
+          },
+          "platformFeePercent": {
+            "type": "number",
+            "description": "Biblio platform fee percentage (default 3.0)"
+          }
+        },
+        "required": ["model"]
+      }
+    }
   }
 ];
 
@@ -300,5 +342,71 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
         `;
     } catch(e) { }
     return `Action ${'link_social_accounts'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
+  },
+  set_vendor_profile: async (merchantId: string, args: any) => {
+    const { ownerFirstName, businessName, bankName, accountNumber, accountName, payoutFrequency, feePaddingModel, platformFeePercent } = args;
+    await logger.log(`[ToolHandler:set_vendor_profile] Updating profile for merchant ${merchantId}`, { args });
+
+    // Fetch existing bank details to merge if partial update
+    const currentRows = await sql<{ bank_details: any; owner_first_name: string; name: string }[]>`
+      SELECT bank_details, owner_first_name, name FROM merchants WHERE id = ${merchantId} LIMIT 1
+    `;
+    const currentBank = currentRows[0]?.bank_details || {};
+    const updatedBank = {
+      bankName: bankName || currentBank.bankName || "Unspecified Bank",
+      accountNumber: accountNumber || currentBank.accountNumber || "",
+      accountName: accountName || currentBank.accountName || ""
+    };
+
+    await sql`
+      UPDATE merchants SET
+        owner_first_name = COALESCE(${ownerFirstName || null}, owner_first_name),
+        name = COALESCE(${businessName || null}, name),
+        bank_details = ${JSON.stringify(updatedBank)}::jsonb,
+        payout_frequency = COALESCE(${payoutFrequency || null}, payout_frequency),
+        fee_padding_model = COALESCE(${feePaddingModel || null}, fee_padding_model),
+        platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
+        updated_at = now()
+      WHERE id = ${merchantId}
+    `;
+
+    await sql`
+      UPDATE vendors SET
+        owner_first_name = COALESCE(${ownerFirstName || null}, owner_first_name),
+        fee_padding_model = COALESCE(${feePaddingModel || null}, fee_padding_model),
+        platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
+        updated_at = now()
+      WHERE merchant_id = ${merchantId}
+    `;
+
+    const effectiveName = ownerFirstName || currentRows[0]?.owner_first_name || "Merchant";
+    const effectiveBiz = businessName || currentRows[0]?.name || "Store";
+    const effectiveFreq = payoutFrequency || "instant";
+    const feeModelDesc = (feePaddingModel || "customer_padded") === "customer_padded"
+      ? "Zero-Deduction Model (customer pays VAN 2% + Biblio fee; you receive 100% of your price)"
+      : "Standard Absorption Model (fees deducted from your payout)";
+
+    return `Profile successfully updated for ${effectiveName} at ${effectiveBiz}!\n• Payout Bank: ${updatedBank.bankName} (${updatedBank.accountNumber || "N/A"})\n• Schedule: ${effectiveFreq}\n• Fee Structure: ${feeModelDesc}`;
+  },
+  configure_fee_padding: async (merchantId: string, args: { model: string; platformFeePercent?: number }) => {
+    const { model, platformFeePercent } = args;
+    await sql`
+      UPDATE merchants SET
+        fee_padding_model = ${model},
+        platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
+        updated_at = now()
+      WHERE id = ${merchantId}
+    `;
+    await sql`
+      UPDATE vendors SET
+        fee_padding_model = ${model},
+        platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
+        updated_at = now()
+      WHERE merchant_id = ${merchantId}
+    `;
+    const desc = model === "customer_padded"
+      ? "Zero-Deduction Fee Padding enabled. Customers are invoiced for product + 2% VAN fee + Biblio platform fee. You receive 100% of your sales price."
+      : "Vendor Absorption mode enabled. Fees will be deducted from your net payout.";
+    return `Fee policy updated to '${model}': ${desc}`;
   },
 };

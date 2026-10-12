@@ -443,4 +443,79 @@ export const useSupportTickets = () => {
   });
 };
 
+export interface AgentMessage {
+  id: string;
+  channel: 'whatsapp' | 'in_app';
+  sender_role: 'vendor' | 'agent' | 'system';
+  content: string;
+  metadata?: any;
+  created_at: string;
+}
+
+export const useAgentMessages = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery<AgentMessage[]>({
+    queryKey: ['agentMessages', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/agent-messages`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+    refetchInterval: 3000,
+  });
+};
+
+export const useSendAgentMessage = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ text, imageUrl }: { text: string; imageUrl?: string }) => {
+      const res = await api.post(`/merchants/${merchantId}/agent-messages`, { text, imageUrl });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agentMessages', merchantId] });
+    },
+  });
+};
+
+export interface DisputeItem {
+  id: string;
+  order_id: string;
+  customer_id: string;
+  reason: string;
+  refund_amount_ngn: number;
+  status: 'pending_review' | 'approved' | 'rejected';
+  created_at: string;
+  resolved_at?: string;
+  order_state?: any;
+}
+
+export const useDisputes = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery<DisputeItem[]>({
+    queryKey: ['disputes', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/disputes`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useResolveDispute = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ disputeId, decision, note }: { disputeId: string; decision: 'approve' | 'reject'; note?: string }) => {
+      const res = await api.post(`/merchants/${merchantId}/disputes/${disputeId}/resolve`, { decision, note });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['disputes', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['inbox', merchantId] });
+    },
+  });
+};
+
 

@@ -22,6 +22,7 @@ import { authEngine } from "@ace/shared/auth/index.js";
 import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback.js";
+import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
@@ -1822,6 +1823,213 @@ app.post('/auth/login', async (req, reply) => {
 
   const token = await authEngine.issueToken(merchantId, 'merchant');
   return reply.send({ ok: true, merchantId, token });
+});
+
+// ─── Biblio In-App Agent Interaction & Transcripts ───────────────────────────
+
+app.get('/merchants/:id/agent-messages', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const limit = Math.min(Number((req.query as any)?.limit || 50), 100);
+  try {
+    const rows = await sql<{
+      id: string;
+      channel: string;
+      sender_role: string;
+      content: string;
+      metadata: any;
+      created_at: string;
+    }[]>`
+      SELECT id, channel, sender_role, content, metadata, created_at
+      FROM merchant_agent_transcripts
+      WHERE merchant_id = ${id}
+      ORDER BY created_at ASC
+      LIMIT ${limit}
+    `;
+    return reply.send(rows);
+  } catch (err: any) {
+    app.log.error(err, "Failed to fetch merchant agent transcripts");
+    return reply.send([]);
+  }
+});
+
+app.post('/merchants/:id/agent-messages', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { text, imageUrl } = req.body as { text: string; imageUrl?: string };
+  if (!text) return reply.code(400).send({ error: "text is required" });
+
+  try {
+    let messageText = text;
+    if (imageUrl) {
+      messageText += `\n[Image: ${imageUrl}]`;
+    }
+
+    const turn = {
+      customerId: id,
+      merchantId: id,
+      messages: [{ content: { text: messageText } } as any],
+      orderState: { status: "no_order" as const }
+    };
+
+    const replyText = await runBiblioAgentTurn(turn, "in_app");
+    return reply.send({
+      ok: true,
+      reply: replyText,
+      timestamp: Date.now()
+    });
+  } catch (err: any) {
+    app.log.error(err, "Error executing in-app agent turn");
+    return reply.status(500).send({ error: "Failed to process agent turn", message: err.message });
+  }
+});
+
+// ─── Order Disputes & Refund Management ─────────────────────────────────────
+
+app.get('/merchants/:id/disputes', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  try {
+    const rows = await sql`
+      SELECT d.id, d.order_id, d.customer_id, d.reason, d.refund_amount_ngn,
+             d.status, d.created_at, d.resolved_at,
+             o.state as order_state
+      FROM order_disputes d
+      LEFT JOIN orders o ON o.id = d.order_id
+      WHERE d.merchant_id = ${id}
+      ORDER BY d.created_at DESC
+    `;
+    return reply.send(rows);
+  } catch (err: any) {
+    app.log.error(err, "Failed to fetch order disputes");
+    return reply.send([]);
+  }
+});
+
+app.post('/merchants/:id/disputes/:disputeId/resolve', async (req, reply) => {
+  const { id, disputeId } = req.params as { id: string; disputeId: string };
+  const { decision, note } = req.body as { decision: "approve" | "reject"; note?: string };
+  if (!decision || (decision !== "approve" && decision !== "reject")) {
+    return reply.code(400).send({ error: "decision must be 'approve' or 'reject'" });
+  }
+
+  try {
+    const newStatus = decision === "approve" ? "approved" : "rejected";
+    const rows = await sql<{ order_id: string; refund_amount_ngn: number }[]>`
+      UPDATE order_disputes
+      SET status = ${newStatus}, resolved_at = now()
+      WHERE id = ${disputeId} AND merchant_id = ${id}
+      RETURNING order_id, refund_amount_ngn
+    `;
+
+    if (rows.length === 0) return reply.code(404).send({ error: "Dispute not found" });
+    const { order_id, refund_amount_ngn } = rows[0];
+
+    if (decision === "approve") {
+      await sql`
+        UPDATE escrow_accounts SET status = 'refunded', updated_at = now()
+        WHERE order_id = ${order_id}
+      `;
+    } else {
+      await sql`
+        UPDATE escrow_accounts SET status = 'held', updated_at = now()
+        WHERE order_id = ${order_id}
+      `;
+    }
+
+    return reply.send({
+      ok: true,
+      disputeId,
+      status: newStatus,
+      refundAmount: refund_amount_ngn,
+      message: decision === "approve" ? "Dispute approved, refund unlocked." : "Dispute rejected."
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to resolve dispute");
+    return reply.status(500).send({ error: "Dispute resolution failed" });
+  }
+});
+
+// ─── Admin Financials, Take-Rate & AI Costs Telemetry ───────────────────────
+
+app.get('/admin/telemetry/financials', async (req, reply) => {
+  try {
+    // 1. Core Financial Metrics (GMV, Biblio Platform Earnings, VAN Provider Fees)
+    const txSummary = await sql`
+      SELECT 
+        COUNT(DISTINCT t.order_id) as total_transactions,
+        COALESCE(SUM(t.amount), 0) as gross_merchandise_value,
+        COALESCE(SUM(t.amount * 0.03), 0) as biblio_platform_revenue,
+        COALESCE(SUM(t.amount * 0.02), 0) as van_provider_costs
+      FROM transactions t
+      WHERE t.status = 'confirmed'
+    `;
+
+    // 2. Escrow breakdown
+    const escrowSummary = await sql`
+      SELECT 
+        COALESCE(SUM(CASE WHEN status = 'held' THEN amount ELSE 0 END), 0) as escrow_held,
+        COALESCE(SUM(CASE WHEN status = 'released' THEN amount ELSE 0 END), 0) as escrow_released,
+        COALESCE(SUM(CASE WHEN status = 'disputed' THEN amount ELSE 0 END), 0) as escrow_disputed
+      FROM escrow_accounts
+    `;
+
+    // 3. Per-Merchant Unit Economics
+    const merchantEconomics = await sql`
+      SELECT 
+        m.id, m.name, m.owner_first_name, m.fee_padding_model, m.platform_fee_percent,
+        COUNT(DISTINCT t.order_id) as successful_orders,
+        COALESCE(SUM(t.amount), 0) as gmv,
+        COALESCE(SUM(t.amount * (COALESCE(m.platform_fee_percent, 3.0) / 100.0)), 0) as biblio_fee_earned
+      FROM merchants m
+      LEFT JOIN transactions t ON t.merchant_id = m.id AND t.status = 'confirmed'
+      GROUP BY m.id, m.name, m.owner_first_name, m.fee_padding_model, m.platform_fee_percent
+      ORDER BY gmv DESC
+      LIMIT 20
+    `;
+
+    // 4. AI Services & Costs Attribution Estimate
+    const totalTransactions = Number(txSummary[0]?.total_transactions || 0);
+    const estimatedTurns = totalTransactions * 6 + 120; // 6 turns per completed sale + exploratory chats
+    const estimatedTokens = estimatedTurns * 1250;
+    const groqLlamaCostUsd = (estimatedTokens / 1_000_000) * 0.79; // LLaMA 3.3 70B price
+    const whisperMinutes = totalTransactions * 1.5;
+    const whisperCostUsd = whisperMinutes * 0.006;
+    const usdNgnRate = 1650;
+    const totalAiCostNgn = (groqLlamaCostUsd + whisperCostUsd) * usdNgnRate;
+
+    return reply.send({
+      ok: true,
+      financials: {
+        gmv: Number(txSummary[0]?.gross_merchandise_value || 0),
+        biblioTakeRateEarnings: Number(txSummary[0]?.biblio_platform_revenue || 0),
+        vanProviderCharges: Number(txSummary[0]?.van_provider_costs || 0),
+        netPlatformProfit: Number(txSummary[0]?.biblio_platform_revenue || 0) - totalAiCostNgn
+      },
+      escrow: {
+        held: Number(escrowSummary[0]?.escrow_held || 0),
+        released: Number(escrowSummary[0]?.escrow_released || 0),
+        disputed: Number(escrowSummary[0]?.escrow_disputed || 0)
+      },
+      aiCostBreakdown: {
+        estimatedTurns,
+        estimatedTokens,
+        groqLlamaCostUsd: Number(groqLlamaCostUsd.toFixed(2)),
+        whisperCostUsd: Number(whisperCostUsd.toFixed(2)),
+        totalAiCostNgn: Math.round(totalAiCostNgn),
+        servicesUsed: ["Groq LLaMA 3.3 70B", "Groq Whisper Large v3", "Providus VAN Webhooks", "Paystack NUBAN Transfers"]
+      },
+      merchants: merchantEconomics.map((me: any) => ({
+        id: me.id,
+        name: me.name,
+        owner: me.owner_first_name || "Merchant",
+        feeModel: me.fee_padding_model || "customer_padded",
+        orders: Number(me.successful_orders || 0),
+        gmv: Number(me.gmv || 0),
+        biblioRevenue: Math.round(Number(me.biblio_fee_earned || 0))
+      }))
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to compute admin telemetry financials");
+    return reply.status(500).send({ error: "Failed to generate financials telemetry" });
+  }
 });
 
 app.setErrorHandler((error, request, reply) => {
