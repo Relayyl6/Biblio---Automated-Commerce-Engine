@@ -521,9 +521,13 @@ export const useResolveDispute = () => {
 };
 
 // --- MERCHANT INTEGRATIONS & API KEYS ---
+export type MerchantTier = 'starter' | 'growth' | 'enterprise';
 export type CredentialStatus = 'custom_override' | 'managed_pool' | 'unconfigured';
 
 export interface MerchantIntegrationsData {
+  subscriptionTier?: MerchantTier;
+  canEditCustomKeys?: boolean;
+  tierRequirements?: Record<string, string>;
   dispatch: {
     gokada: string;
     hasGokada: boolean;
@@ -619,6 +623,47 @@ export const useUpdateMerchantIntegrations = () => {
       queryClient.invalidateQueries({ queryKey: ['merchantIntegrations', merchantId] });
       queryClient.invalidateQueries({ queryKey: ['merchant', merchantId] });
     },
+  });
+};
+
+export const useUpdateSubscriptionTier = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (tier: MerchantTier) => {
+      const res = await api.patch(`/merchants/${merchantId}`, { subscriptionTier: tier });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchantIntegrations', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['merchant', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['merchantFeatures', merchantId] });
+    },
+  });
+};
+
+export interface FeatureEntitlement {
+  id: string;
+  name: string;
+  description: string;
+  category: 'core' | 'growth' | 'enterprise';
+  requiredTier: MerchantTier;
+  isAllowed: boolean;
+}
+
+export const useMerchantFeatures = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery<{
+    merchantId: string;
+    currentTier: MerchantTier;
+    entitlements: FeatureEntitlement[];
+  }>({
+    queryKey: ['merchantFeatures', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/features`);
+      return res.data;
+    },
+    enabled: !!merchantId,
   });
 };
 

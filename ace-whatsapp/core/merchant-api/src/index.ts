@@ -29,6 +29,12 @@ import {
   isPlatformDefaultAvailable,
   upsertPlatformCredential,
 } from "@ace/shared/integrations/credentials.js";
+import {
+  isFeatureAllowed,
+  FEATURE_TIER_REQUIREMENTS,
+  FEATURE_CATALOG,
+  getMerchantFeatureEntitlements,
+} from "@ace/shared/tiers/featureGuard.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
@@ -425,7 +431,7 @@ app.get("/merchants/:id", async (req, reply) => {
   const rows = await sql`
     SELECT m.id, m.name, m.phone_number_id, m.tone_guide, m.business_policies,
            m.delivery_info, m.dialect, m.whatsapp_catalog_id, m.created_at,
-           m.default_discount_pct,
+           m.default_discount_pct, m.subscription_tier,
            pr.max_discount_by_tier,
            (SELECT COUNT(*) FROM vendor_decisions WHERE merchant_id = ${id} AND decision_type = 'training_correction') as ai_corrections
     FROM merchants m
@@ -447,6 +453,7 @@ app.get("/merchants/:id", async (req, reply) => {
 
   const config = {
     ...m,
+    subscription_tier: m.subscription_tier || 'starter',
     max_discount_percentage: Math.round(maxDiscount),
     auto_dispatch_riders: true, // Default to true if not explicitly stored
     auto_restock_buffer: 5,
@@ -477,7 +484,8 @@ app.patch("/merchants/:id", async (req, reply) => {
       business_policies= coalesce(${strOrNull(b.businessPolicies)}, business_policies),
       delivery_info    = coalesce(${strOrNull(b.deliveryInfo)}, delivery_info),
       dialect          = coalesce(${dialect}, dialect),
-      whatsapp_catalog_id = coalesce(${strOrNull(b.whatsappCatalogId)}, whatsapp_catalog_id)
+      whatsapp_catalog_id = coalesce(${strOrNull(b.whatsappCatalogId)}, whatsapp_catalog_id),
+      subscription_tier   = coalesce(${strOrNull(b.subscriptionTier || b.subscription_tier)}, subscription_tier)
     where id = ${id}
     returning id
   `;
@@ -489,13 +497,15 @@ app.patch("/merchants/:id", async (req, reply) => {
 app.get("/merchants/:id/integrations", async (req, reply) => {
   const { id } = req.params as { id: string };
   const mRows = await sql`
-    SELECT api_keys, supports_pickup, physical_address
+    SELECT api_keys, supports_pickup, physical_address, subscription_tier
     FROM merchants
     WHERE id = ${id}::uuid LIMIT 1
   `;
   if (!mRows[0]) return reply.code(404).send({ error: "merchant not found" });
 
   const m = mRows[0];
+  const merchantTier = m.subscription_tier || 'starter';
+  const canEditCustomKeys = isFeatureAllowed(merchantTier, 'custom_api_keys');
   const apiKeys = (m.api_keys && typeof m.api_keys === 'object') ? m.api_keys : {};
 
   const intRows = await sql<{ provider: string; access_token: string }[]>`
@@ -534,6 +544,9 @@ app.get("/merchants/:id/integrations", async (req, reply) => {
   };
 
   return reply.send({
+    subscriptionTier: merchantTier,
+    canEditCustomKeys,
+    tierRequirements: FEATURE_TIER_REQUIREMENTS,
     dispatch: {
       gokada: maskApiKey(getKey("gokada")),
       hasGokada: !!getKey("gokada"),
@@ -595,12 +608,27 @@ app.patch("/merchants/:id/integrations", async (req, reply) => {
   const b = req.body as any;
   if (!b) return reply.code(400).send({ error: "body required" });
 
-  const mRows = await sql<{ api_keys: Record<string, string>; physical_address: any }[]>`
-    SELECT api_keys, physical_address
+  const mRows = await sql<{ api_keys: Record<string, string>; physical_address: any; subscription_tier: string }[]>`
+    SELECT api_keys, physical_address, subscription_tier
     FROM merchants
     WHERE id = ${id}::uuid LIMIT 1
   `;
   if (!mRows[0]) return reply.code(404).send({ error: "merchant not found" });
+
+  const merchantTier = mRows[0].subscription_tier || "starter";
+
+  // Check if caller is attempting to set or modify private keys (BYOK)
+  const hasDispatchCustomKeys = b.dispatch && Object.values(b.dispatch).some((v) => typeof v === 'string' && v.trim() !== '' && !isMaskedKey(v));
+  const hasDeveloperCustomKeys = b.developer && Object.values(b.developer).some((v) => typeof v === 'string' && v.trim() !== '' && !isMaskedKey(v));
+
+  if ((hasDispatchCustomKeys || hasDeveloperCustomKeys) && !isFeatureAllowed(merchantTier, 'custom_api_keys')) {
+    return reply.code(403).send({
+      error: "Feature 'custom_api_keys' requires the Enterprise tier. Lower tiers are powered automatically by Biblio's Managed Default Pool.",
+      code: "TIER_RESTRICTED",
+      requiredTier: "enterprise",
+      currentTier: merchantTier,
+    });
+  }
 
   const currentApiKeys = (mRows[0].api_keys && typeof mRows[0].api_keys === 'object') ? { ...mRows[0].api_keys } : {};
 
@@ -726,6 +754,44 @@ app.patch("/admin/platform-credentials", async (req, reply) => {
 
   await upsertPlatformCredential(provider, apiKey, secretKey, description);
   return reply.send({ ok: true, message: `Platform master default updated for ${provider}` });
+});
+
+// ─── Tier Feature Entitlements & Billing Upgrade ─────────────────────────────
+
+app.get("/merchants/:id/features", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const entitlements = await getMerchantFeatureEntitlements(id);
+  return reply.send(entitlements);
+});
+
+app.post("/merchants/:id/billing/upgrade", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { targetTier, paymentMethod } = req.body as {
+    targetTier: "growth" | "enterprise";
+    paymentMethod?: "card" | "transfer" | "admin_grant";
+  };
+
+  if (targetTier !== "growth" && targetTier !== "enterprise") {
+    return reply.code(400).send({ error: "targetTier must be 'growth' or 'enterprise'" });
+  }
+
+  // Update merchant subscription tier
+  const updated = await sql<{ id: string; subscription_tier: string }[]>`
+    UPDATE merchants
+    SET subscription_tier = ${targetTier},
+        updated_at = NOW()
+    WHERE id = ${id}::uuid
+    RETURNING id, subscription_tier
+  `;
+
+  if (!updated[0]) return reply.code(404).send({ error: "merchant not found" });
+
+  return reply.send({
+    ok: true,
+    message: `Store plan successfully upgraded to ${targetTier.toUpperCase()}`,
+    tier: updated[0].subscription_tier,
+    activeUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
 });
 
 // ─── Bank Onboarding (Escrow/Transfer Setup) ─────────────────────────────────

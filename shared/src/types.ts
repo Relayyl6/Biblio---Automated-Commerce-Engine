@@ -293,3 +293,17 @@ export type PricingResult =
 
 export type CustomerTier = "new" | "returning" | "loyal" | "vip";
 
+export type MerchantTier = "starter" | "growth" | "enterprise";
+export type PlatformFeature =
+  | "store_pickup"
+  | "basic_catalog"
+  | "managed_ai_negotiation"
+  | "basic_escrow"
+  | "status_automation"
+  | "advanced_tone_calibration"
+  | "export_ledger"
+  | "dispute_management"
+  | "custom_api_keys"
+  | "cross_channel_instagram"
+  | "unlimited_catalog"
+  | "custom_fee_padding";

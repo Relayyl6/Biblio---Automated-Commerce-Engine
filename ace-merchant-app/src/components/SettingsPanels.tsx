@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, Switch, ScrollView, ActivityIndicator } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store } from 'lucide-react-native';
+import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles } from 'lucide-react-native';
 import { colors } from '../../theme';
 import { PanelField } from './PanelField';
 import { SegmentedControl } from './SegmentedControl';
@@ -15,6 +15,7 @@ import {
   useUpdateMerchantConfig,
   useMerchantIntegrations,
   useUpdateMerchantIntegrations,
+  useUpdateSubscriptionTier,
 } from '../api/client';
 import { useAlert } from '../store/alertStore';
 
@@ -107,16 +108,76 @@ function ManagedPoolBanner({
   );
 }
 
+function TierFeatureShield({
+  requiredTier = 'enterprise',
+  currentTier = 'starter',
+  featureName = 'Custom API Key Overrides',
+  onUpgrade,
+  isUpgrading,
+}: {
+  requiredTier?: string;
+  currentTier?: string;
+  featureName?: string;
+  onUpgrade?: () => void;
+  isUpgrading?: boolean;
+}) {
+  const c = useThemeColors();
+  return (
+    <View
+      style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
+      className="p-4 rounded-2xl border mb-5"
+    >
+      <View className="flex-row items-center mb-2">
+        <View style={{ backgroundColor: c.accentSoft }} className="w-8 h-8 rounded-full items-center justify-center mr-2.5">
+          <Lock size={15} color={c.accent} />
+        </View>
+        <View className="flex-1">
+          <Text style={{ color: c.textPrimary }} className="text-xs font-bold">
+            {requiredTier.toUpperCase()} Plan Required
+          </Text>
+          <Text style={{ color: c.textTertiary }} className="text-[10px]">
+            Current: {currentTier.toUpperCase()} • Powered by Biblio Managed Pool
+          </Text>
+        </View>
+        {onUpgrade && (
+          <Pressable
+            onPress={onUpgrade}
+            disabled={isUpgrading}
+            style={{ backgroundColor: c.accent }}
+            className="px-3 py-1.5 rounded-xl flex-row items-center active:opacity-80"
+          >
+            {isUpgrading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Sparkles size={12} color="#FFFFFF" />
+                <Text className="text-white text-xs font-bold ml-1">Unlock</Text>
+              </>
+            )}
+          </Pressable>
+        )}
+      </View>
+      <Text style={{ color: c.textSecondary }} className="text-[11px] leading-relaxed">
+        {featureName} is exclusive to {requiredTier.toUpperCase()} stores with direct corporate courier contracts. Lower plans run automatically via Biblio's managed dispatch pool with zero configuration required.
+      </Text>
+    </View>
+  );
+}
+
 /** Panel content for "Dispatch API Keys" — Gokada, Kwik, MAX credentials. */
 export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const alert = useAlert();
   const { data: integrations, isLoading: isIntegrationsLoading } = useMerchantIntegrations();
   const updateIntegrations = useUpdateMerchantIntegrations();
+  const updateTier = useUpdateSubscriptionTier();
 
   const [gokada, setGokada] = useState('');
   const [kwik, setKwik] = useState('');
   const [max, setMax] = useState('');
+
+  const canEdit = integrations?.canEditCustomKeys ?? false;
+  const currentTier = integrations?.subscriptionTier || 'starter';
 
   useEffect(() => {
     if (integrations?.dispatch) {
@@ -154,21 +215,47 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
     }
   };
 
+  const handleUpgrade = async () => {
+    try {
+      await updateTier.mutateAsync('enterprise');
+      alert.success('Plan Upgraded', 'Your account has been upgraded to Enterprise! Private API key overrides are now unlocked.');
+    } catch (err: any) {
+      alert.error('Upgrade Failed', err?.message || 'Could not upgrade tier.');
+    }
+  };
+
   const d = integrations?.dispatch;
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
-      <ManagedPoolBanner
-        title="Zero-Setup Dispatch Active"
-        description="Biblio automatically books nearest riders via our managed fleet pool (Kwik, Gokada, MAX). Delivery fees are calculated dynamically and billed to the buyer. Enter keys below only if you wish to bill riders directly to your corporate courier accounts."
-      />
+      {!canEdit ? (
+        <TierFeatureShield
+          requiredTier="enterprise"
+          currentTier={currentTier}
+          featureName="Custom Dispatch API Overrides"
+          onUpgrade={handleUpgrade}
+          isUpgrading={updateTier.isPending}
+        />
+      ) : (
+        <ManagedPoolBanner
+          title="Enterprise BYOK Unlocked"
+          description="You are on the Enterprise plan. You can use your direct corporate courier billing credentials below, or leave them empty to use Biblio's managed dispatch pool."
+        />
+      )}
 
       <View className="mb-4">
         <View className="flex-row items-center justify-between mb-1.5">
           <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">Gokada</Text>
           <CredentialStatusBadge status={d?.statusGokada} hasCustomKey={!!gokada.trim()} />
         </View>
-        <PanelField label="" value={gokada} onChangeText={setGokada} placeholder="gk_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
+        <PanelField
+          label=""
+          value={gokada}
+          onChangeText={setGokada}
+          placeholder="gk_live_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's managed dispatch pool." : "Requires Enterprise plan to override."}
+        />
       </View>
 
       <View className="mb-4">
@@ -176,7 +263,14 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">Kwik Delivery</Text>
           <CredentialStatusBadge status={d?.statusKwik} hasCustomKey={!!kwik.trim()} />
         </View>
-        <PanelField label="" value={kwik} onChangeText={setKwik} placeholder="kwk_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
+        <PanelField
+          label=""
+          value={kwik}
+          onChangeText={setKwik}
+          placeholder="kwk_live_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's managed dispatch pool." : "Requires Enterprise plan to override."}
+        />
       </View>
 
       <View className="mb-4">
@@ -184,10 +278,19 @@ export function DispatchApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">MAX.ng</Text>
           <CredentialStatusBadge status={d?.statusMax} hasCustomKey={!!max.trim()} />
         </View>
-        <PanelField label="" value={max} onChangeText={setMax} placeholder="max_live_••••••••" secure helper="Leave empty to use Biblio's managed dispatch pool." />
+        <PanelField
+          label=""
+          value={max}
+          onChangeText={setMax}
+          placeholder="max_live_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's managed dispatch pool." : "Requires Enterprise plan to override."}
+        />
       </View>
 
-      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save Dispatch Settings" />
+      {canEdit && (
+        <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save Dispatch Settings" />
+      )}
     </ScrollView>
   );
 }
@@ -435,12 +538,16 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
   const alert = useAlert();
   const { data: integrations, isLoading: isIntegrationsLoading } = useMerchantIntegrations();
   const updateIntegrations = useUpdateMerchantIntegrations();
+  const updateTier = useUpdateSubscriptionTier();
 
   const [groq, setGroq] = useState('');
   const [twilioSid, setTwilioSid] = useState('');
   const [twilioAuth, setTwilioAuth] = useState('');
   const [paystack, setPaystack] = useState('');
   const [africasTalking, setAfricasTalking] = useState('');
+
+  const canEdit = integrations?.canEditCustomKeys ?? false;
+  const currentTier = integrations?.subscriptionTier || 'starter';
 
   useEffect(() => {
     if (integrations?.developer) {
@@ -488,14 +595,33 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
     }
   };
 
+  const handleUpgrade = async () => {
+    try {
+      await updateTier.mutateAsync('enterprise');
+      alert.success('Plan Upgraded', 'Your account has been upgraded to Enterprise! Developer API key overrides are now unlocked.');
+    } catch (err: any) {
+      alert.error('Upgrade Failed', err?.message || 'Could not upgrade tier.');
+    }
+  };
+
   const dev = integrations?.developer;
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-      <ManagedPoolBanner
-        title="Managed AI & SMS Engine Active"
-        description="Biblio provides high-speed Llama 3 negotiator instances, automated customer SMS notifications, and escrow virtual accounts automatically. Enter private keys only if you wish to route usage through your dedicated accounts."
-      />
+      {!canEdit ? (
+        <TierFeatureShield
+          requiredTier="enterprise"
+          currentTier={currentTier}
+          featureName="Developer API & Escrow Overrides"
+          onUpgrade={handleUpgrade}
+          isUpgrading={updateTier.isPending}
+        />
+      ) : (
+        <ManagedPoolBanner
+          title="Enterprise BYOK Unlocked"
+          description="You are on the Enterprise plan. Enter private keys only if you wish to route usage through your dedicated accounts."
+        />
+      )}
 
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-1">AI Intelligence</Text>
       <View className="mb-4">
@@ -503,7 +629,14 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Groq API Key (Llama 3)</Text>
           <CredentialStatusBadge status={dev?.statusGroq} hasCustomKey={!!groq.trim()} />
         </View>
-        <PanelField label="" value={groq} onChangeText={setGroq} placeholder="gsk_••••••••" secure helper="Leave empty to use Biblio's managed negotiator pool." />
+        <PanelField
+          label=""
+          value={groq}
+          onChangeText={setGroq}
+          placeholder="gsk_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's managed negotiator pool." : "Requires Enterprise plan to override."}
+        />
       </View>
 
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">Communications & SMS</Text>
@@ -512,7 +645,14 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Africa's Talking API Key</Text>
           <CredentialStatusBadge status={dev?.statusAfricasTalking} hasCustomKey={!!africasTalking.trim()} />
         </View>
-        <PanelField label="" value={africasTalking} onChangeText={setAfricasTalking} placeholder="atsk_••••••••" secure helper="Leave empty to use Biblio's out-of-band SMS escalation line." />
+        <PanelField
+          label=""
+          value={africasTalking}
+          onChangeText={setAfricasTalking}
+          placeholder="atsk_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's out-of-band SMS escalation line." : "Requires Enterprise plan to override."}
+        />
       </View>
 
       <View className="mb-4">
@@ -520,8 +660,22 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Twilio SID & Auth (International)</Text>
           <CredentialStatusBadge status={dev?.statusTwilioSid} hasCustomKey={!!twilioSid.trim()} />
         </View>
-        <PanelField label="" value={twilioSid} onChangeText={setTwilioSid} placeholder="AC••••••••" secure />
-        <PanelField label="" value={twilioAuth} onChangeText={setTwilioAuth} placeholder="Auth Token ••••••••" secure helper="Optional Twilio fallback for international messages." />
+        <PanelField
+          label=""
+          value={twilioSid}
+          onChangeText={setTwilioSid}
+          placeholder="AC••••••••"
+          secure
+          helper={canEdit ? "" : "Requires Enterprise plan to override."}
+        />
+        <PanelField
+          label=""
+          value={twilioAuth}
+          onChangeText={setTwilioAuth}
+          placeholder="Auth Token ••••••••"
+          secure
+          helper={canEdit ? "Optional Twilio fallback for international messages." : "Requires Enterprise plan to override."}
+        />
       </View>
 
       <Text style={{ color: c.textPrimary }} className="font-bold text-sm mb-3 mt-2">Payments & Escrow</Text>
@@ -530,10 +684,19 @@ export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
           <Text style={{ color: c.textSecondary }} className="font-medium text-xs">Paystack Secret Key</Text>
           <CredentialStatusBadge status={dev?.statusPaystack} hasCustomKey={!!paystack.trim()} />
         </View>
-        <PanelField label="" value={paystack} onChangeText={setPaystack} placeholder="sk_live_••••••••" secure helper="Leave empty to use Biblio's automated escrow & instant bank payouts." />
+        <PanelField
+          label=""
+          value={paystack}
+          onChangeText={setPaystack}
+          placeholder="sk_live_••••••••"
+          secure
+          helper={canEdit ? "Leave empty to use Biblio's automated escrow & instant bank payouts." : "Requires Enterprise plan to override."}
+        />
       </View>
 
-      <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save API Overrides" />
+      {canEdit && (
+        <PanelSaveButton onPress={handleSave} isLoading={updateIntegrations.isPending || isIntegrationsLoading} label="Save API Overrides" />
+      )}
     </ScrollView>
   );
 }
