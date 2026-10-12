@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown } from 'lucide-react-native';
 import { colors } from '../theme';
 import { useAuthStore } from '../src/store/authStore';
 import { useAlert } from '../src/store/alertStore';
@@ -17,9 +17,10 @@ import {
   StoreProfilePanel,
   DeveloperApiKeysPanel,
   StatusAutomationPanel,
+  PlanPanel,
 } from '../src/components/SettingsPanels';
 
-type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | 'status' | null;
+type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | 'status' | 'plan' | null;
 
 const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: string }> = {
   dispatch: { title: 'Dispatch API Keys', subtitle: 'Gokada, Kwik and MAX logistics credentials.' },
@@ -28,6 +29,7 @@ const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: str
   profile: { title: 'Store Profile & WhatsApp API', subtitle: 'Pickup address and Meta OAuth status.' },
   developer: { title: 'Developer API Keys', subtitle: 'Override platform defaults with your own provider keys.' },
   status: { title: 'WhatsApp Status Engine', subtitle: 'Smart ranking strategy, auto-broadcast cycles & instant pushes.' },
+  plan: { title: 'Subscription & Features', subtitle: 'Your active plan and unlocked platform capabilities.' },
 };
 
 export default function SettingsScreen() {
@@ -203,6 +205,16 @@ export default function SettingsScreen() {
           />
         </Section>
 
+        <Section title="Subscription & Plan" icon={Crown} delay={320}>
+          <NavigationRow
+            title="Subscription & Features"
+            subtitle="View current plan tier, feature entitlements, and upgrade options."
+            icon={Crown}
+            onPress={() => setActivePanel('plan')}
+            isLast
+          />
+        </Section>
+
         <Section title="Developer & Overrides" icon={Key} delay={350}>
           <NavigationRow
             title="Custom Provider API Keys"
@@ -211,7 +223,7 @@ export default function SettingsScreen() {
             onPress={() => setActivePanel('developer')}
             isLast
           />
-                </Section>
+        </Section>
 
         <Section title="System & Support" icon={Bell} delay={450}>
           <NavigationRow
@@ -254,6 +266,7 @@ export default function SettingsScreen() {
         {activePanel === 'profile' && <StoreProfilePanel onSave={closePanel} />}
         {activePanel === 'developer' && <DeveloperApiKeysPanel onSave={closePanel} />}
         {activePanel === 'status' && <StatusAutomationPanel onSave={closePanel} />}
+        {activePanel === 'plan' && <PlanPanel onSave={closePanel} />}
       </SidePanel>
     </View>
   );

@@ -23,5 +23,8 @@ export default defineConfig({
     // their own toolchains and are excluded from the backend tsconfig too.
     include: ["ace-whatsapp/**/*.test.ts", "shared/**/*.test.ts"],
     environment: "node",
+    env: {
+      DATABASE_URL: process.env.DATABASE_URL || "postgresql://mock:mock@localhost:5432/mock",
+    },
   },
 });

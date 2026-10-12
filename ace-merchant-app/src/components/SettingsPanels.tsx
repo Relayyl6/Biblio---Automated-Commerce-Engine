@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, Switch, ScrollView, ActivityIndicator } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles } from 'lucide-react-native';
+import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles, Crown, Star, Zap, ChevronRight } from 'lucide-react-native';
 import { colors } from '../../theme';
 import { PanelField } from './PanelField';
 import { SegmentedControl } from './SegmentedControl';
@@ -16,6 +16,9 @@ import {
   useMerchantIntegrations,
   useUpdateMerchantIntegrations,
   useUpdateSubscriptionTier,
+  useMerchantFeatures,
+  type FeatureEntitlement,
+  type MerchantTier,
 } from '../api/client';
 import { useAlert } from '../store/alertStore';
 
@@ -876,6 +879,211 @@ export function StatusAutomationPanel({ onSave }: { onSave: () => void }) {
       )}
 
       <PanelSaveButton onPress={handleSave} label={updateSettings.isPending ? 'Saving...' : 'Save Strategy & Settings'} />
+    </ScrollView>
+  );
+}
+
+// ─── PLAN PANEL HELPERS ───────────────────────────────────────────────────────
+
+const TIER_META: Record<MerchantTier, { label: string; emoji: string; color: string; softColor: string }> = {
+  starter:    { label: 'Starter',    emoji: '🟢', color: '#22C55E', softColor: '#DCFCE7' },
+  growth:     { label: 'Growth',     emoji: '🔵', color: '#3B82F6', softColor: '#DBEAFE' },
+  enterprise: { label: 'Enterprise', emoji: '⭐', color: '#F59E0B', softColor: '#FEF3C7' },
+};
+
+const CATEGORY_ORDER: Array<FeatureEntitlement['category']> = ['core', 'growth', 'enterprise'];
+const CATEGORY_LABEL: Record<FeatureEntitlement['category'], string> = {
+  core:       'Core — All Plans',
+  growth:     'Growth Plan',
+  enterprise: 'Enterprise Plan',
+};
+const CATEGORY_ICON: Record<string, React.ComponentType<any>> = {
+  core:       Zap,
+  growth:     Star,
+  enterprise: Crown,
+};
+const CATEGORY_COLOR: Record<string, string> = {
+  core:       '#22C55E',
+  growth:     '#3B82F6',
+  enterprise: '#F59E0B',
+};
+
+function FeatureRow({ item }: { item: FeatureEntitlement }) {
+  const c = useThemeColors();
+  return (
+    <View
+      className="flex-row items-start py-3"
+      style={{ borderBottomWidth: 1, borderBottomColor: c.border }}
+    >
+      <View className="mt-0.5 mr-3">
+        {item.isAllowed ? (
+          <View style={{ backgroundColor: '#DCFCE7' }} className="w-5 h-5 rounded-full items-center justify-center">
+            <Check size={11} color="#22C55E" />
+          </View>
+        ) : (
+          <View style={{ backgroundColor: c.surfaceAlt }} className="w-5 h-5 rounded-full items-center justify-center">
+            <Lock size={10} color={c.textTertiary} />
+          </View>
+        )}
+      </View>
+      <View className="flex-1">
+        <Text
+          style={{ color: item.isAllowed ? c.textPrimary : c.textTertiary }}
+          className="text-xs font-semibold mb-0.5"
+        >
+          {item.name}
+        </Text>
+        <Text style={{ color: c.textTertiary }} className="text-[10px] leading-relaxed">
+          {item.description}
+        </Text>
+      </View>
+      {!item.isAllowed && (
+        <View style={{ backgroundColor: c.accentSoft }} className="ml-2 px-2 py-0.5 rounded-full self-start mt-0.5">
+          <Text style={{ color: c.accent }} className="text-[9px] font-bold uppercase">
+            {item.requiredTier}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const UPGRADE_TARGETS: Record<MerchantTier, MerchantTier | null> = {
+  starter:    'growth',
+  growth:     'enterprise',
+  enterprise: null,
+};
+
+/** Panel content for "Subscription & Features" — full entitlement matrix + passive upgrade CTA. */
+export function PlanPanel({ onSave }: { onSave: () => void }) {
+  const c = useThemeColors();
+  const alert = useAlert();
+  const { data: featuresData, isLoading } = useMerchantFeatures();
+  const updateTier = useUpdateSubscriptionTier();
+
+  const currentTier: MerchantTier = featuresData?.currentTier || 'starter';
+  const meta = TIER_META[currentTier];
+  const nextTier = UPGRADE_TARGETS[currentTier];
+  const entitlements = featuresData?.entitlements || [];
+
+  const grouped = CATEGORY_ORDER.reduce<Record<string, FeatureEntitlement[]>>((acc, cat) => {
+    acc[cat] = entitlements.filter((f) => f.category === cat);
+    return acc;
+  }, {} as Record<string, FeatureEntitlement[]>);
+
+  const handleUpgrade = async (tier: MerchantTier) => {
+    try {
+      await updateTier.mutateAsync(tier);
+      alert.success(
+        'Plan Upgraded',
+        `Your account is now on the ${TIER_META[tier].label} plan. New features are unlocked immediately.`,
+      );
+    } catch (err: any) {
+      const msg: string = err?.response?.data?.error || err?.message || 'Could not process upgrade.';
+      alert.error('Upgrade Failed', msg);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 items-center justify-center py-16">
+        <ActivityIndicator color={c.accent} />
+        <Text style={{ color: c.textTertiary }} className="text-xs mt-3">Loading your feature entitlements…</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* ── Current plan badge ── */}
+      <View
+        style={{ backgroundColor: meta.softColor, borderColor: meta.color + '40' }}
+        className="flex-row items-center justify-between p-4 rounded-2xl border mb-5"
+      >
+        <View className="flex-row items-center">
+          <View style={{ backgroundColor: meta.color + '20' }} className="w-10 h-10 rounded-full items-center justify-center mr-3">
+            {currentTier === 'enterprise' ? (
+              <Crown size={18} color={meta.color} />
+            ) : currentTier === 'growth' ? (
+              <Star size={18} color={meta.color} />
+            ) : (
+              <Zap size={18} color={meta.color} />
+            )}
+          </View>
+          <View>
+            <Text style={{ color: meta.color }} className="font-black text-sm">
+              {meta.emoji} {meta.label} Plan
+            </Text>
+            <Text style={{ color: c.textSecondary }} className="text-[10px] mt-0.5">
+              {currentTier === 'enterprise'
+                ? 'Maximum privileges — all features unlocked.'
+                : `Upgrade to unlock ${TIER_META[nextTier!]?.label} features.`}
+            </Text>
+          </View>
+        </View>
+        <View style={{ backgroundColor: meta.color + '15' }} className="px-2.5 py-1 rounded-full">
+          <Text style={{ color: meta.color }} className="text-[10px] font-bold">Active</Text>
+        </View>
+      </View>
+
+      {/* ── Upgrade CTA (passive — no Stripe yet) ── */}
+      {nextTier && (
+        <Pressable
+          onPress={() => handleUpgrade(nextTier)}
+          disabled={updateTier.isPending}
+          style={{ backgroundColor: TIER_META[nextTier].color }}
+          className="flex-row items-center justify-between p-4 rounded-2xl mb-6 active:opacity-80"
+        >
+          <View className="flex-row items-center flex-1">
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.2)' }} className="w-9 h-9 rounded-full items-center justify-center mr-3">
+              {updateTier.isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Sparkles size={16} color="#FFFFFF" />
+              )}
+            </View>
+            <View className="flex-1">
+              <Text className="text-white font-black text-sm">
+                Upgrade to {TIER_META[nextTier].label}
+              </Text>
+              <Text className="text-white/70 text-[10px] mt-0.5">
+                Billing integration coming soon — upgrade is free during beta.
+              </Text>
+            </View>
+          </View>
+          <ChevronRight size={16} color="rgba(255,255,255,0.8)" />
+        </Pressable>
+      )}
+
+      {/* ── Feature matrix grouped by category ── */}
+      {CATEGORY_ORDER.map((cat) => {
+        const items = grouped[cat];
+        if (!items || items.length === 0) return null;
+        const CatIcon = CATEGORY_ICON[cat];
+        const catColor = CATEGORY_COLOR[cat];
+        return (
+          <View key={cat} className="mb-5">
+            <View className="flex-row items-center mb-2">
+              <CatIcon size={12} color={catColor} />
+              <Text style={{ color: catColor }} className="text-[10px] font-black ml-1.5 uppercase tracking-widest">
+                {CATEGORY_LABEL[cat]}
+              </Text>
+            </View>
+            <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="rounded-2xl border overflow-hidden px-4">
+              {items.map((f) => (
+                <FeatureRow key={f.id} item={f} />
+              ))}
+            </View>
+          </View>
+        );
+      })}
+
+      {/* ── Beta caveat footer ── */}
+      <View style={{ backgroundColor: c.surfaceAlt }} className="p-3.5 rounded-xl">
+        <Text style={{ color: c.textTertiary }} className="text-[10px] text-center leading-relaxed">
+          Tier gating is in beta. Feature restrictions are soft — full enforcement activates when Stripe billing is configured. Contact support for enterprise pricing.
+        </Text>
+      </View>
     </ScrollView>
   );
 }
