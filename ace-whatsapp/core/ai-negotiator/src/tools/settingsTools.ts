@@ -193,17 +193,44 @@ export const settingsTools = [
     "type": "function",
     "function": {
       "name": "set_vendor_profile",
-      "description": "Configure the merchant/vendor's profile: owner first name (e.g. 'Jane'), store/business name, bank details (bank name, account number, account name), payout frequency ('instant', 'daily', 'weekly', 'manual'), fee padding model ('customer_padded' or 'vendor_absorbed'), and platform fee percentage.",
+      "description": "Configure the merchant/vendor's complete business profile: owner first name (e.g. 'Jane'), store/business name, registration status (isRegistered, CAC RC number or BN number), business type ('SOLE_PROPRIETOR', 'CORPORATION', 'REGISTERED_BUSINESS_NAME', 'FREELANCER', 'PARTNERSHIP'), taxId/TIN, store category, bio/description, support contact (email & phone), website, physical address (street, city, state), operating hours, return policy, delivery notes, bank details (bank name, account number, account name), payout frequency ('instant', 'daily', 'weekly', 'manual'), fee padding model ('customer_padded' or 'vendor_absorbed'), and platform fee percentage.",
       "parameters": {
         "type": "object",
         "properties": {
-          "ownerFirstName": { "type": "string", "description": "Owner first name to address them by" },
-          "businessName": { "type": "string", "description": "Official business/store name" },
-          "bankName": { "type": "string", "description": "Bank name (e.g. Access Bank, Kuda, GTBank)" },
-          "accountNumber": { "type": "string", "description": "10-digit account number" },
+          "ownerFirstName": { "type": "string", "description": "Owner first name to address them by (e.g. 'Jane')" },
+          "businessName": { "type": "string", "description": "Official business/store name (e.g. 'Jane\'s Fabrics')" },
+          "isRegistered": { "type": "boolean", "description": "Whether the business is legally registered (e.g. with CAC in Nigeria)" },
+          "rcNumber": { "type": "string", "description": "CAC Registration / RC / Business Name number (e.g. 'RC-1928374' or 'BN-829102')" },
+          "businessType": { 
+            "type": "string", 
+            "enum": ["SOLE_PROPRIETOR", "CORPORATION", "REGISTERED_BUSINESS_NAME", "FREELANCER", "PARTNERSHIP"],
+            "description": "Legal structure of business"
+          },
+          "taxId": { "type": "string", "description": "Tax Identification Number (TIN)" },
+          "category": { "type": "string", "description": "Primary industry/category (e.g. 'Fashion & Textiles', 'Electronics')" },
+          "storeDescription": { "type": "string", "description": "Store bio, brand story or value proposition" },
+          "supportEmail": { "type": "string", "description": "Official customer support email" },
+          "supportPhone": { "type": "string", "description": "Dedicated customer support phone line" },
+          "websiteUrl": { "type": "string", "description": "Official website URL" },
+          "physicalAddress": {
+            "type": "object",
+            "properties": {
+              "street": { "type": "string" },
+              "city": { "type": "string" },
+              "state": { "type": "string" },
+              "country": { "type": "string" },
+              "landmark": { "type": "string" }
+            },
+            "description": "Store or dispatch location"
+          },
+          "operatingHours": { "type": "string", "description": "Business schedule (e.g. 'Mon-Sat 8am - 6pm')" },
+          "returnPolicy": { "type": "string", "description": "Customer return/refund policy (e.g. '7-day returns on unworn items')" },
+          "deliveryNotes": { "type": "string", "description": "Dispatch & courier info (e.g. 'Same-day delivery in Lagos via Gokada/Sendbox')" },
+          "bankName": { "type": "string", "description": "Bank name (e.g. Access Bank, Kuda, GTBank, Zenith)" },
+          "accountNumber": { "type": "string", "description": "10-digit NUBAN account number" },
           "accountName": { "type": "string", "description": "Account holder name if known" },
           "payoutFrequency": { "type": "string", "enum": ["instant", "daily", "weekly", "manual"], "description": "Payout schedule" },
-          "feePaddingModel": { "type": "string", "enum": ["customer_padded", "vendor_absorbed"], "description": "Fee model: 'customer_padded' means customer pays VAN + Biblio fees padded on top of item price so vendor receives 100% of price without deduction; 'vendor_absorbed' means fees deducted from payout." },
+          "feePaddingModel": { "type": "string", "enum": ["customer_padded", "vendor_absorbed"], "description": "Fee model: 'customer_padded' (Zero-Deduction Model) or 'vendor_absorbed'" },
           "platformFeePercent": { "type": "number", "description": "Biblio fee percentage (e.g. 3.0 for 3%)" }
         }
       }
@@ -344,12 +371,18 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     return `Action ${'link_social_accounts'} processed successfully (Ref: ${actionId.split('-')[0]}).`;
   },
   set_vendor_profile: async (merchantId: string, args: any) => {
-    const { ownerFirstName, businessName, bankName, accountNumber, accountName, payoutFrequency, feePaddingModel, platformFeePercent } = args;
-    await logger.log(`[ToolHandler:set_vendor_profile] Updating profile for merchant ${merchantId}`, { args });
+    const {
+      ownerFirstName, businessName, isRegistered, rcNumber, businessType, taxId,
+      category, storeDescription, supportEmail, supportPhone, websiteUrl,
+      physicalAddress, operatingHours, returnPolicy, deliveryNotes,
+      bankName, accountNumber, accountName, payoutFrequency,
+      feePaddingModel, platformFeePercent
+    } = args;
+    await logger.log(`[ToolHandler:set_vendor_profile] Updating robust business profile for merchant ${merchantId}`, { args });
 
-    // Fetch existing bank details to merge if partial update
-    const currentRows = await sql<{ bank_details: any; owner_first_name: string; name: string }[]>`
-      SELECT bank_details, owner_first_name, name FROM merchants WHERE id = ${merchantId} LIMIT 1
+    // Fetch existing bank details and address to merge
+    const currentRows = await sql<{ bank_details: any; physical_address: any; owner_first_name: string; name: string }[]>`
+      SELECT bank_details, physical_address, owner_first_name, name FROM merchants WHERE id = ${merchantId} LIMIT 1
     `;
     const currentBank = currentRows[0]?.bank_details || {};
     const updatedBank = {
@@ -358,35 +391,56 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
       accountName: accountName || currentBank.accountName || ""
     };
 
+    const currentAddr = currentRows[0]?.physical_address || {};
+    const updatedAddr = physicalAddress ? { ...currentAddr, ...physicalAddress } : currentAddr;
+
+    const registeredBool = isRegistered !== undefined ? Boolean(isRegistered) : (rcNumber ? true : null);
+
     await sql`
       UPDATE merchants SET
-        owner_first_name = COALESCE(${ownerFirstName || null}, owner_first_name),
-        name = COALESCE(${businessName || null}, name),
-        bank_details = ${JSON.stringify(updatedBank)}::jsonb,
-        payout_frequency = COALESCE(${payoutFrequency || null}, payout_frequency),
-        fee_padding_model = COALESCE(${feePaddingModel || null}, fee_padding_model),
+        owner_first_name     = COALESCE(${ownerFirstName || null}, owner_first_name),
+        name                 = COALESCE(${businessName || null}, name),
+        bank_details         = ${JSON.stringify(updatedBank)}::jsonb,
+        physical_address     = ${JSON.stringify(updatedAddr)}::jsonb,
+        is_registered        = COALESCE(${registeredBool}, is_registered),
+        rc_number            = COALESCE(${rcNumber || null}, rc_number),
+        business_type        = COALESCE(${businessType || null}, business_type),
+        tax_id               = COALESCE(${taxId || null}, tax_id),
+        category             = COALESCE(${category || null}, category),
+        bio                  = COALESCE(${storeDescription || null}, bio),
+        support_email        = COALESCE(${supportEmail || null}, support_email),
+        support_phone        = COALESCE(${supportPhone || null}, support_phone),
+        website_url          = COALESCE(${websiteUrl || null}, website_url),
+        return_policy        = COALESCE(${returnPolicy || null}, return_policy),
+        delivery_notes       = COALESCE(${deliveryNotes || null}, delivery_notes),
+        delivery_info        = COALESCE(${deliveryNotes || null}, delivery_info),
+        payout_frequency     = COALESCE(${payoutFrequency || null}, payout_frequency),
+        fee_padding_model    = COALESCE(${feePaddingModel || null}, fee_padding_model),
         platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
-        updated_at = now()
+        updated_at           = now()
       WHERE id = ${merchantId}
     `;
 
     await sql`
       UPDATE vendors SET
-        owner_first_name = COALESCE(${ownerFirstName || null}, owner_first_name),
-        fee_padding_model = COALESCE(${feePaddingModel || null}, fee_padding_model),
+        owner_first_name     = COALESCE(${ownerFirstName || null}, owner_first_name),
+        is_registered        = COALESCE(${registeredBool}, is_registered),
+        rc_number            = COALESCE(${rcNumber || null}, rc_number),
+        business_type        = COALESCE(${businessType || null}, business_type),
+        fee_padding_model    = COALESCE(${feePaddingModel || null}, fee_padding_model),
         platform_fee_percent = COALESCE(${platformFeePercent !== undefined ? platformFeePercent : null}, platform_fee_percent),
-        updated_at = now()
+        updated_at           = now()
       WHERE merchant_id = ${merchantId}
     `;
 
     const effectiveName = ownerFirstName || currentRows[0]?.owner_first_name || "Merchant";
     const effectiveBiz = businessName || currentRows[0]?.name || "Store";
-    const effectiveFreq = payoutFrequency || "instant";
+    const regLabel = rcNumber ? `Verified (${rcNumber} - ${businessType || 'Registered'})` : registeredBool ? "Registered" : "Sole Proprietor";
     const feeModelDesc = (feePaddingModel || "customer_padded") === "customer_padded"
-      ? "Zero-Deduction Model (customer pays VAN 2% + Biblio fee; you receive 100% of your price)"
-      : "Standard Absorption Model (fees deducted from your payout)";
+      ? "Zero-Deduction Model (customer pays VAN 2% + Biblio fee; vendor receives 100% of price)"
+      : "Standard Absorption Model (fees deducted from payout)";
 
-    return `Profile successfully updated for ${effectiveName} at ${effectiveBiz}!\n• Payout Bank: ${updatedBank.bankName} (${updatedBank.accountNumber || "N/A"})\n• Schedule: ${effectiveFreq}\n• Fee Structure: ${feeModelDesc}`;
+    return `🏛️ Business Profile successfully updated for ${effectiveName} at ${effectiveBiz}!\n• Legal Status: ${regLabel}\n• Payout Bank: ${updatedBank.bankName} (${updatedBank.accountNumber || "N/A"})\n• Schedule: ${payoutFrequency || "instant"}\n• Fee Structure: ${feeModelDesc}${supportPhone ? `\n• Support Line: ${supportPhone}` : ""}${returnPolicy ? `\n• Return Policy: ${returnPolicy}` : ""}`;
   },
   configure_fee_padding: async (merchantId: string, args: { model: string; platformFeePercent?: number }) => {
     const { model, platformFeePercent } = args;

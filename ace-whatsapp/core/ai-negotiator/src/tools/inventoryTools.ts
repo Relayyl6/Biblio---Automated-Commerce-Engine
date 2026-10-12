@@ -368,6 +368,27 @@ export const inventoryTools = [
         "required": ["rawText"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_catalog_semantic",
+      "description": "Perform high-accuracy semantic vector search across the product catalog using natural language descriptions or visual embeddings (CLIP 512-dim). Finds matching items even if exact keywords differ.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language query (e.g. 'shiny blue fabric for wedding', 'unisex white sneakers') or image URL"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of results to return (default: 5)"
+          }
+        },
+        "required": ["query"]
+      }
+    }
   }
 ];
 
@@ -432,26 +453,151 @@ Extract structured JSON strictly with these fields:
       const tagsArr = Array.isArray(extracted.tags) ? extracted.tags : [];
       const sizesArr = Array.isArray(extracted.sizes) ? extracted.sizes : [];
 
-      await sql`
-        INSERT INTO products (
-          merchant_id, sku, name, title, description, detailed_description,
-          price, regular_price, floor, quantity, category, subcategory,
-          images, colors, sizes, custom_specifications, custom_properties, tags,
-          image_url, available, status, updated_at
-        ) VALUES (
-          ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
-          ${extracted.description || rawText}, ${extracted.description || rawText},
-          ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
-          ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
-          ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
-          ${imageUrl || null}, true, 'Active', now()
-        )
-      `;
+      let embeddingStr: string | null = null;
+      try {
+        const { generateEmbedding } = await import("@ace/shared/data-intelligence/embeddings.js");
+        const embeddingText = `${extracted.title} ${extracted.category || ""} ${extracted.subcategory || ""} ${extracted.description || ""} ${tagsArr.join(" ")}`;
+        const vector = await generateEmbedding(imageUrl || embeddingText);
+        if (Array.isArray(vector) && vector.length > 0) {
+          embeddingStr = `[${vector.join(",")}]`;
+        }
+      } catch (embedErr) {
+        await logger.warn("[extract_and_enrich_product] Embedding generation skipped", embedErr);
+      }
 
-      return `✅ Extracted & Cataloged Successfully!\n• Product: ${extracted.title} (SKU: ${sku})\n• Price: ₦${extracted.price.toLocaleString()} (Floor: ₦${Math.round(extracted.floor).toLocaleString()})\n• Stock: ${extracted.stock}\n• Category: ${extracted.category} > ${extracted.subcategory || 'General'}\n• Colors: ${(extracted.colors || []).map((c: any) => c.name).join(', ') || 'N/A'}\n• Specifications: ${(extracted.custom_specifications || []).map((s: any) => `${s.name}: ${s.value}`).join('; ') || 'N/A'}`;
+      if (embeddingStr) {
+        await sql`
+          INSERT INTO products (
+            merchant_id, sku, name, title, description, detailed_description,
+            price, regular_price, floor, quantity, category, subcategory,
+            images, colors, sizes, custom_specifications, custom_properties, tags,
+            image_url, available, status, image_embedding, updated_at
+          ) VALUES (
+            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
+            ${extracted.description || rawText}, ${extracted.description || rawText},
+            ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
+            ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
+            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
+            ${imageUrl || null}, true, 'Active', ${embeddingStr}::vector, now()
+          )
+        `;
+      } else {
+        await sql`
+          INSERT INTO products (
+            merchant_id, sku, name, title, description, detailed_description,
+            price, regular_price, floor, quantity, category, subcategory,
+            images, colors, sizes, custom_specifications, custom_properties, tags,
+            image_url, available, status, updated_at
+          ) VALUES (
+            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
+            ${extracted.description || rawText}, ${extracted.description || rawText},
+            ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
+            ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
+            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
+            ${imageUrl || null}, true, 'Active', now()
+          )
+        `;
+      }
+
+      return `✅ Extracted & Cataloged Successfully!\n• Product: ${extracted.title} (SKU: ${sku})\n• Price: ₦${extracted.price.toLocaleString()} (Floor: ₦${Math.round(extracted.floor).toLocaleString()})\n• Stock: ${extracted.stock}\n• Category: ${extracted.category} > ${extracted.subcategory || 'General'}\n• Colors: ${(extracted.colors || []).map((c: any) => c.name).join(', ') || 'N/A'}\n• Specifications: ${(extracted.custom_specifications || []).map((s: any) => `${s.name}: ${s.value}`).join('; ') || 'N/A'}\n• Vector Search: ${embeddingStr ? '512-dim CLIP Indexed ✨' : 'Standard Index'}`;
     }
 
     return `Extracted Details:\n${JSON.stringify(extracted, null, 2)}`;
+  },
+
+  search_catalog_semantic: async (merchantId: string, args: { query: string; limit?: number }) => {
+    const { query, limit = 5 } = args;
+    await logger.log(`[ToolHandler:search_catalog_semantic] Searching catalog for merchant ${merchantId}`, { query, limit });
+
+    let embeddingStr = "[]";
+    try {
+      const { generateEmbedding } = await import("@ace/shared/data-intelligence/embeddings.js");
+      const vector = await generateEmbedding(query);
+      embeddingStr = `[${vector.join(",")}]`;
+    } catch (err) {
+      await logger.warn("[search_catalog_semantic] Vector generation failed, falling back to text search", err);
+      const like = `%${query}%`;
+      const fallbackRows = await sql<{
+        sku: string;
+        name: string;
+        title: string | null;
+        price: number;
+        floor: number | null;
+        quantity: number | null;
+        category: string | null;
+        subcategory: string | null;
+        image_url: string | null;
+        description: string | null;
+      }[]>`
+        SELECT sku, name, title, price, floor, quantity, category, subcategory, image_url, description
+        FROM products
+        WHERE merchant_id = ${merchantId}::uuid
+          AND deleted_at IS NULL
+          AND (name ILIKE ${like} OR description ILIKE ${like} OR category ILIKE ${like})
+        LIMIT ${limit}
+      `;
+      if (fallbackRows.length === 0) return `No products found matching "${query}".`;
+      return `Found ${fallbackRows.length} matching products (keyword fallback):\n` + fallbackRows.map(r => 
+        `• ${r.title || r.name} (SKU: ${r.sku}) - ₦${Number(r.price).toLocaleString()} [Stock: ${r.quantity ?? 0}] - ${r.category || 'General'}`
+      ).join("\n");
+    }
+
+    const rows = await sql<{
+      sku: string;
+      name: string;
+      title: string | null;
+      price: number;
+      floor: number | null;
+      quantity: number | null;
+      category: string | null;
+      subcategory: string | null;
+      image_url: string | null;
+      description: string | null;
+      distance: number;
+    }[]>`
+      SELECT sku, name, title, price, floor, quantity, category, subcategory, image_url, description,
+             (image_embedding <=> ${embeddingStr}::vector) as distance
+      FROM products
+      WHERE merchant_id = ${merchantId}::uuid
+        AND deleted_at IS NULL
+        AND image_embedding IS NOT NULL
+      ORDER BY distance ASC
+      LIMIT ${limit}
+    `;
+
+    if (rows.length === 0) {
+      const like = `%${query}%`;
+      const fallbackRows = await sql<{
+        sku: string;
+        name: string;
+        title: string | null;
+        price: number;
+        floor: number | null;
+        quantity: number | null;
+        category: string | null;
+        subcategory: string | null;
+        image_url: string | null;
+        description: string | null;
+      }[]>`
+        SELECT sku, name, title, price, floor, quantity, category, subcategory, image_url, description
+        FROM products
+        WHERE merchant_id = ${merchantId}::uuid
+          AND deleted_at IS NULL
+          AND (name ILIKE ${like} OR description ILIKE ${like} OR category ILIKE ${like})
+        LIMIT ${limit}
+      `;
+      if (fallbackRows.length === 0) return `No products found matching "${query}".`;
+      return `Found ${fallbackRows.length} matching products (fallback):\n` + fallbackRows.map(r => 
+        `• ${r.title || r.name} (SKU: ${r.sku}) - ₦${Number(r.price).toLocaleString()} [Stock: ${r.quantity ?? 0}] - ${r.category || 'General'}`
+      ).join("\n");
+    }
+
+    const matches = rows.map((r) => {
+      const similarity = Math.max(0, Math.round((1 - r.distance) * 100));
+      return `• ${r.title || r.name} (SKU: ${r.sku}) - ₦${Number(r.price).toLocaleString()} [Stock: ${r.quantity ?? 0}, Similarity: ${similarity}%]\n  Category: ${r.category || 'General'}${r.subcategory ? ` > ${r.subcategory}` : ''}\n  ${r.description ? `Description: ${r.description.slice(0, 100)}...` : ''}`;
+    });
+
+    return `Found ${rows.length} semantically relevant products:\n\n${matches.join("\n\n")}`;
   },
 
   predict_stockouts: async (merchantId: string, args: any) => {

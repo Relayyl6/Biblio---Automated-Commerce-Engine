@@ -4,7 +4,7 @@ async function runMigration() {
   console.log("==> Running Biblio Augmented Schema Migration...");
 
   // 1. Merchants Table Alterations
-  console.log("1. Updating merchants table...");
+  console.log("1. Updating merchants table with robust business registration & contact fields...");
   await sql`
     ALTER TABLE merchants
     ADD COLUMN IF NOT EXISTS bank_details JSONB DEFAULT '{}',
@@ -13,7 +13,19 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS platform_fee_percent NUMERIC(5, 2) DEFAULT 3.00,
     ADD COLUMN IF NOT EXISTS fee_padding_model VARCHAR(32) DEFAULT 'customer_padded',
     ADD COLUMN IF NOT EXISTS owner_first_name VARCHAR(128) DEFAULT 'Merchant',
-    ADD COLUMN IF NOT EXISTS onboarding_state VARCHAR(32) DEFAULT 'completed'
+    ADD COLUMN IF NOT EXISTS onboarding_state VARCHAR(32) DEFAULT 'completed',
+    ADD COLUMN IF NOT EXISTS is_registered BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS rc_number VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS business_type VARCHAR(64) DEFAULT 'SOLE_PROPRIETOR',
+    ADD COLUMN IF NOT EXISTS tax_id VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS support_email VARCHAR(128),
+    ADD COLUMN IF NOT EXISTS support_phone VARCHAR(32),
+    ADD COLUMN IF NOT EXISTS website_url TEXT,
+    ADD COLUMN IF NOT EXISTS social_links JSONB DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS physical_address JSONB DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS operating_hours JSONB DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS return_policy TEXT,
+    ADD COLUMN IF NOT EXISTS delivery_notes TEXT
   `;
 
   // 2. Vendors Table Alterations
@@ -23,7 +35,10 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS owner_first_name VARCHAR(128) DEFAULT 'Merchant',
     ADD COLUMN IF NOT EXISTS onboarding_state VARCHAR(32) DEFAULT 'completed',
     ADD COLUMN IF NOT EXISTS fee_padding_model VARCHAR(32) DEFAULT 'customer_padded',
-    ADD COLUMN IF NOT EXISTS platform_fee_percent NUMERIC(5, 2) DEFAULT 3.00
+    ADD COLUMN IF NOT EXISTS platform_fee_percent NUMERIC(5, 2) DEFAULT 3.00,
+    ADD COLUMN IF NOT EXISTS is_registered BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS rc_number VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS business_type VARCHAR(64) DEFAULT 'SOLE_PROPRIETOR'
   `;
 
   // 3. Products Table Alterations
