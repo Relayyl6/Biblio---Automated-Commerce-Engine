@@ -82,7 +82,7 @@ export default function SettingsScreen() {
     <View style={{ backgroundColor: c.bg }} className="flex-1">
       <ScreenHeader title="System Brain" variant="bar" />
 
-      <ScrollView className="flex-1 pt-6" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView className="flex-1 pt-3" contentContainerStyle={{ paddingBottom: 100 }}>
         <Section title="Catalog & Pricing Floors" icon={Package} delay={50}>
           <NavigationRow
             title="Manage Inventory & Pricing"

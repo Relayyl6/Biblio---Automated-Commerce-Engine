@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, User, ShoppingBag, ShoppingCart, Search as SearchIcon } from 'lucide-react-native';
 import Animated, { FadeIn, FadeInDown, SlideInRight, SlideOutRight } from 'react-native-reanimated';
 import { useColorScheme } from 'nativewind';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSearchData } from '../src/api/client';
 import { useAuthStore } from '../src/store/authStore';
 import { colors } from '../theme';
@@ -14,6 +15,7 @@ const RECENTS = ['Blessing Ankara', 'Restock gold print', 'Failed payments'];
 
 export default function SearchScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const merchantId = useAuthStore(state => state.merchantId);
@@ -29,8 +31,16 @@ export default function SearchScreen() {
   const hasQuery = debouncedQuery.length >= 2;
 
   return (
-    <Animated.View entering={SlideInRight.springify()} exiting={SlideOutRight} style={{ backgroundColor: c.bg }} className="flex-1 pt-14">
-      <View className="px-4 flex-row items-center mb-6">
+    <Animated.View
+      entering={SlideInRight.springify()}
+      exiting={SlideOutRight}
+      style={{
+        backgroundColor: c.bg,
+        paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6,
+      }}
+      className="flex-1"
+    >
+      <View className="px-4 flex-row items-center mb-3">
         <Pressable onPress={() => router.back()} hitSlop={10} className="p-2 mr-2 active:opacity-60">
           <ArrowLeft size={24} color={c.textPrimary} />
         </Pressable>

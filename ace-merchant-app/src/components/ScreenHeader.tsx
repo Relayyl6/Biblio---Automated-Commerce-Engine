@@ -27,7 +27,7 @@ export function ScreenHeader({ title, subtitle, variant = 'floating', rightActio
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const insets = useSafeAreaInsets();
-  const topPad = Math.max(insets.top, StatusBar.currentHeight || 0) + 12;
+  const topPad = Math.max(insets.top, StatusBar.currentHeight || 0) + 4;
 
   const content = (
     <View className="flex-row items-center justify-between">
@@ -56,11 +56,11 @@ export function ScreenHeader({ title, subtitle, variant = 'floating', rightActio
 
   if (variant === 'bar') {
     return (
-      <View style={{ backgroundColor: c.surface, borderBottomColor: c.border, borderBottomWidth: 1, paddingTop: topPad }} className="pb-4 px-6">
+      <View style={{ backgroundColor: c.surface, borderBottomColor: c.border, borderBottomWidth: 1, paddingTop: topPad }} className="pb-3 px-6">
         {content}
       </View>
     );
   }
 
-  return <View style={{ paddingTop: topPad }} className="px-6 mb-4">{content}</View>;
+  return <View style={{ paddingTop: topPad }} className="px-6 mb-2">{content}</View>;
 }

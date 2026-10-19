@@ -142,11 +142,11 @@ export default function SuppliersScreen() {
           </Pressable>
         }
       />
-      <View className="px-6 mb-4">
+      <View className="px-6 mb-2.5">
         <SearchBar value={searchQuery} onChangeText={setSearchQuery} placeholder="Search suppliers, groups, categories..." variant="pill" />
       </View>
 
-      <ScrollView className="flex-1 pt-4" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView className="flex-1 pt-2" contentContainerStyle={{ paddingBottom: 100 }}>
         <View className="px-6 mb-4 flex-row justify-between items-center">
           <Text style={{ color: c.textSecondary }} className="text-sm font-bold uppercase tracking-wider">
             Connected Sourcing Channels

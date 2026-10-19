@@ -329,7 +329,7 @@ export default function NotificationsScreen() {
     <View style={{ backgroundColor: c.bg }} className="flex-1">
       <ScreenHeader title="Notifications" variant="bar" />
 
-      <ScrollView className="flex-1 px-6 pt-6" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView className="flex-1 px-6 pt-3" contentContainerStyle={{ paddingBottom: 100 }}>
         {permission === 'denied' && (
           <View
             style={{ backgroundColor: '#F59E0B1A', borderColor: '#F59E0B40' }}

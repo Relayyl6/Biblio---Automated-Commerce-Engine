@@ -221,7 +221,7 @@ export default function SupportScreen() {
     <View style={{ backgroundColor: c.bg }} className="flex-1">
       <ScreenHeader title="Help & Support" variant="bar" />
 
-      <ScrollView className="flex-1 pt-6 px-6" contentContainerStyle={{ paddingBottom: 100 }} keyboardShouldPersistTaps="handled">
+      <ScrollView className="flex-1 pt-3 px-6" contentContainerStyle={{ paddingBottom: 100 }} keyboardShouldPersistTaps="handled">
         <View className="items-center justify-center py-6 mb-4">
           <View style={{ backgroundColor: c.accentSoft }} className="w-16 h-16 rounded-full items-center justify-center mb-4">
             <HelpCircle size={32} color={c.accent} />

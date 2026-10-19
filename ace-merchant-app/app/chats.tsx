@@ -65,12 +65,12 @@ export default function ChatsScreen() {
         }
       />
 
-      <View className="px-6 mb-3">
+      <View className="px-6 mb-2">
         <SearchBar value={query} onChangeText={setQuery} placeholder="Search conversations..." variant="pill" />
       </View>
 
       {/* Quick Filter Pills */}
-      <View className="px-6 mb-4 flex-row items-center gap-2">
+      <View className="px-6 mb-2.5 flex-row items-center gap-2">
         <Pressable
           onPress={() => setActiveFilter('all')}
           style={{

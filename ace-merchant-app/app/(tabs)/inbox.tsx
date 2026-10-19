@@ -103,17 +103,17 @@ export default function InboxScreen() {
       <View
         style={{
           backgroundColor: c.bg,
-          paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16,
+          paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6,
         }}
         className="flex-1"
       >
         {/* Header */}
-        <View className="px-6 mb-4 flex-row justify-between items-start">
+        <View className="px-6 mb-2 flex-row justify-between items-start">
           <View className="flex-1 pr-3">
-            <Text style={{ color: c.textPrimary }} className="text-3xl font-bold tracking-tight">
+            <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
               Inbox
             </Text>
-            <Text style={{ color: c.textSecondary }} className="text-xs mt-1">
+            <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
               Swipe right to approve AI drafts • Swipe left to reject
             </Text>
           </View>
@@ -121,21 +121,21 @@ export default function InboxScreen() {
             <Pressable
               onPress={() => router.push('/chats')}
               style={{ backgroundColor: c.surface, borderColor: c.border }}
-              className="w-10 h-10 rounded-full border items-center justify-center mr-2 active:opacity-70"
+              className="w-9 h-9 rounded-full border items-center justify-center mr-2 active:opacity-70"
             >
-              <MessageCircle size={18} color={c.textPrimary} />
+              <MessageCircle size={16} color={c.textPrimary} />
             </Pressable>
             <Pressable
               style={{ backgroundColor: c.textPrimary }}
-              className="w-10 h-10 rounded-full items-center justify-center active:opacity-70"
+              className="w-9 h-9 rounded-full items-center justify-center active:opacity-70"
             >
-              <ListFilter size={18} color={c.bg} />
+              <ListFilter size={16} color={c.bg} />
             </Pressable>
           </View>
         </View>
 
         {/* Scrollable Filter Chips */}
-        <View style={{ height: 44 }} className="mb-3">
+        <View style={{ height: 38 }} className="mb-2">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -151,13 +151,13 @@ export default function InboxScreen() {
                   style={{
                     backgroundColor: isActive ? c.textPrimary : c.surface,
                     borderColor: isActive ? c.textPrimary : c.border,
-                    height: 36,
+                    height: 32,
                   }}
-                  className="px-4 rounded-full border mr-2 active:opacity-80 flex-row items-center justify-center self-center"
+                  className="px-3.5 rounded-full border mr-2 active:opacity-80 flex-row items-center justify-center self-center"
                 >
                   <Text
                     style={{ color: isActive ? c.bg : c.textSecondary }}
-                    className="font-semibold text-sm"
+                    className="font-semibold text-xs"
                   >
                     {f.label}
                   </Text>
@@ -165,7 +165,7 @@ export default function InboxScreen() {
                     style={{
                       backgroundColor: isActive ? (isDark ? '#090A0C' : '#FFFFFF') : c.surfaceAlt,
                     }}
-                    className="ml-2 px-2 py-0.5 rounded-full"
+                    className="ml-1.5 px-1.5 py-0.5 rounded-full"
                   >
                     <Text
                       style={{
@@ -207,8 +207,7 @@ export default function InboxScreen() {
           <ScrollView
             className="flex-1 px-6"
             contentContainerStyle={{
-              flexGrow: 1,
-              justifyContent: 'center',
+              paddingTop: 8,
               alignItems: 'center',
               paddingBottom: Math.max(insets.bottom, 16) + 88,
             }}
@@ -216,37 +215,37 @@ export default function InboxScreen() {
           >
             <View
               style={{ backgroundColor: c.surface, borderColor: c.border }}
-              className="w-full p-8 rounded-[28px] border items-center text-center"
+              className="w-full p-5 rounded-[22px] border items-center text-center"
             >
               <View
                 style={{ backgroundColor: c.successSoft }}
-                className="w-16 h-16 rounded-full items-center justify-center mb-4"
+                className="w-12 h-12 rounded-full items-center justify-center mb-3"
               >
-                <CheckCircle2 size={32} color={c.success} />
+                <CheckCircle2 size={24} color={c.success} />
               </View>
 
-              <Text style={{ color: c.textPrimary }} className="text-xl font-bold text-center mb-2">
+              <Text style={{ color: c.textPrimary }} className="text-lg font-bold text-center mb-1">
                 All caught up!
               </Text>
               <Text
                 style={{ color: c.textSecondary }}
-                className="text-xs text-center leading-relaxed mb-6 px-2"
+                className="text-xs text-center leading-relaxed mb-4 px-1"
               >
                 No pending customer actions or restock orders require your manual review. Biblio AI is handling active chats autonomously.
               </Text>
 
-              <View className="w-full" style={{ gap: 10 }}>
+              <View className="w-full" style={{ gap: 8 }}>
                 <Pressable
                   onPress={handleGenerateSampleCards}
                   disabled={seedMutation.isPending}
                   style={{ backgroundColor: c.accent }}
-                  className="py-3.5 px-4 rounded-2xl items-center justify-center flex-row active:opacity-80"
+                  className="py-3 px-4 rounded-xl items-center justify-center flex-row active:opacity-80"
                 >
                   {seedMutation.isPending ? (
                     <ActivityIndicator color={isDark ? '#090A0C' : '#FFFFFF'} />
                   ) : (
                     <>
-                      <Sparkles size={16} color={isDark ? '#090A0C' : '#FFFFFF'} />
+                      <Sparkles size={15} color={isDark ? '#090A0C' : '#FFFFFF'} />
                       <Text
                         style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
                         className="font-bold text-xs ml-2"
@@ -260,9 +259,9 @@ export default function InboxScreen() {
                 <Pressable
                   onPress={() => router.push('/chats')}
                   style={{ backgroundColor: c.surfaceAlt }}
-                  className="py-3.5 px-4 rounded-2xl items-center justify-center flex-row active:opacity-80"
+                  className="py-3 px-4 rounded-xl items-center justify-center flex-row active:opacity-80"
                 >
-                  <MessageCircle size={16} color={c.textPrimary} />
+                  <MessageCircle size={15} color={c.textPrimary} />
                   <Text style={{ color: c.textPrimary }} className="font-bold text-xs ml-2">
                     Open Live Customer Chats →
                   </Text>

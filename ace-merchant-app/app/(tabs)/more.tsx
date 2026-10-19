@@ -130,15 +130,15 @@ export default function MoreScreen() {
   };
 
   return (
-    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16 }} className="flex-1">
-      <Animated.View entering={FadeInDown.delay(50).springify()} className="px-6 mb-2 flex-row items-center justify-between">
-        <Text style={{ color: c.textPrimary }} className="text-3xl font-bold tracking-tight">
+    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1">
+      <Animated.View entering={FadeInDown.delay(50).springify()} className="px-6 mb-1.5 flex-row items-center justify-between">
+        <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
           Menu
         </Text>
       </Animated.View>
 
       {/* Merchant Profile Header */}
-      <Animated.View entering={FadeInDown.delay(100).springify()} className="px-6 mb-5">
+      <Animated.View entering={FadeInDown.delay(100).springify()} className="px-6 mb-3">
         <Pressable
           onPress={() => router.push('/settings')}
           style={{ backgroundColor: c.surface, borderColor: c.border }}

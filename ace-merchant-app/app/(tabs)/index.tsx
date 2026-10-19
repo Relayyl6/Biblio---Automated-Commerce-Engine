@@ -30,8 +30,8 @@ function Skeleton({ h, w, radius = 16, c }: { h: number; w: string | number; rad
 function PulseSkeleton({ c }: { c: typeof colors.light }) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16 }} className="flex-1 px-6">
-      <View className="flex-row justify-between items-center mb-8">
+    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1 px-6">
+      <View className="flex-row justify-between items-center mb-4">
         <Skeleton h={28} w={120} c={c} />
         <Skeleton h={40} w={40} radius={20} c={c} />
       </View>
@@ -62,12 +62,12 @@ export default function PulseScreen() {
 
   return (
     <ScrollView
-      style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 16 }}
+      style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }}
       className="flex-1"
       contentContainerStyle={{ paddingBottom: 140 }}
       showsVerticalScrollIndicator={false}
     >
-      <View className="px-6 flex-row justify-between items-center mb-6">
+      <View className="px-6 flex-row justify-between items-center mb-3">
         <View>
           <Text style={{ color: c.textSecondary }} className="text-xs font-semibold uppercase tracking-wider">
             Good morning
