@@ -134,6 +134,24 @@ async function runMigration() {
     )
   `;
 
+  // 9. Persistent WhatsApp Baileys Auth Session Storage in PostgreSQL
+  console.log("9. Ensuring vendors.auth_creds and vendor_baileys_keys exist in DB...");
+  await sql`
+    ALTER TABLE vendors
+    ADD COLUMN IF NOT EXISTS auth_creds TEXT
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS vendor_baileys_keys (
+      vendor_id UUID NOT NULL,
+      key_type VARCHAR(64) NOT NULL,
+      key_id VARCHAR(128) NOT NULL,
+      key_data TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (vendor_id, key_type, key_id)
+    )
+  `;
+
   console.log("✅ Biblio Augmented Schema Migration successfully completed!");
   process.exit(0);
 }

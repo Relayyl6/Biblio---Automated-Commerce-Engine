@@ -76,6 +76,29 @@ export const useDeleteProduct = () => {
   });
 };
 
+export const useUpdateProduct = () => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async ({
+      sku,
+      ...data
+    }: {
+      sku: string;
+      name?: string;
+      price?: number;
+      stock?: number;
+      category?: string;
+      imageUrl?: string;
+      active?: boolean;
+    }) => {
+      const res = await api.patch(`/merchants/${merchantId}/products/${sku}`, data);
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products', merchantId] }),
+  });
+};
+
 export const useSyncWhatsAppCatalog = () => {
   const queryClient = useQueryClient();
   const merchantId = useAuthStore((state) => state.merchantId);
@@ -631,6 +654,13 @@ export const useUpdateSubscriptionTier = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (tier: MerchantTier) => {
+      if (tier === 'growth' || tier === 'enterprise') {
+        const res = await api.post(`/merchants/${merchantId}/billing/upgrade`, {
+          targetTier: tier,
+          paymentMethod: 'admin_grant',
+        });
+        return res.data;
+      }
       const res = await api.patch(`/merchants/${merchantId}`, { subscriptionTier: tier });
       return res.data;
     },
@@ -666,6 +696,266 @@ export const useMerchantFeatures = () => {
     enabled: !!merchantId,
   });
 };
+
+// --- BANK ACCOUNT ONBOARDING (PAYSTACK NUBAN ESCROW PAYOUTS) ---
+export const useUpdateBankAccount = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      accountNumber: string;
+      bankCode: string;
+      accountName: string;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/bank-account`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchant', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['finance', merchantId] });
+    },
+  });
+};
+
+// --- PRICING RULES (NEGOTIATION AUTHORITY) ---
+export interface PricingRulesInput {
+  basePrice?: number;
+  absoluteFloor: number;
+  maxDiscountByTier?: Record<string, number>;
+  maxBundleValueAddByTier?: Record<string, number>;
+  futureCreditCapByTier?: Record<string, number>;
+}
+
+export const useUpdatePricingRules = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: PricingRulesInput) => {
+      const res = await api.put(`/merchants/${merchantId}/pricing-rules`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchant', merchantId] });
+    },
+  });
+};
+
+// --- PLATFORM MASTER CREDENTIALS (ADMIN CONTROL PLANE) ---
+export interface AdminPlatformCredential {
+  provider: string;
+  maskedKey: string;
+  isActive: boolean;
+  description: string | null;
+  updatedAt: string | null;
+}
+
+export const useAdminPlatformCredentials = () => {
+  return useQuery<{ credentials: AdminPlatformCredential[] }>({
+    queryKey: ['adminPlatformCredentials'],
+    queryFn: async () => {
+      const res = await api.get('/admin/platform-credentials');
+      return res.data;
+    },
+  });
+};
+
+export const useUpdateAdminPlatformCredential = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      provider: string;
+      apiKey: string;
+      secretKey?: string;
+      description?: string;
+    }) => {
+      const res = await api.patch('/admin/platform-credentials', data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['adminPlatformCredentials'] });
+    },
+  });
+};
+
+// --- ADMIN TELEMETRY FINANCIALS (GMV, ESCROW, AI COST ATTRIBUTION) ---
+export const useAdminTelemetryFinancials = () => {
+  return useQuery({
+    queryKey: ['adminTelemetryFinancials'],
+    queryFn: async () => {
+      const res = await api.get('/admin/telemetry/financials');
+      return res.data;
+    },
+  });
+};
+
+// --- VENDOR & BAILEYS WHATSAPP SESSION STATUS ---
+export interface VendorStatusData {
+  vendorId: string;
+  businessLineNumber: string | null;
+  dbStatus: string;
+  connected?: boolean;
+  state?: string;
+  [key: string]: any;
+}
+
+export const useVendorStatus = (vendorId?: string) => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const targetId = vendorId || merchantId;
+  return useQuery<VendorStatusData>({
+    queryKey: ['vendorStatus', targetId],
+    queryFn: async () => {
+      const res = await api.get(`/vendors/${targetId}/status`);
+      return res.data;
+    },
+    enabled: !!targetId,
+    refetchInterval: 5000,
+  });
+};
+
+export const useVendors = () => {
+  return useQuery({
+    queryKey: ['vendors'],
+    queryFn: async () => {
+      const res = await api.get('/vendors');
+      return res.data;
+    },
+  });
+};
+
+export const useCreateVendor = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      merchantId: string;
+      personalNumber: string;
+      autoStatusEnabled?: boolean;
+      postingFrequencyHours?: number;
+      approveBeforePost?: boolean;
+    }) => {
+      const res = await api.post('/vendors', data);
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vendors'] }),
+  });
+};
+
+export const useUpdateVendorSettings = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      vendorId,
+      ...settings
+    }: {
+      vendorId: string;
+      autoStatusEnabled?: boolean;
+      postingFrequencyHours?: number;
+      approveBeforePost?: boolean;
+      statusStrategy?: string;
+      marginWeight?: number;
+      velocityWeight?: number;
+    }) => {
+      const res = await api.patch(`/vendors/${vendorId}/settings`, settings);
+      return res.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['vendorStatus', variables.vendorId] });
+      queryClient.invalidateQueries({ queryKey: ['statusSettings'] });
+    },
+  });
+};
+
+export const useVendorQueue = (vendorId?: string) => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const targetId = vendorId || merchantId;
+  return useQuery({
+    queryKey: ['vendorQueue', targetId],
+    queryFn: async () => {
+      const res = await api.get(`/vendors/${targetId}/queue`);
+      return res.data;
+    },
+    enabled: !!targetId,
+  });
+};
+
+export const useApproveVendorQueueItem = (vendorId?: string) => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const targetId = vendorId || merchantId;
+  return useMutation({
+    mutationFn: async (queueId: string) => {
+      const res = await api.post(`/vendors/${targetId}/queue/${queueId}/approve`);
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vendorQueue', targetId] }),
+  });
+};
+
+// --- CUSTOMER IDENTITY & RELATIONSHIP LINK ---
+export const useLinkCustomer = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (customerId: string) => {
+      const res = await api.post(`/merchants/${merchantId}/customers`, { customerId });
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers', merchantId] }),
+  });
+};
+
+// --- AUTHENTICATION & LOGIN MUTATIONS ---
+export const useMerchantLogin = () => {
+  return useMutation({
+    mutationFn: async (phone: string) => {
+      const res = await api.post('/auth/merchant/login', { phone });
+      return res.data;
+    },
+  });
+};
+
+export const useMerchantVerifyOtp = () => {
+  return useMutation({
+    mutationFn: async ({ phone, code }: { phone: string; code: string }) => {
+      const res = await api.post('/auth/merchant/verify', { phone, code });
+      return res.data;
+    },
+  });
+};
+
+export const usePasswordLogin = () => {
+  return useMutation({
+    mutationFn: async ({ phone, password }: { phone: string; password: string }) => {
+      const res = await api.post('/auth/login', { phone, password });
+      return res.data;
+    },
+  });
+};
+
+// --- SYSTEM HEALTH & ADMIN TOKENS ---
+export const useHealthCheck = () => {
+  return useQuery({
+    queryKey: ['health'],
+    queryFn: async () => {
+      const res = await api.get('/health');
+      return res.data;
+    },
+  });
+};
+
+export const useIssueAdminToken = () => {
+  return useMutation({
+    mutationFn: async ({ merchantId, role }: { merchantId: string; role?: 'merchant' | 'admin' }) => {
+      const res = await api.post('/auth/token', { merchantId, role });
+      return res.data;
+    },
+  });
+};
+
+export const getGoogleOAuthUrl = (merchantId: string) => {
+  return `${api.defaults.baseURL}/oauth/google?merchantId=${encodeURIComponent(merchantId)}`;
+};
+
+
 
 
 

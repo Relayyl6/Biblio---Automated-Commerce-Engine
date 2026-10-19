@@ -17,6 +17,8 @@ import {
   useUpdateMerchantIntegrations,
   useUpdateSubscriptionTier,
   useMerchantFeatures,
+  useUpdateBankAccount,
+  useVendorStatus,
   type FeatureEntitlement,
   type MerchantTier,
 } from '../api/client';
@@ -372,18 +374,44 @@ export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const alert = useAlert();
   const [connected, setConnected] = useState<'paystack' | 'providus'>('paystack');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [bankCode, setBankCode] = useState('058'); // 058 GTBank default
+  const [accountName, setAccountName] = useState('');
+  const updateBankAccount = useUpdateBankAccount();
 
   useEffect(() => {
     (async () => {
       const saved = await AsyncStorage.getItem('ledger_provider');
       if (saved === 'providus' || saved === 'paystack') setConnected(saved);
+      const savedAcc = await AsyncStorage.getItem('ledger_acc_num');
+      const savedBank = await AsyncStorage.getItem('ledger_bank_code');
+      const savedName = await AsyncStorage.getItem('ledger_acc_name');
+      if (savedAcc) setAccountNumber(savedAcc);
+      if (savedBank) setBankCode(savedBank);
+      if (savedName) setAccountName(savedName);
     })();
   }, []);
 
   const handleSave = async () => {
-    await AsyncStorage.setItem('ledger_provider', connected);
-    alert.success('Provider Connected', `Real-time payment virtual accounts activated via ${connected === 'providus' ? 'Providus Bank' : 'Paystack'}.`);
-    onSave();
+    try {
+      await AsyncStorage.setItem('ledger_provider', connected);
+      if (accountNumber.trim() && accountName.trim()) {
+        await updateBankAccount.mutateAsync({
+          accountNumber: accountNumber.trim(),
+          bankCode: bankCode.trim() || '058',
+          accountName: accountName.trim(),
+        });
+        await AsyncStorage.setItem('ledger_acc_num', accountNumber.trim());
+        await AsyncStorage.setItem('ledger_bank_code', bankCode.trim() || '058');
+        await AsyncStorage.setItem('ledger_acc_name', accountName.trim());
+        alert.success('Bank & Provider Saved', `Real-time virtual accounts activated via ${connected === 'providus' ? 'Providus Bank' : 'Paystack'} and Paystack settlement recipient verified.`);
+      } else {
+        alert.success('Provider Connected', `Real-time payment virtual accounts activated via ${connected === 'providus' ? 'Providus Bank' : 'Paystack'}.`);
+      }
+      onSave();
+    } catch (err: any) {
+      alert.error('Bank Setup Failed', err?.response?.data?.error || err.message || 'Could not verify bank account with Paystack.');
+    }
   };
 
   const ProviderRow = ({ id, name }: { id: 'paystack' | 'providus'; name: string }) => {
@@ -417,14 +445,46 @@ export function LedgerWebhooksPanel({ onSave }: { onSave: () => void }) {
   };
 
   return (
-    <View>
-      <Text style={{ color: c.textTertiary }} className="text-xs mb-5 leading-relaxed">
-        Connect a provider to generate real-time virtual accounts and auto-reconcile incoming transfers.
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <Text style={{ color: c.textTertiary }} className="text-xs mb-4 leading-relaxed">
+        Connect a provider to generate real-time virtual accounts and auto-reconcile incoming customer transfers.
       </Text>
       <ProviderRow id="paystack" name="Paystack" />
       <ProviderRow id="providus" name="Providus Bank" />
-      <PanelSaveButton onPress={handleSave} label="Confirm connection" />
-    </View>
+
+      <Text style={{ color: c.textPrimary }} className="font-bold text-sm mt-3 mb-1">
+        Escrow Settlement Bank Account
+      </Text>
+      <Text style={{ color: c.textTertiary }} className="text-xs mb-3">
+        Where escrow balances are automatically swept once deliveries are confirmed.
+      </Text>
+
+      <PanelField
+        label="NUBAN Account Number"
+        value={accountNumber}
+        onChangeText={setAccountNumber}
+        placeholder="0123456789"
+        helper="10-digit Nigerian bank account number."
+      />
+
+      <PanelField
+        label="Bank Code"
+        value={bankCode}
+        onChangeText={setBankCode}
+        placeholder="058 (GTBank) or 011, 057, 033..."
+        helper="CBN 3-digit bank code (e.g. 058 for GTBank, 011 for First Bank, 057 for Zenith)."
+      />
+
+      <PanelField
+        label="Account Name"
+        value={accountName}
+        onChangeText={setAccountName}
+        placeholder="e.g. Adeola Johnson Ventures"
+        helper="Exact name registered with your bank."
+      />
+
+      <PanelSaveButton onPress={handleSave} isLoading={updateBankAccount.isPending} label="Save Provider & Bank Account" />
+    </ScrollView>
   );
 }
 
@@ -436,11 +496,14 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const updateConfig = useUpdateMerchantConfig();
   const { data: integrations } = useMerchantIntegrations();
   const updateIntegrations = useUpdateMerchantIntegrations();
+  const { data: statusSettings } = useStatusSettings();
+  const { data: vendorStatus } = useVendorStatus();
 
   const [storeName, setStoreName] = useState('');
   const [address, setAddress] = useState('');
   const [supportsPickup, setSupportsPickup] = useState(true);
-  const metaConnected = Boolean(config?.whatsapp_catalog_id || config?.phone_number_id);
+  const companionConnected = statusSettings?.settings?.session_status === 'connected' || vendorStatus?.dbStatus === 'connected';
+  const metaConnected = Boolean(config?.whatsapp_catalog_id || config?.phone_number_id || companionConnected);
 
   useEffect(() => {
     if (config) {
@@ -484,13 +547,19 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   return (
     <View>
       <View className="flex-row items-center justify-between mb-5 p-4 rounded-2xl" style={{ backgroundColor: c.surfaceAlt }}>
-        <View className="flex-row items-center">
+        <View className="flex-row items-center flex-1 mr-2">
           <Building2 size={18} color={c.textSecondary} />
-          <Text style={{ color: c.textPrimary }} className="font-semibold text-sm ml-2">
-            Meta WhatsApp API
-          </Text>
+          <View className="ml-2.5">
+            <Text style={{ color: c.textPrimary }} className="font-semibold text-sm">
+              WhatsApp Integration
+            </Text>
+            <Text style={{ color: c.textTertiary }} className="text-[10px]">
+              {companionConnected ? '24/7 Persistent Daemon Active' : 'Meta API / Companion Device'}
+            </Text>
+          </View>
         </View>
-        <View style={{ backgroundColor: metaConnected ? c.successSoft : c.dangerSoft }} className="px-2.5 py-1 rounded-full">
+        <View style={{ backgroundColor: metaConnected ? c.successSoft : c.dangerSoft }} className="px-2.5 py-1 rounded-full flex-row items-center">
+          {metaConnected && <View className="w-1.5 h-1.5 rounded-full mr-1.5" style={{ backgroundColor: c.success }} />}
           <Text style={{ color: metaConnected ? c.success : c.danger }} className="text-xs font-bold">
             {metaConnected ? 'Connected' : 'Ready'}
           </Text>

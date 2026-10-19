@@ -26,6 +26,7 @@ import { ConfirmDialog } from '../src/components/ConfirmDialog';
 import {
   useProducts,
   useAddProduct,
+  useUpdateProduct,
   useDeleteProduct,
   useSyncWhatsAppCatalog,
 } from '../src/api/client';
@@ -68,6 +69,7 @@ export default function CRMScreen() {
 
   const { data: inventory, isLoading } = useProducts();
   const addMutation = useAddProduct();
+  const updateMutation = useUpdateProduct();
   const deleteMutation = useDeleteProduct();
   const syncMutation = useSyncWhatsAppCatalog();
 
@@ -115,15 +117,25 @@ export default function CRMScreen() {
     }
 
     try {
-      await addMutation.mutateAsync({
-        sku: form.sku || `SKU-${Date.now().toString().slice(-6)}`,
-        name: form.name.trim(),
-        price: numPrice,
-        floor: form.floor ? Number(form.floor) : numPrice * 0.85,
-        stock: Number(form.stock) || 0,
-        category: form.category.trim() || 'General',
-        description: form.description.trim() || undefined,
-      });
+      if (editingSku) {
+        await updateMutation.mutateAsync({
+          sku: editingSku,
+          name: form.name.trim(),
+          price: numPrice,
+          stock: Number(form.stock) || 0,
+          category: form.category.trim() || 'General',
+        });
+      } else {
+        await addMutation.mutateAsync({
+          sku: form.sku || `SKU-${Date.now().toString().slice(-6)}`,
+          name: form.name.trim(),
+          price: numPrice,
+          floor: form.floor ? Number(form.floor) : numPrice * 0.85,
+          stock: Number(form.stock) || 0,
+          category: form.category.trim() || 'General',
+          description: form.description.trim() || undefined,
+        });
+      }
       setPanelVisible(false);
       setForm(EMPTY_FORM);
       alert.success('Product Saved', `"${form.name.trim()}" has been saved to your catalog.`);

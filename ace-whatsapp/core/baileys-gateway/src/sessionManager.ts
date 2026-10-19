@@ -48,65 +48,165 @@ const pendingPairingRestart = new Set<string>();
 // creds object in Redis and the post-515 reconnect sees creds as unregistered.
 const credsCache = new Map<string, AuthenticationCreds>();
 
-// ─── Redis-backed Auth State ─────────────────────────────────────────────────
-// Replaces useMultiFileAuthState for production. Session survives restarts.
+// ─── Dual-Tier Redis + PostgreSQL Durable Auth State ─────────────────────────
+// Persists auth creds and Signal cryptographic keys to both Redis (L1 fast cache)
+// and PostgreSQL Neon DB (L2 durable storage). The vendor's WhatsApp session
+// survives server restarts, Redis flushes, and mobile app closures seamlessly.
 
 async function loadCredsFromRedis(vendorId: string): Promise<AuthenticationCreds | undefined> {
-  const raw = await redis.get(`baileys:creds:${vendorId}`);
-  if (!raw) return undefined;
+  // 1. Try Redis fast cache first
   try {
-    return JSON.parse(raw, BufferJSON.reviver) as AuthenticationCreds;
-  } catch {
-    // Corrupted creds — return undefined so a fresh QR is triggered
-    return undefined;
+    const raw = await redis.get(`baileys:creds:${vendorId}`);
+    if (raw) {
+      try {
+        return JSON.parse(raw, BufferJSON.reviver) as AuthenticationCreds;
+      } catch {
+        // Corrupted in Redis, fall through to PostgreSQL
+      }
+    }
+  } catch (err) {
+    logger.warn({ err, vendorId }, "[SessionManager] Redis read failed, falling back to PostgreSQL");
   }
+
+  // 2. Fallback to durable PostgreSQL storage
+  try {
+    const rows = await sql<{ auth_creds: string | null }[]>`
+      SELECT auth_creds FROM vendors WHERE id = ${vendorId}::uuid LIMIT 1
+    `;
+    if (rows[0]?.auth_creds) {
+      const parsed = JSON.parse(rows[0].auth_creds, BufferJSON.reviver) as AuthenticationCreds;
+      // Re-hydrate Redis cache
+      await redis.setex(
+        `baileys:creds:${vendorId}`,
+        60 * 60 * 24 * 30,
+        rows[0].auth_creds
+      ).catch(() => {});
+      logger.info({ vendorId }, "[SessionManager] Successfully re-hydrated WhatsApp creds from PostgreSQL");
+      return parsed;
+    }
+  } catch (err) {
+    logger.warn({ err, vendorId }, "[SessionManager] Failed to load WhatsApp creds from PostgreSQL");
+  }
+
+  return undefined;
 }
 
 async function saveCredsToRedis(vendorId: string, creds: AuthenticationCreds): Promise<void> {
-  // 30-day TTL — a session inactive longer than this should be re-paired anyway
+  const serialized = JSON.stringify(creds, BufferJSON.replacer);
+
+  // 1. Write to Redis (30-day TTL)
   await redis.setex(
     `baileys:creds:${vendorId}`,
     60 * 60 * 24 * 30,
-    JSON.stringify(creds, BufferJSON.replacer)
-  );
+    serialized
+  ).catch(err => logger.warn({ err, vendorId }, "[SessionManager] Redis creds write failed"));
+
+  // 2. Write to PostgreSQL durable storage
+  await sql`
+    UPDATE vendors
+    SET auth_creds = ${serialized}, updated_at = now()
+    WHERE id = ${vendorId}::uuid
+  `.catch(err => logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL creds write failed"));
 }
 
 function buildKeyStore(vendorId: string) {
   return {
     async get(type: string, ids: string[]): Promise<Record<string, unknown>> {
       const results: Record<string, unknown> = {};
-      // Batch fetch from Redis using a pipeline
-      const pipe = redis.pipeline();
-      for (const id of ids) {
-        pipe.get(`baileys:keys:${vendorId}:${type}:${id}`);
-      }
-      const responses = await pipe.exec();
-      for (let i = 0; i < ids.length; i++) {
-        const raw = responses?.[i]?.[1] as string | null;
-        if (raw) {
-          try {
-            results[ids[i]] = JSON.parse(raw, BufferJSON.reviver);
-          } catch {
-            // Corrupted key entry — skip it; Baileys will re-derive
+      const missingIds: string[] = [];
+
+      // 1. Batch fetch from Redis using a pipeline
+      try {
+        const pipe = redis.pipeline();
+        for (const id of ids) {
+          pipe.get(`baileys:keys:${vendorId}:${type}:${id}`);
+        }
+        const responses = await pipe.exec();
+        for (let i = 0; i < ids.length; i++) {
+          const raw = responses?.[i]?.[1] as string | null;
+          if (raw) {
+            try {
+              results[ids[i]] = JSON.parse(raw, BufferJSON.reviver);
+            } catch {
+              missingIds.push(ids[i]);
+            }
+          } else {
+            missingIds.push(ids[i]);
           }
         }
+      } catch {
+        missingIds.push(...ids);
       }
+
+      // 2. Fallback to PostgreSQL for any missing keys
+      if (missingIds.length > 0) {
+        try {
+          const dbRows = await sql<{ key_id: string; key_data: string }[]>`
+            SELECT key_id, key_data FROM vendor_baileys_keys
+            WHERE vendor_id = ${vendorId}::uuid AND key_type = ${type} AND key_id = ANY(${missingIds})
+          `;
+          for (const row of dbRows) {
+            try {
+              const val = JSON.parse(row.key_data, BufferJSON.reviver);
+              results[row.key_id] = val;
+              // Re-hydrate Redis cache
+              redis.setex(
+                `baileys:keys:${vendorId}:${type}:${row.key_id}`,
+                60 * 60 * 24 * 30,
+                row.key_data
+              ).catch(() => {});
+            } catch {}
+          }
+        } catch (err) {
+          logger.warn({ err, vendorId, type }, "[SessionManager] PostgreSQL key fetch failed");
+        }
+      }
+
       return results;
     },
 
     async set(data: Record<string, Record<string, unknown>>): Promise<void> {
-      const pipe = redis.pipeline();
-      for (const [type, entries] of Object.entries(data)) {
-        for (const [id, value] of Object.entries(entries)) {
-          const key = `baileys:keys:${vendorId}:${type}:${id}`;
-          if (value == null) {
-            pipe.del(key);
-          } else {
-            pipe.setex(key, 60 * 60 * 24 * 30, JSON.stringify(value, BufferJSON.replacer));
+      // 1. Write to Redis
+      try {
+        const pipe = redis.pipeline();
+        for (const [type, entries] of Object.entries(data)) {
+          for (const [id, value] of Object.entries(entries)) {
+            const key = `baileys:keys:${vendorId}:${type}:${id}`;
+            if (value == null) {
+              pipe.del(key);
+            } else {
+              pipe.setex(key, 60 * 60 * 24 * 30, JSON.stringify(value, BufferJSON.replacer));
+            }
           }
         }
+        await pipe.exec();
+      } catch (err) {
+        logger.warn({ err, vendorId }, "[SessionManager] Redis key pipeline failed");
       }
-      await pipe.exec();
+
+      // 2. Persist to PostgreSQL durable storage
+      try {
+        for (const [type, entries] of Object.entries(data)) {
+          for (const [id, value] of Object.entries(entries)) {
+            if (value == null) {
+              await sql`
+                DELETE FROM vendor_baileys_keys
+                WHERE vendor_id = ${vendorId}::uuid AND key_type = ${type} AND key_id = ${id}
+              `.catch(() => {});
+            } else {
+              const serialized = JSON.stringify(value, BufferJSON.replacer);
+              await sql`
+                INSERT INTO vendor_baileys_keys (vendor_id, key_type, key_id, key_data, updated_at)
+                VALUES (${vendorId}::uuid, ${type}, ${id}, ${serialized}, now())
+                ON CONFLICT (vendor_id, key_type, key_id)
+                DO UPDATE SET key_data = ${serialized}, updated_at = now()
+              `.catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL key write failed");
+      }
     },
   };
 }

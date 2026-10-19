@@ -16,6 +16,8 @@ import {
   Sparkles,
   CheckCircle2,
   Bot,
+  ShieldCheck,
+  RefreshCw,
 } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,7 +25,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../theme';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
-import { usePairWhatsApp, useMerchantConfig } from '../../src/api/client';
+import { usePairWhatsApp, useMerchantConfig, useStatusSettings, useVendorStatus } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/authStore';
 import { useAlert } from '../../src/store/alertStore';
 
@@ -89,11 +91,24 @@ export default function MoreScreen() {
   const alert = useAlert();
   const logout = useAuthStore(state => state.logout);
   const { data: merchantConfig } = useMerchantConfig();
+  const { data: statusSettings } = useStatusSettings();
+  const { data: vendorStatus } = useVendorStatus();
   
   const [showPairing, setShowPairing] = useState(false);
   const [phoneToPair, setPhoneToPair] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const pairMutation = usePairWhatsApp();
+
+  const isWhatsAppConnected =
+    statusSettings?.settings?.session_status === 'connected' ||
+    vendorStatus?.dbStatus === 'connected' ||
+    vendorStatus?.connected === true ||
+    Boolean(merchantConfig?.phone_number_id);
+
+  const connectedPhoneNumber =
+    vendorStatus?.businessLineNumber ||
+    statusSettings?.settings?.business_line_number ||
+    merchantConfig?.phone_number_id;
 
   const storeName = merchantConfig?.name || 'Your Store';
   const storeDialect = merchantConfig?.dialect ? `${merchantConfig.dialect.charAt(0).toUpperCase() + merchantConfig.dialect.slice(1)} Pidgin` : 'Mixed Pidgin';
@@ -176,31 +191,77 @@ export default function MoreScreen() {
         <Animated.View entering={FadeInDown.delay(115).springify()} className="mb-4">
           <Pressable
             onPress={() => setShowPairing(!showPairing)}
-            style={{ backgroundColor: '#22C55E1A', borderColor: '#22C55E33' }}
+            style={{ backgroundColor: isWhatsAppConnected ? '#22C55E12' : '#22C55E1A', borderColor: '#22C55E33' }}
             className="p-4 rounded-3xl border active:opacity-70"
           >
             <View className="flex-row items-center">
               <View className="flex-1">
-                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
-                  WhatsApp Web Linking
-                </Text>
+                <View className="flex-row items-center">
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm mr-2">
+                    WhatsApp Companion Linking
+                  </Text>
+                  {isWhatsAppConnected && <ShieldCheck size={14} color="#22C55E" />}
+                </View>
                 <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-                  Link Biblo as a companion device
+                  {isWhatsAppConnected
+                    ? `Linked: +${connectedPhoneNumber || 'Active'} • 24/7 background session`
+                    : 'Link Biblo as a companion device'}
                 </Text>
               </View>
               {!showPairing && (
-                <View style={{ backgroundColor: '#22C55E' }} className="px-3 py-1.5 rounded-full">
-                  <Text className="text-white font-bold text-xs">Connect</Text>
+                <View
+                  style={{
+                    backgroundColor: isWhatsAppConnected ? '#22C55E22' : '#22C55E',
+                    borderColor: isWhatsAppConnected ? '#22C55E' : 'transparent',
+                    borderWidth: isWhatsAppConnected ? 1 : 0,
+                  }}
+                  className="px-3 py-1.5 rounded-full flex-row items-center"
+                >
+                  {isWhatsAppConnected && (
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E', marginRight: 5 }} />
+                  )}
+                  <Text
+                    style={{ color: isWhatsAppConnected ? '#22C55E' : '#FFFFFF' }}
+                    className="font-bold text-xs"
+                  >
+                    {isWhatsAppConnected ? 'Live & Persistent' : 'Connect'}
+                  </Text>
                 </View>
               )}
             </View>
 
             {showPairing && (
               <View className="mt-4 pt-4 border-t" style={{ borderColor: '#22C55E33' }}>
+                {isWhatsAppConnected && (
+                  <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="p-3.5 rounded-2xl border mb-3">
+                    <View className="flex-row items-center justify-between mb-1.5">
+                      <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
+                        Persistent Background Session
+                      </Text>
+                      <View className="flex-row items-center">
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E', marginRight: 4 }} />
+                        <Text style={{ color: '#22C55E' }} className="font-bold text-[10px] uppercase">
+                          Durable (PostgreSQL)
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed">
+                      Your WhatsApp session is stored in PostgreSQL and managed 24/7 by the Baileys server daemon. Exiting or closing the mobile app will not terminate customer negotiations or incoming order alerts.
+                    </Text>
+                    {connectedPhoneNumber && (
+                      <Text style={{ color: c.accent }} className="font-bold text-xs mt-2">
+                        Active WhatsApp Line: +{connectedPhoneNumber}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
                 {!pairingCode ? (
                   <>
                     <Text style={{ color: c.textSecondary }} className="text-xs mb-2">
-                      Enter the phone number active on your WhatsApp (e.g. 2348012345678):
+                      {isWhatsAppConnected
+                        ? 'Want to switch or re-pair another WhatsApp number? Enter it below:'
+                        : 'Enter the phone number active on your WhatsApp (e.g. 2348012345678):'}
                     </Text>
                     <TextInput
                       style={{ backgroundColor: c.surface, color: c.textPrimary, borderColor: c.border }}
@@ -220,7 +281,9 @@ export default function MoreScreen() {
                       {pairMutation.isPending ? (
                         <ActivityIndicator color="white" size="small" />
                       ) : (
-                        <Text className="text-white font-bold">Get Pairing Code</Text>
+                        <Text className="text-white font-bold">
+                          {isWhatsAppConnected ? 'Generate Re-Pairing Code' : 'Get Pairing Code'}
+                        </Text>
                       )}
                     </Pressable>
                     {pairMutation.isError && (
@@ -238,7 +301,7 @@ export default function MoreScreen() {
                       </Text>
                     </View>
                     <Text style={{ color: c.textTertiary }} className="text-xs text-center">
-                      Once entered, Biblo will automatically sync in the background.
+                      Once entered, Biblo will automatically sync and persist in the background.
                     </Text>
                   </View>
                 )}
