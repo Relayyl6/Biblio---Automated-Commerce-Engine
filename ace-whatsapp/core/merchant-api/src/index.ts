@@ -126,7 +126,18 @@ app.get("/telemetry/dashboard", async (req, reply) => {
   const merchantId = rawId && isUuid(rawId) ? rawId : DEFAULT_MERCHANT_ID;
 
   try {
-    const [outcomeRows, elasticityRows, revenueRows, escalationRows, leakRows] = await Promise.all([
+    const [
+      outcomeRows,
+      elasticityRows,
+      revenueRows,
+      todayRevenueRows,
+      lastWeekSameDayRevenueRows,
+      escalationRows,
+      prevEscalationRows,
+      leakRows,
+      oracleAlertRows,
+      merchantRows
+    ] = await Promise.all([
       sql<{outcome: string, count: number}[]>`
         SELECT outcome, COUNT(*) as count
         FROM negotiation_traces
@@ -141,29 +152,103 @@ app.get("/telemetry/dashboard", async (req, reply) => {
         ORDER BY DATE_TRUNC('day', created_at)
       `,
       sql<{total: number, count: number}[]>`
-        SELECT SUM(amount) as total, COUNT(*) as count
+        SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
         FROM transactions
         WHERE merchant_id = ${merchantId}::uuid AND status = 'confirmed' AND created_at > now() - interval '30 days'
       `,
+      sql<{total: number, count: number}[]>`
+        SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+        FROM transactions
+        WHERE merchant_id = ${merchantId}::uuid AND status = 'confirmed' AND created_at >= CURRENT_DATE
+      `,
+      sql<{total: number, count: number}[]>`
+        SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+        FROM transactions
+        WHERE merchant_id = ${merchantId}::uuid AND status = 'confirmed' 
+          AND created_at >= CURRENT_DATE - interval '7 days' 
+          AND created_at < CURRENT_DATE - interval '6 days'
+      `,
       sql<{count: number}[]>`
         SELECT COUNT(*) as count FROM escalations WHERE merchant_id = ${merchantId}::uuid AND created_at > now() - interval '7 days'
+      `,
+      sql<{count: number}[]>`
+        SELECT COUNT(*) as count FROM escalations WHERE merchant_id = ${merchantId}::uuid AND created_at > now() - interval '14 days' AND created_at <= now() - interval '7 days'
       `,
       sql<{status: string, total: number}[]>`
         SELECT status, SUM(amount) as total
         FROM transactions
         WHERE merchant_id = ${merchantId}::uuid AND status IN ('failed', 'abandoned')
         GROUP BY status
+      `,
+      sql<{type: string, message: string}[]>`
+        SELECT 'WINBACK' as type, 'VIP customer winback draft ready for approval' as message
+        FROM winback_drafts
+        WHERE merchant_id = ${merchantId}::uuid AND status = 'draft'
+        UNION ALL
+        SELECT 'RESTOCK' as type, 'Inventory restock draft ready for supplier dispatch' as message
+        FROM restock_drafts
+        WHERE merchant_id = ${merchantId}::uuid AND status = 'draft'
+      `,
+      sql<{phone_number_id: string, name: string}[]>`
+        SELECT phone_number_id, name FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
       `
     ]);
 
     const outcomes = outcomeRows.map(r => ({ name: r.outcome, value: Number(r.count) }));
     const elasticity = elasticityRows.map(r => ({ name: r.day, score: Number(r.avg_elasticity) }));
-    const revenue = { total: Number(revenueRows[0]?.total ?? 0), orders: Number(revenueRows[0]?.count ?? 0) };
     
-    const autonomy_debt = {
-      interventions: Number(escalationRows[0]?.count ?? 0),
-      drop_pct: 12
+    const todayTotal = Number(todayRevenueRows[0]?.total ?? 0);
+    const todayCount = Number(todayRevenueRows[0]?.count ?? 0);
+    const lastWeekSameDayTotal = Number(lastWeekSameDayRevenueRows[0]?.total ?? 0);
+
+    let deltaPct = 0;
+    let isPositive = true;
+    let deltaLabel = '0% vs last week';
+
+    if (lastWeekSameDayTotal > 0) {
+      deltaPct = Math.round(((todayTotal - lastWeekSameDayTotal) / lastWeekSameDayTotal) * 100);
+      isPositive = deltaPct >= 0;
+      deltaLabel = `${isPositive ? '↑' : '↓'} ${Math.abs(deltaPct)}% vs last week`;
+    } else if (todayTotal > 0) {
+      deltaPct = 100;
+      isPositive = true;
+      deltaLabel = '↑ New revenue today';
+    } else {
+      deltaPct = 0;
+      isPositive = true;
+      deltaLabel = '0% vs last week';
+    }
+
+    const revenue = {
+      total: todayTotal,
+      month_total: Number(revenueRows[0]?.total ?? 0),
+      orders: todayCount,
+      month_orders: Number(revenueRows[0]?.count ?? 0),
+      delta_pct: deltaPct,
+      is_positive: isPositive,
+      delta_label: deltaLabel,
     };
+
+    // Calculate real AOCR
+    const totalTraces = outcomeRows.reduce((acc, r) => acc + Number(r.count), 0);
+    const wonTraces = outcomeRows.filter(r => ['won', 'order_placed', 'paid', 'success'].includes(r.outcome.toLowerCase()))
+                                 .reduce((acc, r) => acc + Number(r.count), 0);
+    const aocrRate = totalTraces > 0 ? Math.round((wonTraces / totalTraces) * 100) : 100;
+
+    // Real autonomy debt
+    const curInterventions = Number(escalationRows[0]?.count ?? 0);
+    const prevInterventions = Number(prevEscalationRows[0]?.count ?? 0);
+    const dropPct = prevInterventions > 0 
+      ? Math.max(0, Math.round(((curInterventions - prevInterventions) / prevInterventions) * 100))
+      : (curInterventions > 0 ? 100 : 0);
+
+    const autonomy_debt = {
+      interventions: curInterventions,
+      drop_pct: dropPct
+    };
+
+    const oracle_alerts = oracleAlertRows || [];
+    const oracle_count = oracle_alerts.length;
 
     const leak_map = {
       abandoned_carts: Number(leakRows.find(r => r.status === 'abandoned')?.total ?? 0),
@@ -171,28 +256,39 @@ app.get("/telemetry/dashboard", async (req, reply) => {
       unverified: 0 
     };
 
-    const oracle_alerts = [
-      { type: 'WINBACK', message: 'VIPs detected without recent orders. Drafts ready.' },
-      { type: 'RESTOCK', message: 'Inventory critical on top moving SKUs. PO drafted.' }
-    ];
-
     const market_pulse = {
-      trend: 'Blue Ankara',
-      surge_pct: 340,
-      avg_price: 8500
+      trend: 'Fashion & Fabrics',
+      surge_pct: 0,
+      avg_price: 0
     };
 
-    return reply.send({ outcomes, elasticity, revenue, autonomy_debt, leak_map, oracle_alerts, market_pulse });
+    return reply.send({
+      outcomes,
+      elasticity,
+      revenue,
+      aocr_rate: aocrRate,
+      oracle_alerts,
+      oracle_count,
+      autonomy_debt,
+      leak_map,
+      market_pulse,
+      whatsapp_connected: Boolean(merchantRows[0]?.phone_number_id),
+      business_phone: merchantRows[0]?.phone_number_id || null,
+    });
   } catch (err: any) {
     app.log.error(err, 'Failed to fetch telemetry/dashboard');
     return reply.send({
       outcomes: [],
       elasticity: [],
-      revenue: { total: 0, orders: 0 },
+      revenue: { total: 0, month_total: 0, orders: 0, month_orders: 0, delta_pct: 0, is_positive: true, delta_label: '0% vs last week' },
+      aocr_rate: 100,
+      oracle_alerts: [],
+      oracle_count: 0,
       autonomy_debt: { interventions: 0, drop_pct: 0 },
       leak_map: { abandoned_carts: 0, failed_payments: 0, unverified: 0 },
-      oracle_alerts: [],
-      market_pulse: { trend: 'Fashion', surge_pct: 120, avg_price: 5000 }
+      market_pulse: { trend: 'General', surge_pct: 0, avg_price: 0 },
+      whatsapp_connected: false,
+      business_phone: null
     });
   }
 });
@@ -432,6 +528,7 @@ app.get("/merchants/:id", async (req, reply) => {
     SELECT m.id, m.name, m.phone_number_id, m.tone_guide, m.business_policies,
            m.delivery_info, m.dialect, m.whatsapp_catalog_id, m.created_at,
            m.default_discount_pct, m.subscription_tier,
+           m.owner_first_name, m.owner_last_name, m.dob_month, m.dob_day, m.dob_year, m.date_of_birth, m.age_verified,
            pr.max_discount_by_tier,
            (SELECT COUNT(*) FROM vendor_decisions WHERE merchant_id = ${id} AND decision_type = 'training_correction') as ai_corrections
     FROM merchants m
@@ -477,9 +574,19 @@ app.patch("/merchants/:id", async (req, reply) => {
   // Only update the seller-context fields the apps expose; COALESCE keeps any
   // field the caller omitted unchanged.
   const dialect = b.dialect !== undefined ? normalizeDialect(b.dialect) : null;
+  const numOrNull = (v: unknown): number | null => {
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  };
+
   const rows = await sql<{ id: string }[]>`
     update merchants set
       name             = coalesce(${strOrNull(b.name)}, name),
+      owner_first_name = coalesce(${strOrNull(b.ownerFirstName ?? b.owner_first_name)}, owner_first_name),
+      owner_last_name  = coalesce(${strOrNull(b.ownerLastName ?? b.owner_last_name)}, owner_last_name),
+      dob_month        = coalesce(${strOrNull(b.dobMonth ?? b.dob_month)}, dob_month),
+      dob_day          = coalesce(${numOrNull(b.dobDay ?? b.dob_day)}, dob_day),
+      dob_year         = coalesce(${numOrNull(b.dobYear ?? b.dob_year)}, dob_year),
       tone_guide       = coalesce(${strOrNull(b.toneGuide)}, tone_guide),
       business_policies= coalesce(${strOrNull(b.businessPolicies)}, business_policies),
       delivery_info    = coalesce(${strOrNull(b.deliveryInfo)}, delivery_info),
@@ -2097,7 +2204,7 @@ app.post('/auth/merchant/login', async (req, reply) => {
 });
 
 app.post('/auth/merchant/verify', async (req, reply) => {
-  const { phone, code } = req.body as { phone: string, code: string };
+  const { phone, code, firstName, lastName, dobMonth, dobDay, dobYear, businessName } = req.body as any;
   if (!phone || !code) return reply.code(400).send({ error: "phone and code required" });
 
   const success = await identityEngine.verifyOTP(phone, code, 'system');
@@ -2105,21 +2212,84 @@ app.post('/auth/merchant/verify', async (req, reply) => {
     return reply.code(401).send({ error: "Invalid OTP" });
   }
 
-  const rows = await sql`SELECT id FROM merchants WHERE phone_number_id = ${phone} LIMIT 1`;
-  let merchantId;
+  const rows = await sql`SELECT id, name, owner_first_name, owner_last_name, dob_month, dob_day, dob_year FROM merchants WHERE phone_number_id = ${phone} LIMIT 1`;
+  let merchantId: string;
+  let isNewUser = false;
   
   if (rows.length === 0) {
+    isNewUser = true;
     merchantId = crypto.randomUUID();
+    const cleanDob = (dobYear && dobMonth && dobDay) 
+      ? `${dobYear}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
+      : null;
+
     await sql`
-      INSERT INTO merchants (id, name, phone_number_id, created_at, updated_at)
-      VALUES (${merchantId}, 'New Merchant', ${phone}, NOW(), NOW())
+      INSERT INTO merchants (
+        id, name, phone_number_id, 
+        owner_first_name, owner_last_name, 
+        dob_month, dob_day, dob_year, date_of_birth,
+        age_verified, created_at, updated_at
+      )
+      VALUES (
+        ${merchantId}, ${businessName || 'My Store'}, ${phone},
+        ${firstName || null}, ${lastName || null},
+        ${dobMonth ? String(dobMonth) : null}, ${dobDay ? Number(dobDay) : null}, ${dobYear ? Number(dobYear) : null}, 
+        ${cleanDob ? sql`${cleanDob}::date` : null},
+        ${Boolean(dobYear)}, NOW(), NOW()
+      )
     `;
   } else {
     merchantId = rows[0].id;
+    if (!rows[0].owner_first_name || !rows[0].dob_year) {
+      isNewUser = true;
+    }
+    if (firstName || lastName || dobYear || businessName) {
+      const cleanDob = (dobYear && dobMonth && dobDay) 
+        ? `${dobYear}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
+        : null;
+      await sql`
+        UPDATE merchants SET
+          name = COALESCE(${businessName || null}, name),
+          owner_first_name = COALESCE(${firstName || null}, owner_first_name),
+          owner_last_name = COALESCE(${lastName || null}, owner_last_name),
+          dob_month = COALESCE(${dobMonth ? String(dobMonth) : null}, dob_month),
+          dob_day = COALESCE(${dobDay ? Number(dobDay) : null}, dob_day),
+          dob_year = COALESCE(${dobYear ? Number(dobYear) : null}, dob_year),
+          date_of_birth = COALESCE(${cleanDob ? sql`${cleanDob}::date` : null}, date_of_birth),
+          age_verified = COALESCE(${Boolean(dobYear)}, age_verified),
+          updated_at = NOW()
+        WHERE id = ${merchantId}
+      `;
+    }
   }
 
   const token = await authEngine.issueToken(merchantId, 'merchant');
-  return reply.send({ ok: true, merchantId, token });
+  return reply.send({ ok: true, merchantId, token, isNewUser });
+});
+
+app.post('/auth/merchant/finish-profile', async (req, reply) => {
+  const { merchantId, firstName, lastName, dobMonth, dobDay, dobYear, businessName } = req.body as any;
+  if (!merchantId) return reply.code(400).send({ error: "merchantId required" });
+
+  const cleanDob = (dobYear && dobMonth && dobDay) 
+    ? `${dobYear}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
+    : null;
+
+  await sql`
+    UPDATE merchants SET
+      name = COALESCE(${businessName || null}, name),
+      owner_first_name = COALESCE(${firstName || null}, owner_first_name),
+      owner_last_name = COALESCE(${lastName || null}, owner_last_name),
+      dob_month = COALESCE(${dobMonth ? String(dobMonth) : null}, dob_month),
+      dob_day = COALESCE(${dobDay ? Number(dobDay) : null}, dob_day),
+      dob_year = COALESCE(${dobYear ? Number(dobYear) : null}, dob_year),
+      date_of_birth = COALESCE(${cleanDob ? sql`${cleanDob}::date` : null}, date_of_birth),
+      age_verified = true,
+      updated_at = NOW()
+    WHERE id = ${merchantId}
+  `;
+
+  return reply.send({ ok: true });
 });
 
 app.post('/auth/login', async (req, reply) => {

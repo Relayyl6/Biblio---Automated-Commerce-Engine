@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StatusBar } from 'react-native';
 import {
   Settings,
   TrendingUp,
+  TrendingDown,
   Activity,
   Sparkles,
   MessageCircle,
@@ -84,10 +85,24 @@ export default function PulseScreen() {
                   Today's Revenue
                 </Text>
               </View>
-              <View style={{ backgroundColor: c.successSoft }} className="flex-row items-center px-2.5 py-1 rounded-full">
-                <TrendingUp size={12} color={c.success} />
-                <Text style={{ color: c.success }} className="text-[11px] font-bold ml-1">
-                  ↑ 18% vs last week
+              <View
+                style={{
+                  backgroundColor: data?.revenue?.is_positive !== false ? c.successSoft : c.dangerSoft,
+                }}
+                className="flex-row items-center px-2.5 py-1 rounded-full"
+              >
+                {data?.revenue?.is_positive !== false ? (
+                  <TrendingUp size={12} color={c.success} />
+                ) : (
+                  <TrendingDown size={12} color={c.danger} />
+                )}
+                <Text
+                  style={{
+                    color: data?.revenue?.is_positive !== false ? c.success : c.danger,
+                  }}
+                  className="text-[11px] font-bold ml-1"
+                >
+                  {data?.revenue?.delta_label ?? '0% vs last week'}
                 </Text>
               </View>
             </View>
@@ -126,10 +141,12 @@ export default function PulseScreen() {
                   <Text style={{ color: isDark ? '#86EFAC' : '#14532D' }} className="font-extrabold text-sm">
                     WhatsApp Copilot
                   </Text>
-                  <View className="w-2 h-2 rounded-full bg-emerald-400 ml-2" />
+                  <View className={`w-2 h-2 rounded-full ${data?.whatsapp_connected ? 'bg-emerald-400' : 'bg-amber-400'} ml-2`} />
                 </View>
                 <Text style={{ color: isDark ? '#BBF7D0' : '#166534' }} className="text-[11px] font-medium leading-tight">
-                  24/7 Persistent Daemon Active. Replying to customers autonomously.
+                  {data?.whatsapp_connected
+                    ? `24/7 Persistent Daemon Active. Replying to customers autonomously.`
+                    : `Standby. Tap to pair WhatsApp companion device.`}
                 </Text>
               </View>
               <View style={{ backgroundColor: isDark ? '#15803D' : '#22C55E' }} className="w-12 h-12 rounded-2xl items-center justify-center">
@@ -152,7 +169,7 @@ export default function PulseScreen() {
                   </View>
                 </View>
                 <Text style={{ color: c.textPrimary }} className="text-2xl font-black">
-                  {data?.outcomes?.[0]?.value ?? 94}%
+                  {data?.aocr_rate ?? data?.outcomes?.[0]?.value ?? 0}%
                 </Text>
                 <Text style={{ color: c.textSecondary }} className="text-[11px]">
                   Zero human touch
@@ -172,7 +189,7 @@ export default function PulseScreen() {
                   </View>
                 </View>
                 <Text style={{ color: c.textPrimary }} className="text-2xl font-black">
-                  {(data?.oracle_alerts || []).length || 2} Ready
+                  {data?.oracle_count ?? (data?.oracle_alerts || []).length ?? 0} Ready
                 </Text>
                 <Text style={{ color: c.textSecondary }} className="text-[11px]">
                   Swipe exceptions
@@ -184,7 +201,7 @@ export default function PulseScreen() {
       </Animated.View>
 
       {/* Autonomy Debt */}
-      {!!data?.autonomy_debt?.drop_pct && (
+      {!!data?.autonomy_debt?.interventions && (
         <Animated.View entering={FadeInDown.delay(170).springify()} className="mx-6 mb-6">
           <View style={{ backgroundColor: c.warningSoft, borderColor: isDark ? 'rgba(251,191,36,0.2)' : '#FDE68A' }} className="p-4 rounded-2xl border flex-row items-center">
             <AlertTriangle size={22} color={isDark ? '#FBBF24' : '#D97706'} />
@@ -193,8 +210,8 @@ export default function PulseScreen() {
                 Autonomy Debt
               </Text>
               <Text style={{ color: isDark ? '#FCD34D' : '#B45309' }} className="text-sm leading-relaxed">
-                Your AOCR dropped {data.autonomy_debt.drop_pct}% this week. {data.autonomy_debt.interventions ?? 0} orders needed manual intervention.{' '}
-                <Text onPress={() => router.push('/inbox')} className="font-bold underline">
+                {data.autonomy_debt.interventions} order{data.autonomy_debt.interventions === 1 ? '' : 's'} needed manual intervention this week.{' '}
+                <Text onPress={() => router.push('/(tabs)/inbox')} className="font-bold underline">
                   View reasons
                 </Text>
               </Text>

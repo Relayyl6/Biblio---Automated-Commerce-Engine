@@ -915,9 +915,61 @@ export const useMerchantLogin = () => {
 
 export const useMerchantVerifyOtp = () => {
   return useMutation({
-    mutationFn: async ({ phone, code }: { phone: string; code: string }) => {
-      const res = await api.post('/auth/merchant/verify', { phone, code });
+    mutationFn: async ({
+      phone,
+      code,
+      firstName,
+      lastName,
+      dobMonth,
+      dobDay,
+      dobYear,
+      businessName,
+    }: {
+      phone: string;
+      code: string;
+      firstName?: string;
+      lastName?: string;
+      dobMonth?: string;
+      dobDay?: number;
+      dobYear?: number;
+      businessName?: string;
+    }) => {
+      const res = await api.post('/auth/merchant/verify', {
+        phone,
+        code,
+        firstName,
+        lastName,
+        dobMonth,
+        dobDay,
+        dobYear,
+        businessName,
+      });
       return res.data;
+    },
+  });
+};
+
+export const useFinishProfile = () => {
+  const queryClient = useQueryClient();
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useMutation({
+    mutationFn: async (data: {
+      firstName: string;
+      lastName: string;
+      dobMonth: string;
+      dobDay: number;
+      dobYear: number;
+      businessName?: string;
+    }) => {
+      const res = await api.post('/auth/merchant/finish-profile', {
+        merchantId,
+        ...data,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchantConfig', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['pulse', merchantId] });
     },
   });
 };

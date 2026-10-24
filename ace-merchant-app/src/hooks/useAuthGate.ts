@@ -15,10 +15,11 @@ export function useAuthGate() {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const inAuthGroup = segments[0] === 'login';
-    if (!merchantId && !inAuthGroup) {
+    // Both login/signup and help/support are available unauthenticated
+    const isPublicRoute = segments[0] === 'login' || segments[0] === 'support';
+    if (!merchantId && !isPublicRoute) {
       router.replace('/login');
-    } else if (merchantId && inAuthGroup) {
+    } else if (merchantId && segments[0] === 'login') {
       router.replace('/');
     }
     setIsReady(true);
