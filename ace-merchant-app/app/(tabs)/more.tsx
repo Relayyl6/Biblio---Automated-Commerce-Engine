@@ -18,6 +18,8 @@ import {
   Bot,
   ShieldCheck,
   RefreshCw,
+  Coins,
+  ShieldAlert,
 } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,6 +44,8 @@ type MenuItem = {
 const WORKSPACE_ITEMS: MenuItem[] = [
   { id: 'biblio-assistant', title: 'Biblio Assistant', subtitle: 'Live autonomous AI chat & WhatsApp parity', icon: Bot, route: '/biblio-assistant', tint: '#10B981' },
   { id: 'chats', title: 'Chats', subtitle: 'Full conversational & negotiation history', icon: MessageCircle, route: '/chats', tint: '#2563EB' },
+  { id: 'tokens', title: 'Tokens & Spend Caps', subtitle: 'Compute balance, burn velocity & top-ups', icon: Coins, route: '/tokens', tint: '#F59E0B' },
+  { id: 'veto', title: 'Veto & Operator Override', subtitle: 'Six-layer safety guardrails & hold queue', icon: ShieldAlert, route: '/veto', tint: '#EF4444' },
   { id: 'finance', title: 'Finance & Margins', subtitle: 'Real-time revenue, escrow & payment follow-ups', icon: CreditCard, route: '/finance', tint: '#059669' },
   { id: 'crm', title: 'CRM & Inventory', subtitle: 'Stock levels, floor pricing & product sync', icon: Package, route: '/crm', tint: '#8B5CF6' },
   { id: 'suppliers', title: 'Suppliers & Restock', subtitle: 'Automated procurement channels & groups', icon: Users, route: '/suppliers', tint: '#F59E0B' },

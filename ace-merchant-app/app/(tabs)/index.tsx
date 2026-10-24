@@ -359,7 +359,7 @@ export default function PulseScreen() {
           <Activity size={28} color={c.textTertiary} />
           <View className="items-end">
             <Text style={{ color: c.danger }} className="font-bold text-lg">
-              − ₦180k
+              − ₦{(data?.supplier_outflow || 0).toLocaleString()}
             </Text>
             <Text style={{ color: c.textSecondary }} className="text-xs">
               Out (Suppliers)
@@ -405,7 +405,7 @@ export default function PulseScreen() {
 
         <View className="flex-row items-center justify-between">
           <Text style={{ color: '#9CA3AF' }} className="text-xs">
-            Based on 1,840 local chats
+            Based on {(data?.market_pulse?.total_chats || 0).toLocaleString()} local chats
           </Text>
           <Pressable onPress={() => router.push('/crm')}>
             <Text style={{ color: '#60A5FA' }} className="text-xs font-bold active:opacity-70">

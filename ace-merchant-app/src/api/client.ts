@@ -1007,6 +1007,223 @@ export const getGoogleOAuthUrl = (merchantId: string) => {
   return `${api.defaults.baseURL}/oauth/google?merchantId=${encodeURIComponent(merchantId)}`;
 };
 
+// ==========================================
+// BUILD BRIEF v7 HOOKS
+// ==========================================
+
+// 1. Vendor Presence & Availability
+export interface PresenceStateData {
+  state: 'present' | 'delayed' | 'away' | 'off';
+  sla_minutes: number;
+  read_grace_minutes: number;
+  cover_me: boolean;
+  last_active_at: string;
+  context_summary?: string;
+}
+
+export const useVendorPresence = (merchantId: string) => {
+  return useQuery<PresenceStateData>({
+    queryKey: ['vendorPresence', merchantId],
+    queryFn: async () => {
+      if (!merchantId) return { state: 'present', sla_minutes: 10, read_grace_minutes: 5, cover_me: false, last_active_at: new Date().toISOString() };
+      const res = await api.get(`/merchants/${merchantId}/presence`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useUpdatePresence = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, data }: { merchantId: string; data: Partial<PresenceStateData> }) => {
+      const res = await api.post(`/merchants/${merchantId}/presence`, data);
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['vendorPresence', vars.merchantId] });
+    },
+  });
+};
+
+export const useCoverMe = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, enabled }: { merchantId: string; enabled: boolean }) => {
+      const res = await api.post(`/merchants/${merchantId}/presence/cover-me`, { enabled });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['vendorPresence', vars.merchantId] });
+    },
+  });
+};
+
+export const useSetHandsOff = () => {
+  return useMutation({
+    mutationFn: async ({ chatId, merchantId, handsOff }: { chatId: string; merchantId: string; handsOff: boolean }) => {
+      const res = await api.post(`/chats/${chatId}/hands-off`, { merchantId, handsOff });
+      return res.data;
+    },
+  });
+};
+
+// 2. Tokens & Spend Caps
+export interface TokenLedgerData {
+  balance_tokens: number;
+  balance_naira: number;
+  daily_cap: number;
+  monthly_cap: number;
+  spent_today: number;
+  spent_month: number;
+  burn_rate_7d: number;
+  usage_breakdown: {
+    feature: string;
+    tokens: number;
+    naira: number;
+    percentage: number;
+  }[];
+}
+
+export const useTokens = (merchantId: string) => {
+  return useQuery<TokenLedgerData>({
+    queryKey: ['tokens', merchantId],
+    queryFn: async () => {
+      if (!merchantId) throw new Error('No merchant ID');
+      const res = await api.get(`/merchants/${merchantId}/tokens`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useUpdateSpendCaps = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, dailyCap, monthlyCap }: { merchantId: string; dailyCap?: number; monthlyCap?: number }) => {
+      const res = await api.post(`/merchants/${merchantId}/tokens/caps`, { dailyCap, monthlyCap });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['tokens', vars.merchantId] });
+    },
+  });
+};
+
+export const useTopUpTokens = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, amountNaira }: { merchantId: string; amountNaira: number }) => {
+      const res = await api.post(`/merchants/${merchantId}/tokens/top-up`, { amountNaira });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['tokens', vars.merchantId] });
+    },
+  });
+};
+
+// 3. Veto Actions & Audit Logs
+export interface VetoAuditItem {
+  id: string;
+  chat_id: string | null;
+  action_type: string;
+  blocked_by: string;
+  reason: string;
+  payload: any;
+  created_at: string;
+}
+
+export const useVetoActions = (merchantId: string) => {
+  return useQuery<VetoAuditItem[]>({
+    queryKey: ['vetoActions', merchantId],
+    queryFn: async () => {
+      if (!merchantId) return [];
+      const res = await api.get(`/merchants/${merchantId}/veto/actions`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useExecuteVetoAction = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      merchantId,
+      chatId,
+      actionType,
+      blockedBy,
+      reason,
+      payload,
+    }: {
+      merchantId: string;
+      chatId?: string;
+      actionType: string;
+      blockedBy: string;
+      reason: string;
+      payload?: any;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/veto/action`, {
+        chatId,
+        actionType,
+        blockedBy,
+        reason,
+        payload,
+      });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['vetoActions', vars.merchantId] });
+    },
+  });
+};
+
+// 4. Soft Mode Quarantine & Resolution
+export const useQuarantineChats = (merchantId: string) => {
+  return useQuery({
+    queryKey: ['quarantineChats', merchantId],
+    queryFn: async () => {
+      if (!merchantId) return [];
+      const res = await api.get(`/merchants/${merchantId}/quarantine`);
+      return res.data;
+    },
+    enabled: !!merchantId,
+  });
+};
+
+export const useResolveChat = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      chatId,
+      merchantId,
+      resolution,
+    }: {
+      chatId: string;
+      merchantId: string;
+      resolution: 'business' | 'personal' | 'ignore';
+    }) => {
+      const res = await api.post(`/chats/${chatId}/resolution`, { merchantId, resolution });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['quarantineChats', vars.merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['chats'] });
+    },
+  });
+};
+
+// 5. In-App Account Deletion (App Store 5.1.1(v) Compliant)
+export const useDeleteAccount = () => {
+  return useMutation({
+    mutationFn: async ({ merchantId, confirmation }: { merchantId: string; confirmation: string }) => {
+      const res = await api.post(`/merchants/${merchantId}/delete-account`, { confirmation });
+      return res.data;
+    },
+  });
+};
+
 
 
 

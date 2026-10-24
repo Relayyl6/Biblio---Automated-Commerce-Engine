@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown, Coins, ShieldAlert, Trash2 } from 'lucide-react-native';
 import { colors } from '../theme';
 import { useAuthStore } from '../src/store/authStore';
 import { useAlert } from '../src/store/alertStore';
@@ -89,6 +89,18 @@ export default function SettingsScreen() {
             subtitle="Add items, set specific Absolute Pricing Floors per SKU, and track stock levels."
             icon={Package}
             onPress={() => router.push('/crm')}
+          />
+          <NavigationRow
+            title="Tokens & Spend Caps"
+            subtitle="Compute balance, 7-day velocity, and autonomous spend ceilings."
+            icon={Coins}
+            onPress={() => router.push('/tokens')}
+          />
+          <NavigationRow
+            title="Operator Veto & 6-Layer Guardrails"
+            subtitle="Review hold queue, live barge-in rules, and global kill switch."
+            icon={ShieldAlert}
+            onPress={() => router.push('/veto')}
             isLast
           />
         </Section>
@@ -249,6 +261,12 @@ export default function SettingsScreen() {
             subtitle="Disconnect this device"
             icon={LogOut}
             onPress={handleSignOut}
+          />
+          <NavigationRow
+            title="Delete Account"
+            subtitle="Permanently erase account and data (App Store 5.1.1(v) & NDPA 2023)"
+            icon={Trash2}
+            onPress={() => router.push('/delete-account')}
             isLast
           />
         </Section>
