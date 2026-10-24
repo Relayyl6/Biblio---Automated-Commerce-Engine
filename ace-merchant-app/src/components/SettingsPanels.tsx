@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, Switch, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, Switch, ScrollView } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles, Crown, Star, Zap, ChevronRight } from 'lucide-react-native';
 import { colors } from '../../theme';
 import { PanelField } from './PanelField';
 import { SegmentedControl } from './SegmentedControl';
+import { InlineLoadingDots } from './PulsingSkeleton';
 import {
   useStatusSettings,
   useUpdateStatusSettings,
@@ -35,7 +36,7 @@ function PanelSaveButton({ onPress, label = 'Save changes', isLoading }: { onPre
   return (
     <Pressable onPress={onPress} disabled={isLoading} style={{ backgroundColor: c.accent }} className="py-3.5 rounded-xl items-center active:opacity-80 mt-2">
       {isLoading ? (
-        <ActivityIndicator color={colorScheme === 'dark' ? '#090A0C' : '#FFFFFF'} size="small" />
+        <InlineLoadingDots color={colorScheme === 'dark' ? '#090A0C' : '#FFFFFF'} />
       ) : (
         <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="font-bold text-sm">
           {label}
@@ -152,7 +153,7 @@ function TierFeatureShield({
             className="px-3 py-1.5 rounded-xl flex-row items-center active:opacity-80"
           >
             {isUpgrading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <InlineLoadingDots color="#FFFFFF" />
             ) : (
               <>
                 <Sparkles size={12} color="#FFFFFF" />
@@ -1056,7 +1057,7 @@ export function PlanPanel({ onSave }: { onSave: () => void }) {
   if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center py-16">
-        <ActivityIndicator color={c.accent} />
+        <InlineLoadingDots color={c.accent} />
         <Text style={{ color: c.textTertiary }} className="text-xs mt-3">Loading your feature entitlements…</Text>
       </View>
     );
@@ -1106,7 +1107,7 @@ export function PlanPanel({ onSave }: { onSave: () => void }) {
           <View className="flex-row items-center flex-1">
             <View style={{ backgroundColor: 'rgba(255,255,255,0.2)' }} className="w-9 h-9 rounded-full items-center justify-center mr-3">
               {updateTier.isPending ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <InlineLoadingDots color="#FFFFFF" />
               ) : (
                 <Sparkles size={16} color="#FFFFFF" />
               )}

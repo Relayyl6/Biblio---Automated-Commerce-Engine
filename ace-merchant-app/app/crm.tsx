@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { useAlert } from '../src/store/alertStore';
 import {
@@ -31,6 +31,7 @@ import {
   useSyncWhatsAppCatalog,
 } from '../src/api/client';
 import { LoadingScreen } from '../src/components/LoadingScreen';
+import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
 
 interface ProductForm {
   sku: string;
@@ -414,7 +415,7 @@ export default function CRMScreen() {
             className="py-3.5 rounded-2xl items-center justify-center active:opacity-80 mt-3 mb-6"
           >
             {addMutation.isPending ? (
-              <ActivityIndicator color={isDark ? '#090A0C' : '#FFFFFF'} />
+              <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
             ) : (
               <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="font-bold text-sm">
                 {editingSku ? 'Save Changes' : 'Add to Catalog'}
@@ -446,7 +447,7 @@ export default function CRMScreen() {
                   className="flex-1 py-2 rounded-xl flex-row items-center justify-center active:opacity-80"
                 >
                   {syncMutation.isPending ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <InlineLoadingDots color="#FFFFFF" />
                   ) : (
                     <>
                       <RefreshCw size={12} color="#FFFFFF" />

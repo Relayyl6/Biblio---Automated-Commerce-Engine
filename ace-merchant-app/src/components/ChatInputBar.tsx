@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable } from 'react-native';
 import { Send, Lock, Hand } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { colors } from '../../theme';
+import { InlineLoadingDots } from './PulsingSkeleton';
 
 type Props = {
   isHumanOverride: boolean;
@@ -40,7 +41,7 @@ export function ChatInputBar({ isHumanOverride, value, onChangeText, onSend, isS
           className="ml-3 px-4 h-12 rounded-full flex-row items-center active:opacity-70"
         >
           {isTakingOver ? (
-            <ActivityIndicator size="small" color={c.danger} />
+            <InlineLoadingDots color={c.danger} />
           ) : (
             <>
               <Hand size={14} color={c.danger} />
@@ -81,7 +82,7 @@ export function ChatInputBar({ isHumanOverride, value, onChangeText, onSend, isS
         className="ml-3 w-12 h-12 rounded-full items-center justify-center active:opacity-80"
       >
         {isSending ? (
-          <ActivityIndicator size="small" color={isDark ? '#090A0C' : '#FFFFFF'} />
+          <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} size={5} />
         ) : (
           <Send size={19} color={canSend ? (isDark ? '#090A0C' : '#FFFFFF') : c.textTertiary} />
         )}

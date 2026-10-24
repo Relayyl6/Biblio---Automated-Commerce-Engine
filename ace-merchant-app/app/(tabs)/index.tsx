@@ -22,30 +22,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { usePulseData, useProducts } from '../../src/api/client';
 import { colors } from '../../theme';
 import { StatTile } from '../../src/components/StatTile';
-
-function Skeleton({ h, w, radius = 16, c }: { h: number; w: string | number; radius?: number; c: typeof colors.light }) {
-  return <View style={{ height: h, width: w as any, borderRadius: radius, backgroundColor: c.surfaceAlt }} />;
-}
-
-function PulseSkeleton({ c }: { c: typeof colors.light }) {
-  const insets = useSafeAreaInsets();
-  return (
-    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1 px-6">
-      <View className="flex-row justify-between items-center mb-4">
-        <Skeleton h={28} w={120} c={c} />
-        <Skeleton h={40} w={40} radius={20} c={c} />
-      </View>
-      <Skeleton h={140} w="100%" radius={24} c={c} />
-      <View className="flex-row mt-4" style={{ gap: 12 }}>
-        <Skeleton h={120} w="48%" radius={24} c={c} />
-        <Skeleton h={120} w="48%" radius={24} c={c} />
-      </View>
-      <View className="mt-4">
-        <Skeleton h={80} w="100%" radius={20} c={c} />
-      </View>
-    </View>
-  );
-}
+import { BentoGridSkeleton } from '../../src/components/PulsingSkeleton';
 
 export default function PulseScreen() {
   const { data, isLoading } = usePulseData();
@@ -56,7 +33,13 @@ export default function PulseScreen() {
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
 
-  if (isLoading) return <PulseSkeleton c={c} />;
+  if (isLoading) {
+    return (
+      <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1">
+        <BentoGridSkeleton />
+      </View>
+    );
+  }
 
   const recentProducts = (products || []).slice(0, 8);
 
@@ -85,44 +68,119 @@ export default function PulseScreen() {
         </Pressable>
       </View>
 
-      {/* Revenue Card */}
-      <Animated.View entering={FadeInDown.delay(80).springify()} className="mx-6 mb-4">
-        <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="p-6 rounded-[28px] border overflow-hidden">
-          <Text style={{ color: c.textSecondary }} className="text-sm font-medium mb-2">
-            Today's Revenue
-          </Text>
-          <View className="flex-row items-baseline flex-wrap">
-            <Text style={{ color: c.textPrimary }} className="text-4xl font-bold tracking-tight mr-3">
-              ₦{data?.revenue?.total?.toLocaleString() ?? '0'}
-            </Text>
-            <View style={{ backgroundColor: c.successSoft }} className="flex-row items-center px-2 py-1 rounded-full">
-              <TrendingUp size={14} color={c.success} />
-              <Text style={{ color: c.success }} className="text-xs font-bold ml-1">
-                ↑ 18% vs last Tue
+      {/* ── Top Bento Grid (Xbox / App Store Hero Pattern) ── */}
+      <Animated.View entering={FadeInDown.delay(80).springify()} className="mx-6 mb-6">
+        <View style={{ gap: 12 }}>
+          {/* Bento Hero Card (Today's Revenue with Live Velocity) */}
+          <Pressable
+            onPress={() => router.push('/finance')}
+            style={{ backgroundColor: c.surface, borderColor: c.border }}
+            className="p-6 rounded-[28px] border overflow-hidden active:opacity-90"
+          >
+            <View className="flex-row items-center justify-between mb-2">
+              <View className="flex-row items-center">
+                <View className="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-2" />
+                <Text style={{ color: c.textSecondary }} className="text-xs font-bold uppercase tracking-wider">
+                  Today's Revenue
+                </Text>
+              </View>
+              <View style={{ backgroundColor: c.successSoft }} className="flex-row items-center px-2.5 py-1 rounded-full">
+                <TrendingUp size={12} color={c.success} />
+                <Text style={{ color: c.success }} className="text-[11px] font-bold ml-1">
+                  ↑ 18% vs last week
+                </Text>
+              </View>
+            </View>
+
+            <View className="flex-row items-baseline mb-2">
+              <Text style={{ color: c.textPrimary }} className="text-4xl font-extrabold tracking-tight">
+                ₦{data?.revenue?.total?.toLocaleString() ?? '0'}
               </Text>
+            </View>
+
+            <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed mb-4">
+              Autonomously verified & negotiated across WhatsApp & storefront channels.
+            </Text>
+
+            <View className="flex-row items-center justify-between pt-3 border-t" style={{ borderColor: c.border }}>
+              <Text style={{ color: c.accent }} className="text-xs font-bold">
+                View Cash Flow & Margins
+              </Text>
+              <ChevronRight size={15} color={c.accent} />
+            </View>
+          </Pressable>
+
+          {/* Right Bento Column: WhatsApp Copilot Card + Dual Metrics (Side-by-Side) */}
+          <View style={{ gap: 12 }}>
+            {/* WhatsApp Copilot Card (Vibrant Green matching user's Image 2) */}
+            <Pressable
+              onPress={() => router.push('/(tabs)/more')}
+              style={{
+                backgroundColor: isDark ? '#14532D' : '#DCFCE7',
+                borderColor: isDark ? '#166534' : '#86EFAC',
+              }}
+              className="p-4 rounded-[24px] border flex-row items-center justify-between active:opacity-85"
+            >
+              <View className="flex-1 pr-3">
+                <View className="flex-row items-center mb-1">
+                  <Text style={{ color: isDark ? '#86EFAC' : '#14532D' }} className="font-extrabold text-sm">
+                    WhatsApp Copilot
+                  </Text>
+                  <View className="w-2 h-2 rounded-full bg-emerald-400 ml-2" />
+                </View>
+                <Text style={{ color: isDark ? '#BBF7D0' : '#166534' }} className="text-[11px] font-medium leading-tight">
+                  24/7 Persistent Daemon Active. Replying to customers autonomously.
+                </Text>
+              </View>
+              <View style={{ backgroundColor: isDark ? '#15803D' : '#22C55E' }} className="w-12 h-12 rounded-2xl items-center justify-center">
+                <FontAwesome5 name="whatsapp" size={24} color="#FFFFFF" />
+              </View>
+            </Pressable>
+
+            {/* Bottom Dual Mini Cards (Side-by-Side) */}
+            <View className="flex-row" style={{ gap: 12 }}>
+              {/* Card 1: AOCR */}
+              <Pressable
+                onPress={() => router.push('/(tabs)/inbox')}
+                style={{ backgroundColor: c.surface, borderColor: c.border }}
+                className="flex-1 p-4 rounded-[22px] border active:opacity-80 justify-between"
+              >
+                <View className="flex-row items-center justify-between mb-1.5">
+                  <Activity size={18} color={isDark ? '#8B5CF6' : '#2563EB'} />
+                  <View style={{ backgroundColor: c.accentSoft }} className="px-1.5 py-0.5 rounded">
+                    <Text style={{ color: c.accent }} className="text-[9px] font-bold">AOCR</Text>
+                  </View>
+                </View>
+                <Text style={{ color: c.textPrimary }} className="text-2xl font-black">
+                  {data?.outcomes?.[0]?.value ?? 94}%
+                </Text>
+                <Text style={{ color: c.textSecondary }} className="text-[11px]">
+                  Zero human touch
+                </Text>
+              </Pressable>
+
+              {/* Card 2: The Oracle */}
+              <Pressable
+                onPress={() => router.push('/(tabs)/inbox')}
+                style={{ backgroundColor: c.surface, borderColor: c.border }}
+                className="flex-1 p-4 rounded-[22px] border active:opacity-80 justify-between"
+              >
+                <View className="flex-row items-center justify-between mb-1.5">
+                  <Sparkles size={18} color="#F59E0B" />
+                  <View style={{ backgroundColor: '#FEF3C7' }} className="px-1.5 py-0.5 rounded">
+                    <Text style={{ color: '#D97706' }} className="text-[9px] font-bold">ORACLE</Text>
+                  </View>
+                </View>
+                <Text style={{ color: c.textPrimary }} className="text-2xl font-black">
+                  {(data?.oracle_alerts || []).length || 2} Ready
+                </Text>
+                <Text style={{ color: c.textSecondary }} className="text-[11px]">
+                  Swipe exceptions
+                </Text>
+              </Pressable>
             </View>
           </View>
         </View>
-      </Animated.View>
-
-      {/* KPI row */}
-      <Animated.View entering={FadeInDown.delay(130).springify()} className="mx-6 flex-row mb-6" style={{ gap: 12 }}>
-        <StatTile
-          icon={Activity}
-          iconColor={isDark ? '#8B5CF6' : '#2563EB'}
-          label="Auto Completion"
-          value={`${data?.outcomes?.[0]?.value ?? 0}%`}
-          caption="Zero human touch"
-          onPress={() => router.push('/inbox')}
-        />
-        <StatTile
-          icon={MessageCircle}
-          iconColor={c.success}
-          label="Active AI Chats"
-          value="12"
-          caption="Live right now"
-          onPress={() => router.push('/inbox')}
-        />
       </Animated.View>
 
       {/* Autonomy Debt */}

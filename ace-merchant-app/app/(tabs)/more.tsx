@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StatusBar, Pressable, ScrollView, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StatusBar, Pressable, ScrollView, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   MessageCircle,
@@ -28,6 +28,7 @@ import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import { usePairWhatsApp, useMerchantConfig, useStatusSettings, useVendorStatus } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/authStore';
 import { useAlert } from '../../src/store/alertStore';
+import { InlineLoadingDots } from '../../src/components/PulsingSkeleton';
 
 type MenuItem = {
   id: string;
@@ -279,7 +280,7 @@ export default function MoreScreen() {
                       className="rounded-xl p-3 items-center flex-row justify-center"
                     >
                       {pairMutation.isPending ? (
-                        <ActivityIndicator color="white" size="small" />
+                        <InlineLoadingDots color="white" />
                       ) : (
                         <Text className="text-white font-bold">
                           {isWhatsAppConnected ? 'Generate Re-Pairing Code' : 'Get Pairing Code'}

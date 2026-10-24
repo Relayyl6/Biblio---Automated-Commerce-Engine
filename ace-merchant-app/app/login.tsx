@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   Pressable,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -26,6 +25,9 @@ import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '../src/store/authStore';
 import { api } from '../src/api/client';
 import { colors } from './../theme';
+import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
+
+import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
 
 const OTP_LENGTH = 6;
 
@@ -246,7 +248,7 @@ export default function LoginScreen() {
                   className="h-14 rounded-2xl items-center justify-center mt-6 flex-row active:opacity-80 shadow-sm"
                 >
                   {isLoading ? (
-                    <ActivityIndicator color={isDark ? '#090A0C' : '#FFFFFF'} />
+                    <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                   ) : (
                     <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="text-base font-bold">Send code</Text>
                   )}
@@ -298,7 +300,7 @@ export default function LoginScreen() {
 
                 {isLoading && (
                   <View className="flex-row items-center justify-center mt-5">
-                    <ActivityIndicator color={c.accent} />
+                    <InlineLoadingDots color={c.accent} />
                     <Text style={{ color: c.textSecondary }} className="text-sm ml-2">Verifying...</Text>
                   </View>
                 )}

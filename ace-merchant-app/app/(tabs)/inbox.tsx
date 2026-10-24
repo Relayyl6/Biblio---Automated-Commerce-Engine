@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef } from 'react';
-import { View, Text, StatusBar, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StatusBar, ScrollView, Pressable } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SwipeableDraftCard } from '../../src/components/SwipeableDraftCard';
 import { CheckCircle2, ListFilter, CheckSquare, RotateCcw, Sparkles, MessageCircle } from 'lucide-react-native';
@@ -10,6 +10,7 @@ import { useRouter } from 'expo-router';
 import { useInbox, useExecuteInboxAction, useSeedInboxCards } from '../../src/api/client';
 import { colors } from '../../theme';
 import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import { InlineLoadingDots } from '../../src/components/PulsingSkeleton';
 
 type FilterKey = 'all' | 'priority' | 'restocks' | 'snoozed';
 
@@ -242,7 +243,7 @@ export default function InboxScreen() {
                   className="py-3 px-4 rounded-xl items-center justify-center flex-row active:opacity-80"
                 >
                   {seedMutation.isPending ? (
-                    <ActivityIndicator color={isDark ? '#090A0C' : '#FFFFFF'} />
+                    <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                   ) : (
                     <>
                       <Sparkles size={15} color={isDark ? '#090A0C' : '#FFFFFF'} />

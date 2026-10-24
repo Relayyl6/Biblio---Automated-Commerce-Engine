@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import {
   Bell,
@@ -18,6 +18,7 @@ import { SegmentedControl } from '../src/components/SegmentedControl';
 import { EmptyState } from '../src/components/EmptyState';
 import { useNotificationHistory, useClearNotificationHistory, NotificationEvent } from '../src/api/client';
 import { useAlert } from '../src/store/alertStore';
+import { NotificationSkeleton } from '../src/components/PulsingSkeleton';
 
 type ChannelFilter = 'All' | 'WhatsApp' | 'SMS' | 'In-App';
 
@@ -128,11 +129,8 @@ export default function NotificationHistoryScreen() {
         }
       >
         {isLoading ? (
-          <View className="py-20 items-center justify-center">
-            <ActivityIndicator size="large" color={c.accent} />
-            <Text style={{ color: c.textTertiary }} className="text-xs mt-3">
-              Loading delivery audit log...
-            </Text>
+          <View className="py-6">
+            <NotificationSkeleton count={4} />
           </View>
         ) : filteredEvents.length === 0 ? (
           <View className="py-16">

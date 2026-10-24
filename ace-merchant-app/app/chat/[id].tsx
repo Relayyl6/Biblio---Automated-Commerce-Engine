@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator, Linking, Modal } from 'react-native';
+import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, Linking, Modal } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Bot, MoreVertical, Phone, UserCheck, ShieldAlert, CreditCard, Copy, X } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
@@ -12,6 +12,7 @@ import { MessageBubble, ChatMessage } from '../../src/components/MessageBubble';
 import { DateSeparator, groupMessagesByDay } from '../../src/components/DateSeparator';
 import { ChatInputBar } from '../../src/components/ChatInputBar';
 import { TypingIndicator } from '../../src/components/TypingIndicator';
+import { ChatLoadSkeleton, InlineLoadingDots } from '../../src/components/PulsingSkeleton';
 
 export default function ChatDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -131,7 +132,7 @@ export default function ChatDetailScreen() {
           </Text>
           <Pressable onPress={handleTakeover} disabled={takeoverMutation.isPending} className="active:opacity-70">
             {takeoverMutation.isPending ? (
-              <ActivityIndicator size="small" color={c.accent} />
+              <InlineLoadingDots color={c.accent} />
             ) : (
               <Text style={{ color: c.accent }} className="text-xs font-bold">
                 Take over
@@ -146,7 +147,7 @@ export default function ChatDetailScreen() {
           </Text>
           <Pressable onPress={handleReleaseTakeover} disabled={releaseTakeoverMutation.isPending} className="active:opacity-70">
             {releaseTakeoverMutation.isPending ? (
-              <ActivityIndicator size="small" color="#22C55E" />
+              <InlineLoadingDots color="#22C55E" />
             ) : (
               <Text style={{ color: '#22C55E' }} className="text-xs font-bold">
                 Hand back to AI
@@ -163,9 +164,7 @@ export default function ChatDetailScreen() {
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
       >
         {isLoading ? (
-          <View className="mt-16 items-center">
-            <ActivityIndicator size="large" color={c.accent} />
-          </View>
+          <ChatLoadSkeleton />
         ) : (
           <>
             {grouped.map((group, gi) => (

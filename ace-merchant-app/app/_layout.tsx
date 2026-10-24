@@ -1,6 +1,6 @@
 import '../global.css';
 import { Stack } from 'expo-router';
-import { View, ActivityIndicator } from 'react-native';
+import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'nativewind';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeSync } from '../src/hooks/useThemeSync';
 import { useAuthGate } from '../src/hooks/useAuthGate';
 import { GlobalAlertModal } from '../src/components/GlobalAlertModal';
+import { BentoGridSkeleton } from '../src/components/PulsingSkeleton';
 import { colors } from '../theme';
 
 const queryClient = new QueryClient({
@@ -35,8 +36,8 @@ function BootSplash() {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   return (
-    <View style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator size="large" color={c.accent} />
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <BentoGridSkeleton />
     </View>
   );
 }

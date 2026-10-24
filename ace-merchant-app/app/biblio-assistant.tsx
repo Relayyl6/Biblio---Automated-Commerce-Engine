@@ -7,7 +7,6 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   ScrollView,
   Modal,
   Image,
@@ -55,6 +54,7 @@ import {
   useMerchantConfig,
   type AgentMessage,
 } from '../src/api/client';
+import { SearchSkeleton } from '../src/components/PulsingSkeleton';
 import * as Haptics from 'expo-haptics';
 
 type ChannelFilter = 'all' | 'whatsapp' | 'in_app';
@@ -647,11 +647,8 @@ export default function BiblioAssistantScreen() {
 
       {/* ─── Messages FlatList ─── */}
       {isLoading && filteredMessages.length === 0 ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color={c.accent} />
-          <Text style={{ color: c.textTertiary }} className="text-xs mt-2">
-            Connecting to Biblio Autonomous Engine...
-          </Text>
+        <View className="flex-1 px-4 pt-4">
+          <SearchSkeleton count={6} />
         </View>
       ) : filteredMessages.length === 0 ? (
         <View className="flex-1 items-center justify-center p-6">
@@ -935,7 +932,7 @@ export default function BiblioAssistantScreen() {
             style={{ backgroundColor: isDark ? '#1F2925' : '#E2E8F0' }}
             className="px-3 py-1.5 rounded-full flex-row items-center space-x-1.5"
           >
-            <ActivityIndicator size="small" color={c.accent} />
+            <InlineLoadingDots color={c.accent} />
             <Text style={{ color: c.textSecondary }} className="text-xs">
               Biblio reasoning & executing tools...
             </Text>
@@ -1063,7 +1060,7 @@ export default function BiblioAssistantScreen() {
             className="w-10 h-10 rounded-full items-center justify-center active:opacity-70 shadow-sm"
           >
             {sendMessageMutation.isPending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <InlineLoadingDots color="#FFFFFF" />
             ) : (
               <Send size={18} color="#FFFFFF" />
             )}

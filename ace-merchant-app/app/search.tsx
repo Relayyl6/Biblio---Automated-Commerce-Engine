@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, StatusBar } from 'react-native';
+import { View, Text, Pressable, ScrollView, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, User, ShoppingBag, ShoppingCart, Search as SearchIcon } from 'lucide-react-native';
 import Animated, { FadeIn, FadeInDown, SlideInRight, SlideOutRight } from 'react-native-reanimated';
@@ -10,6 +10,7 @@ import { useAuthStore } from '../src/store/authStore';
 import { colors } from '../theme';
 import { SearchBar } from '../src/components/SearchBar';
 import { EmptyState } from '../src/components/EmptyState';
+import { SearchSkeleton } from '../src/components/PulsingSkeleton';
 
 const RECENTS = ['Blessing Ankara', 'Restock gold print', 'Failed payments'];
 
@@ -57,9 +58,7 @@ export default function SearchScreen() {
 
       <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
         {isLoading && hasQuery ? (
-          <View className="py-8 items-center justify-center">
-            <ActivityIndicator color={c.accent} />
-          </View>
+          <SearchSkeleton count={5} />
         ) : hasQuery ? (
           results && results.length > 0 ? (
             <Animated.View entering={FadeInDown.springify()}>
