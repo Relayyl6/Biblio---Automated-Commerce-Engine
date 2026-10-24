@@ -26,9 +26,6 @@ import { useAuthStore } from '../src/store/authStore';
 import { api } from '../src/api/client';
 import { colors } from './../theme';
 import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
-
-import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
-
 const OTP_LENGTH = 6;
 
 export default function LoginScreen() {

@@ -54,7 +54,7 @@ import {
   useMerchantConfig,
   type AgentMessage,
 } from '../src/api/client';
-import { SearchSkeleton } from '../src/components/PulsingSkeleton';
+import { SearchSkeleton, InlineLoadingDots } from '../src/components/PulsingSkeleton';
 import * as Haptics from 'expo-haptics';
 
 type ChannelFilter = 'all' | 'whatsapp' | 'in_app';
