@@ -273,28 +273,36 @@ export default function TokensScreen() {
               <PieChart size={18} color={c.textTertiary} />
             </View>
 
-            {usageBreakdown.map((item, idx) => (
-              <View
-                key={idx}
-                style={{
-                  borderBottomColor: c.border,
-                  borderBottomWidth: idx === usageBreakdown.length - 1 ? 0 : 1,
-                }}
-                className="py-3 flex-row items-center justify-between"
-              >
-                <View className="flex-1 pr-3">
-                  <Text style={{ color: c.textPrimary }} className="font-semibold text-sm">
-                    {item.feature}
-                  </Text>
-                  <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-                    {item.tokens.toLocaleString()} tokens ({item.percentage}%)
-                  </Text>
-                </View>
-                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
-                  ₦{item.naira.toLocaleString()}
+            {usageBreakdown.length === 0 ? (
+              <View className="py-6 items-center">
+                <Text style={{ color: c.textSecondary }} className="text-xs text-center leading-relaxed">
+                  No compute events recorded yet. As Biblio negotiates on WhatsApp, extracts catalogue items, and transcribes voice notes, usage metrics will populate here in real-time.
                 </Text>
               </View>
-            ))}
+            ) : (
+              usageBreakdown.map((item, idx) => (
+                <View
+                  key={idx}
+                  style={{
+                    borderBottomColor: c.border,
+                    borderBottomWidth: idx === usageBreakdown.length - 1 ? 0 : 1,
+                  }}
+                  className="py-3 flex-row items-center justify-between"
+                >
+                  <View className="flex-1 pr-3">
+                    <Text style={{ color: c.textPrimary }} className="font-semibold text-sm">
+                      {item.feature}
+                    </Text>
+                    <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
+                      {item.tokens.toLocaleString()} tokens ({item.percentage}%)
+                    </Text>
+                  </View>
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+                    ₦{item.naira.toLocaleString()}
+                  </Text>
+                </View>
+              ))
+            )}
           </View>
         </Animated.View>
       </ScrollView>

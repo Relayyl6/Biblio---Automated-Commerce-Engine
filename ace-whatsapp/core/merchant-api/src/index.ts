@@ -140,7 +140,10 @@ app.get("/telemetry/dashboard", async (req, reply) => {
       oracleAlertRows,
       merchantRows,
       supplierLedgerRows,
-      totalChatRows
+      totalChatRows,
+      topCategoryRows,
+      cur7dChatRows,
+      prev7dChatRows
     ] = await Promise.all([
       sql<{outcome: string, count: number}[]>`
         SELECT outcome, COUNT(*) as count
@@ -205,6 +208,24 @@ app.get("/telemetry/dashboard", async (req, reply) => {
         SELECT COUNT(*) as count
         FROM conversation_messages
         WHERE merchant_id = ${merchantId}::uuid
+      `,
+      sql<{category: string, avg_price: number}[]>`
+        SELECT COALESCE(category, 'General Catalog') as category, ROUND(AVG(COALESCE(price, 0))::numeric, 0) as avg_price
+        FROM products
+        WHERE merchant_id = ${merchantId}::uuid AND deleted_at IS NULL AND category IS NOT NULL AND category != ''
+        GROUP BY category
+        ORDER BY COUNT(*) DESC
+        LIMIT 1
+      `,
+      sql<{count: number}[]>`
+        SELECT COUNT(*) as count
+        FROM conversation_messages
+        WHERE merchant_id = ${merchantId}::uuid AND created_at > now() - interval '7 days'
+      `,
+      sql<{count: number}[]>`
+        SELECT COUNT(*) as count
+        FROM conversation_messages
+        WHERE merchant_id = ${merchantId}::uuid AND created_at > now() - interval '14 days' AND created_at <= now() - interval '7 days'
       `
     ]);
 
@@ -270,10 +291,22 @@ app.get("/telemetry/dashboard", async (req, reply) => {
       unverified: 0 
     };
 
+    const cur7dChats = Number(cur7dChatRows[0]?.count ?? 0);
+    const prev7dChats = Number(prev7dChatRows[0]?.count ?? 0);
+    let surgePct = 0;
+    if (prev7dChats > 0) {
+      surgePct = Math.round(((cur7dChats - prev7dChats) / prev7dChats) * 100);
+    } else if (cur7dChats > 0) {
+      surgePct = 100;
+    }
+
+    const topCategory = topCategoryRows[0]?.category || 'General Merchandise';
+    const avgPrice = Number(topCategoryRows[0]?.avg_price ?? 0);
+
     const market_pulse = {
-      trend: 'Fashion & Fabrics',
-      surge_pct: 0,
-      avg_price: 0,
+      trend: topCategory,
+      surge_pct: surgePct,
+      avg_price: avgPrice,
       total_chats: Number(totalChatRows[0]?.count ?? 0)
     };
 
@@ -304,7 +337,7 @@ app.get("/telemetry/dashboard", async (req, reply) => {
       oracle_count: 0,
       autonomy_debt: { interventions: 0, drop_pct: 0 },
       leak_map: { abandoned_carts: 0, failed_payments: 0, unverified: 0 },
-      market_pulse: { trend: 'General', surge_pct: 0, avg_price: 0, total_chats: 0 },
+      market_pulse: { trend: 'General Merchandise', surge_pct: 0, avg_price: 0, total_chats: 0 },
       supplier_outflow: 0,
       whatsapp_connected: false,
       business_phone: null
@@ -2646,65 +2679,101 @@ app.get("/merchants/:id/quarantine", async (req, reply) => {
 // ==========================================
 // BUILD BRIEF v7: TOKENS & SPEND CAPS (Section 7)
 // ==========================================
+export async function recordTokenUsage(merchantId: string, feature: string, tokens: number, naira: number, metadata: any = {}) {
+  try {
+    await sql`
+      INSERT INTO token_usage_events (merchant_id, feature, tokens_used, naira_amount, metadata)
+      VALUES (${merchantId}::uuid, ${feature}, ${tokens}, ${naira}, ${JSON.stringify(metadata)}::jsonb)
+    `;
+    await sql`
+      UPDATE token_ledgers
+      SET balance_tokens = GREATEST(0, balance_tokens - ${tokens}),
+          balance_naira = GREATEST(0, balance_naira - ${naira}),
+          spent_today = spent_today + ${naira},
+          spent_month = spent_month + ${naira},
+          updated_at = NOW()
+      WHERE merchant_id = ${merchantId}::uuid
+    `;
+  } catch (e) {
+    app.log.error(e, 'Failed to record token usage');
+  }
+}
+
 app.get("/merchants/:id/tokens", async (req, reply) => {
   const { id } = req.params as { id: string };
   try {
-    const rows = await sql`
-      SELECT balance_tokens, balance_naira, daily_cap, monthly_cap, spent_today, spent_month, burn_rate_7d
+    let ledger = await sql`
+      SELECT balance_tokens, balance_naira, daily_cap, monthly_cap
       FROM token_ledgers
       WHERE merchant_id = ${id}::uuid
     `;
 
-    if (rows.length === 0) {
-      await sql`
+    if (ledger.length === 0) {
+      ledger = await sql`
         INSERT INTO token_ledgers (merchant_id, balance_tokens, balance_naira, daily_cap, monthly_cap, spent_today, spent_month, burn_rate_7d)
-        VALUES (${id}::uuid, 50000, 5000.00, 15000.00, 100000.00, 0.00, 0.00, 1200.00)
-        ON CONFLICT (merchant_id) DO NOTHING
+        VALUES (${id}::uuid, 50000, 5000.00, 15000.00, 100000.00, 0.00, 0.00, 0.00)
+        ON CONFLICT (merchant_id) DO UPDATE SET updated_at = NOW()
+        RETURNING balance_tokens, balance_naira, daily_cap, monthly_cap
       `;
-      return reply.send({
-        balance_tokens: 50000,
-        balance_naira: 5000,
-        daily_cap: 15000,
-        monthly_cap: 100000,
-        spent_today: 0,
-        spent_month: 0,
-        burn_rate_7d: 1200,
-        usage_breakdown: [
-          { feature: 'Autonomous WhatsApp Replies', tokens: 28400, naira: 2840, percentage: 57 },
-          { feature: 'Catalogue OCR & Extraction', tokens: 11200, naira: 1120, percentage: 22 },
-          { feature: 'Audio Transcription (Whisper)', tokens: 6100, naira: 610, percentage: 12 },
-          { feature: 'Web Scraping & Margin Intel', tokens: 4300, naira: 430, percentage: 9 },
-        ]
-      });
     }
 
-    const r = rows[0];
-    const spentM = Number(r.spent_month) || 1200;
+    const [todayUsage, monthUsage, weekUsage, breakdownRows] = await Promise.all([
+      sql<{ total: number }[]>`
+        SELECT COALESCE(SUM(naira_amount), 0) as total
+        FROM token_usage_events
+        WHERE merchant_id = ${id}::uuid AND created_at >= CURRENT_DATE
+      `,
+      sql<{ total: number }[]>`
+        SELECT COALESCE(SUM(naira_amount), 0) as total
+        FROM token_usage_events
+        WHERE merchant_id = ${id}::uuid AND created_at >= DATE_TRUNC('month', CURRENT_DATE)
+      `,
+      sql<{ total: number }[]>`
+        SELECT COALESCE(SUM(naira_amount), 0) as total
+        FROM token_usage_events
+        WHERE merchant_id = ${id}::uuid AND created_at >= NOW() - INTERVAL '7 days'
+      `,
+      sql<{ feature: string, tokens: number, naira: number }[]>`
+        SELECT feature, COALESCE(SUM(tokens_used), 0) as tokens, COALESCE(SUM(naira_amount), 0) as naira
+        FROM token_usage_events
+        WHERE merchant_id = ${id}::uuid
+        GROUP BY feature
+        ORDER BY tokens DESC
+      `
+    ]);
+
+    const spentToday = Number(todayUsage[0]?.total ?? 0);
+    const spentMonth = Number(monthUsage[0]?.total ?? 0);
+    const burnRate7d = Number(weekUsage[0]?.total ?? 0);
+
+    const totalTokensUsed = breakdownRows.reduce((acc, r) => acc + Number(r.tokens), 0);
+    const usage_breakdown = breakdownRows.map(r => ({
+      feature: r.feature,
+      tokens: Number(r.tokens),
+      naira: Number(r.naira),
+      percentage: totalTokensUsed > 0 ? Math.round((Number(r.tokens) / totalTokensUsed) * 100) : 0,
+    }));
+
     return reply.send({
-      balance_tokens: Number(r.balance_tokens),
-      balance_naira: Number(r.balance_naira),
-      daily_cap: Number(r.daily_cap),
-      monthly_cap: Number(r.monthly_cap),
-      spent_today: Number(r.spent_today),
-      spent_month: Number(r.spent_month),
-      burn_rate_7d: Number(r.burn_rate_7d),
-      usage_breakdown: [
-        { feature: 'Autonomous WhatsApp Replies', tokens: Math.round(spentM * 5.7), naira: Math.round(spentM * 0.57), percentage: 57 },
-        { feature: 'Catalogue OCR & Extraction', tokens: Math.round(spentM * 2.2), naira: Math.round(spentM * 0.22), percentage: 22 },
-        { feature: 'Audio Transcription (Whisper)', tokens: Math.round(spentM * 1.2), naira: Math.round(spentM * 0.12), percentage: 12 },
-        { feature: 'Web Scraping & Margin Intel', tokens: Math.round(spentM * 0.9), naira: Math.round(spentM * 0.09), percentage: 9 },
-      ]
+      balance_tokens: Number(ledger[0]?.balance_tokens ?? 50000),
+      balance_naira: Number(ledger[0]?.balance_naira ?? 5000),
+      daily_cap: Number(ledger[0]?.daily_cap ?? 15000),
+      monthly_cap: Number(ledger[0]?.monthly_cap ?? 100000),
+      spent_today: spentToday,
+      spent_month: spentMonth,
+      burn_rate_7d: burnRate7d,
+      usage_breakdown,
     });
   } catch (err: any) {
     app.log.error(err, "Failed to get tokens info");
     return reply.send({
-      balance_tokens: 50000,
-      balance_naira: 5000,
+      balance_tokens: 0,
+      balance_naira: 0,
       daily_cap: 15000,
       monthly_cap: 100000,
       spent_today: 0,
       spent_month: 0,
-      burn_rate_7d: 1200,
+      burn_rate_7d: 0,
       usage_breakdown: []
     });
   }

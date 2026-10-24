@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, useRouter } from 'expo-router';
-import { Home, Inbox, MoreHorizontal, Search, ArrowLeft, MessageCircle, User, Settings as SettingsIcon } from 'lucide-react-native';
+import { Home, Inbox, MoreHorizontal, Search, ArrowLeft, MessageCircle, User, Settings as SettingsIcon, Coins } from 'lucide-react-native';
 import { View, Text, Pressable, Keyboard } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -83,6 +83,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
   const icons: Record<string, typeof Home> = {
     index: Home,
+    chats: MessageCircle,
     inbox: Inbox,
     more: MoreHorizontal,
   };
@@ -164,10 +165,10 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               <TabIcon Icon={ArrowLeft} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
             <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); navigation.navigate('more'); }} hitSlop={10}>
-              <TabIcon Icon={User} isFocused={state.index === 2} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
+              <TabIcon Icon={User} isFocused={state.index === 3} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/chats' as any); }} hitSlop={10}>
-              <TabIcon Icon={MessageCircle} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/tokens' as any); }} hitSlop={10}>
+              <TabIcon Icon={Coins} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
             <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/settings' as any); }} hitSlop={10}>
               <TabIcon Icon={SettingsIcon} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
@@ -218,6 +219,7 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Pulse' }} />
+      <Tabs.Screen name="chats" options={{ title: 'Chats' }} />
       <Tabs.Screen name="inbox" options={{ title: 'Inbox' }} />
       <Tabs.Screen name="more" options={{ title: 'More' }} />
     </Tabs>
