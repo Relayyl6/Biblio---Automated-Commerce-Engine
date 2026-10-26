@@ -184,7 +184,7 @@ app.get("/telemetry/dashboard", async (req, reply) => {
       sql<{status: string, total: number}[]>`
         SELECT status, SUM(amount) as total
         FROM transactions
-        WHERE merchant_id = ${merchantId}::uuid AND status IN ('failed', 'abandoned')
+        WHERE merchant_id = ${merchantId}::uuid AND status IN ('failed', 'abandoned', 'unverified', 'pending')
         GROUP BY status
       `,
       sql<{type: string, message: string}[]>`
@@ -200,9 +200,11 @@ app.get("/telemetry/dashboard", async (req, reply) => {
         SELECT phone_number_id, name FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
       `,
       sql<{total: number}[]>`
-        SELECT COALESCE(SUM(amount), 0) as total
-        FROM supplier_ledger
-        WHERE status IN ('settled', 'paid', 'confirmed')
+        SELECT COALESCE(SUM(sl.amount), 0) as total
+        FROM supplier_ledger sl
+        INNER JOIN suppliers s ON s.id = sl.supplier_id
+        WHERE sl.status IN ('settled', 'paid', 'confirmed')
+          AND s.tenant_id = ${merchantId}::uuid
       `,
       sql<{count: number}[]>`
         SELECT COUNT(*) as count
@@ -288,7 +290,7 @@ app.get("/telemetry/dashboard", async (req, reply) => {
     const leak_map = {
       abandoned_carts: Number(leakRows.find(r => r.status === 'abandoned')?.total ?? 0),
       failed_payments: Number(leakRows.find(r => r.status === 'failed')?.total ?? 0),
-      unverified: 0 
+      unverified: Number(leakRows.find(r => ['unverified', 'pending'].includes(r.status))?.total ?? 0)
     };
 
     const cur7dChats = Number(cur7dChatRows[0]?.count ?? 0);
@@ -1596,39 +1598,6 @@ app.get("/merchants/:merchantId/notification-history", async (req, reply) => {
       };
     });
 
-    // If merchant has no history yet, supply baseline system delivery events
-    if (formatted.length === 0) {
-      formatted.push(
-        {
-          id: 'seed-1',
-          title: 'WhatsApp Automation Ready',
-          body: 'Biblio Agent listener connected. Incoming customer negotiations will be routed autonomously.',
-          channel: 'whatsapp',
-          status: 'delivered',
-          timestamp: new Date().toISOString(),
-          metadata: { provider: 'baileys' },
-        },
-        {
-          id: 'seed-2',
-          title: 'Algorithmic Status Scheduler Active',
-          body: 'Cron cycle configured. High-margin inventory ranked for upcoming status broadcast.',
-          channel: 'in-app',
-          status: 'delivered',
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-          metadata: { strategy: 'balanced' },
-        },
-        {
-          id: 'seed-3',
-          title: 'SMS Fallback Gateway Verified',
-          body: 'Africa\'s Talking carrier route verified. Circuit breakers active for offline failover.',
-          channel: 'sms',
-          status: 'delivered',
-          timestamp: new Date(Date.now() - 7200000).toISOString(),
-          metadata: { route: 'sandbox' },
-        }
-      );
-    }
-
     return reply.send({ ok: true, count: formatted.length, events: formatted });
   } catch (err: any) {
     app.log.error(err, "Failed to fetch notification history");
@@ -1897,11 +1866,16 @@ app.get("/merchants/:id/finance", async (req, reply) => {
         LIMIT 5
       `,
       sql`
-        SELECT name, price, (price * 0.55) as cost, (price - (price * 0.55)) as margin
-        FROM products
-        WHERE merchant_id = ${id}::uuid AND deleted_at IS NULL
-        ORDER BY price DESC
-        LIMIT 5
+        SELECT 
+          p.name, 
+          p.price, 
+          COALESCE((p.metadata->>'cost_price')::numeric, (p.metadata->>'floor')::numeric, p.regular_price, r.absolute_floor, p.price * 0.70) as cost,
+          (p.price - COALESCE((p.metadata->>'cost_price')::numeric, (p.metadata->>'floor')::numeric, p.regular_price, r.absolute_floor, p.price * 0.70)) as margin
+        FROM products p
+        LEFT JOIN merchant_pricing_rules r ON r.merchant_id = p.merchant_id
+        WHERE p.merchant_id = ${id}::uuid AND p.deleted_at IS NULL AND p.price > 0
+        ORDER BY p.price DESC
+        LIMIT 10
       `
     ]);
 
@@ -2529,15 +2503,29 @@ app.get('/admin/telemetry/financials', async (req, reply) => {
       LIMIT 20
     `;
 
-    // 4. AI Services & Costs Attribution Estimate
+    // 4. AI Services & Costs Attribution Computed from live usage records
     const totalTransactions = Number(txSummary[0]?.total_transactions || 0);
-    const estimatedTurns = totalTransactions * 6 + 120; // 6 turns per completed sale + exploratory chats
-    const estimatedTokens = estimatedTurns * 1250;
-    const groqLlamaCostUsd = (estimatedTokens / 1_000_000) * 0.79; // LLaMA 3.3 70B price
+    const actualTurnsRow = await sql<{ count: number }[]>`
+      SELECT COUNT(*) as count FROM conversation_messages WHERE source IN ('ai', 'system')
+    `;
+    const actualTurns = Number(actualTurnsRow[0]?.count || 0);
+    const estimatedTurns = actualTurns > 0 ? actualTurns : totalTransactions * 4;
+
+    const actualTokensRow = await sql<{ total_tokens: number, total_naira: number }[]>`
+      SELECT COALESCE(SUM(tokens_used), 0) as total_tokens, COALESCE(SUM(naira_amount), 0) as total_naira 
+      FROM token_usage_events
+    `;
+    const recordedTokens = Number(actualTokensRow[0]?.total_tokens || 0);
+    const recordedNaira = Number(actualTokensRow[0]?.total_naira || 0);
+
+    const estimatedTokens = recordedTokens > 0 ? recordedTokens : estimatedTurns * 450;
+    const groqLlamaCostUsd = (estimatedTokens / 1_000_000) * 0.79;
     const whisperMinutes = totalTransactions * 1.5;
     const whisperCostUsd = whisperMinutes * 0.006;
-    const usdNgnRate = 1650;
-    const totalAiCostNgn = (groqLlamaCostUsd + whisperCostUsd) * usdNgnRate;
+    // Pull FX rate from app_config (admin-maintained, defaults to 1650 only if config row missing)
+    const fxRateRow = await sql<{ value: string }[]>`SELECT value FROM app_config WHERE key = 'usd_ngn_rate' LIMIT 1`;
+    const usdNgnRate = fxRateRow.length > 0 ? Number(fxRateRow[0].value) : 1650;
+    const totalAiCostNgn = recordedNaira > 0 ? recordedNaira : Math.round((groqLlamaCostUsd + whisperCostUsd) * usdNgnRate);
 
     return reply.send({
       ok: true,
@@ -2804,7 +2792,7 @@ app.post("/merchants/:id/tokens/top-up", async (req, reply) => {
   try {
     await sql`
       INSERT INTO token_ledgers (merchant_id, balance_tokens, balance_naira, daily_cap, monthly_cap, spent_today, spent_month, burn_rate_7d)
-      VALUES (${id}::uuid, ${tokensToAdd}, ${amountNaira}, 15000.00, 100000.00, 0.00, 0.00, 1200.00)
+      VALUES (${id}::uuid, ${tokensToAdd}, ${amountNaira}, 15000.00, 100000.00, 0.00, 0.00, 0.00)
       ON CONFLICT (merchant_id) DO UPDATE SET
         balance_tokens = token_ledgers.balance_tokens + ${tokensToAdd},
         balance_naira = token_ledgers.balance_naira + ${amountNaira},

@@ -6,6 +6,7 @@ import { sendCustomerMessage } from "../../comms-router/src/outbound.js";
 import { logger } from "@ace/shared/logger.js";
 import { routerTools, subAgentToolsets, subAgentPrompts } from "./routerConfig.js";
 import { toolHandlers } from "./toolHandlers.js";
+import { recordTokenUsage, groqTokensToNaira } from "@ace/shared/tokenLedger.js";
 
 const env = loadNegotiatorEnv();
 const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
@@ -132,6 +133,12 @@ ADDRESSING & IDENTITY RULES:
     const routerMessage = routerResponse.choices[0].message;
     const toolCalls = routerMessage.tool_calls;
 
+    // Record router agent token usage
+    const routerTokens = routerResponse.usage?.total_tokens ?? 0;
+    if (routerTokens > 0) {
+      recordTokenUsage(merchantId, 'Autonomous WhatsApp Replies', routerTokens, groqTokensToNaira(routerTokens), { stage: 'router' }).catch(() => {});
+    }
+
     if (!toolCalls || toolCalls.length === 0) {
       if (routerMessage.content) {
         await dispatchReply(routerMessage.content as string);
@@ -180,6 +187,12 @@ Keep responses extremely concise, professional, and actionable. Call the appropr
     const subAgentMessage = subAgentResponse.choices[0].message;
     const subAgentToolCalls = subAgentMessage.tool_calls;
 
+    // Record sub-agent token usage
+    const subAgentTokens = subAgentResponse.usage?.total_tokens ?? 0;
+    if (subAgentTokens > 0) {
+      recordTokenUsage(merchantId, 'Autonomous WhatsApp Replies', subAgentTokens, groqTokensToNaira(subAgentTokens), { stage: 'sub_agent', route: routeName }).catch(() => {});
+    }
+
     if (subAgentToolCalls && subAgentToolCalls.length > 0) {
       for (const call of subAgentToolCalls) {
         const name = call.function.name;
@@ -217,6 +230,12 @@ Keep responses extremely concise, professional, and actionable. Call the appropr
 
         if (finalResponse.choices[0].message.content) {
           await dispatchReply(finalResponse.choices[0].message.content);
+        }
+
+        // Record final synthesis token usage
+        const finalTokens = finalResponse.usage?.total_tokens ?? 0;
+        if (finalTokens > 0) {
+          recordTokenUsage(merchantId, 'Autonomous WhatsApp Replies', finalTokens, groqTokensToNaira(finalTokens), { stage: 'synthesis', tool: name }).catch(() => {});
         }
       }
     } else if (subAgentMessage.content) {

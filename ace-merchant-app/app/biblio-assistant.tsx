@@ -284,15 +284,15 @@ export default function BiblioAssistantScreen() {
         className="px-4 py-3"
       >
         <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center space-x-3">
+          <View className="flex-row items-center gap-3">
             <Pressable
               onPress={() => router.back()}
-              className="p-2 -ml-2 rounded-full active:opacity-70"
+              className="p-1 -ml-2 rounded-full active:opacity-70"
             >
               <ArrowLeft size={20} color={c.textPrimary} />
             </Pressable>
 
-            <View className="flex-row items-center space-x-2.5">
+            <View className="flex-row items-center gap-1.5">
               <View
                 style={{ backgroundColor: c.accent }}
                 className="w-10 h-10 rounded-full items-center justify-center shadow-sm relative"
@@ -302,7 +302,7 @@ export default function BiblioAssistantScreen() {
               </View>
 
               <View>
-                <View className="flex-row items-center space-x-1.5">
+                <View className="flex-row items-center gap-1.5">
                   <Text style={{ color: c.textPrimary }} className="text-base font-bold">
                     Biblio Copilot
                   </Text>
@@ -331,7 +331,7 @@ export default function BiblioAssistantScreen() {
                 : '#F1F5F9',
               borderColor: isIdentityExpanded ? c.accent : c.border,
             }}
-            className="flex-row items-center px-2.5 py-1.5 rounded-full border space-x-1"
+            className="flex-row items-center px-2.5 py-1.5 rounded-full border gap-1"
           >
             <Building2 size={13} color={isIdentityExpanded ? c.accent : c.textSecondary} />
             <Text
@@ -355,22 +355,22 @@ export default function BiblioAssistantScreen() {
               backgroundColor: isDark ? '#161D1A' : '#F8FAFC',
               borderColor: c.border,
             }}
-            className="mt-3 p-3.5 rounded-2xl border space-y-3"
+            className="mt-3 p-3.5 rounded-2xl border gap-3"
           >
             <View className="flex-row items-center justify-between">
-              <View className="flex-row items-center space-x-2">
+              <View className="flex-row items-center gap-2">
                 <Text style={{ color: c.textPrimary }} className="text-sm font-bold">
                   {businessName}
                 </Text>
                 {isRegistered ? (
-                  <View className="bg-emerald-500/15 px-2 py-0.5 rounded-full flex-row items-center space-x-1">
+                  <View className="bg-emerald-500/15 px-2 py-0.5 rounded-full flex-row items-center gap-1">
                     <ShieldCheck size={11} color={c.accent} />
                     <Text className="text-[10px] font-bold text-emerald-500">
                       CAC {rcNumber ? `RC-${rcNumber}` : 'Verified'}
                     </Text>
                   </View>
                 ) : (
-                  <View className="bg-amber-500/15 px-2 py-0.5 rounded-full flex-row items-center space-x-1">
+                  <View className="bg-amber-500/15 px-2 py-0.5 rounded-full flex-row items-center gap-1">
                     <AlertCircle size={11} color="#D97706" />
                     <Text className="text-[10px] font-bold text-amber-600">
                       Sole Proprietorship
@@ -388,7 +388,7 @@ export default function BiblioAssistantScreen() {
               style={{ backgroundColor: isDark ? '#1F2925' : '#FFFFFF', borderColor: c.border }}
               className="p-2.5 rounded-xl border flex-row items-center justify-between"
             >
-              <View className="flex-row items-center space-x-2.5">
+              <View className="flex-row items-center gap-2.5">
                 <CreditCard size={18} color={c.accent} />
                 <View>
                   <Text style={{ color: c.textPrimary }} className="text-xs font-semibold">
@@ -415,7 +415,7 @@ export default function BiblioAssistantScreen() {
             </View>
 
             {/* Fee Padding Guarantee Notice */}
-            <View className="flex-row items-center space-x-2">
+            <View className="flex-row items-center gap-2">
               <Zap size={14} color="#D97706" />
               <Text style={{ color: c.textSecondary }} className="text-[11px] flex-1">
                 {feeModel === 'customer_padded'
@@ -464,7 +464,7 @@ export default function BiblioAssistantScreen() {
         }}
         className="px-4 py-2 flex-row items-center justify-between"
       >
-        <View className="flex-row items-center space-x-2">
+        <View className="flex-row items-center gap-2">
           {/* Tab: All */}
           <Pressable
             onPress={() => {
@@ -479,7 +479,7 @@ export default function BiblioAssistantScreen() {
                   ? '#1A2320'
                   : '#F1F5F9',
             }}
-            className="px-3 py-1.5 rounded-full flex-row items-center space-x-1.5"
+            className="px-3 py-1.5 rounded-full flex-row items-center gap-1.5"
           >
             <Layers
               size={12}
@@ -509,7 +509,7 @@ export default function BiblioAssistantScreen() {
                   ? '#1A2320'
                   : '#F1F5F9',
             }}
-            className="px-3 py-1.5 rounded-full flex-row items-center space-x-1.5"
+            className="px-3 py-1.5 rounded-full flex-row items-center gap-1.5"
           >
             <MessageSquare
               size={12}
@@ -539,7 +539,7 @@ export default function BiblioAssistantScreen() {
                   ? '#1A2320'
                   : '#F1F5F9',
             }}
-            className="px-3 py-1.5 rounded-full flex-row items-center space-x-1.5"
+            className="px-3 py-1.5 rounded-full flex-row items-center gap-1.5"
           >
             <Bot
               size={12}
@@ -580,7 +580,7 @@ export default function BiblioAssistantScreen() {
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16 }}
-          className="flex-row space-x-2"
+          className="flex-row gap-2"
         >
           {(['products', 'finance', 'sales', 'profile'] as CategoryTray[]).map((cat) => {
             const isCatActive = selectedCategory === cat;
@@ -599,7 +599,7 @@ export default function BiblioAssistantScreen() {
                     : '#FFFFFF',
                   borderColor: isCatActive ? c.accent : c.border,
                 }}
-                className="px-3 py-1.5 rounded-full border flex-row items-center space-x-1.5 active:opacity-80"
+                className="px-3 py-1.5 rounded-full border flex-row items-center gap-1.5 active:opacity-80"
               >
                 {categoryPrompts[cat].icon}
                 <Text
@@ -620,7 +620,7 @@ export default function BiblioAssistantScreen() {
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
-          className="flex-row space-x-2"
+          className="flex-row gap-2"
         >
           {categoryPrompts[selectedCategory].prompts.map((promptText, idx) => (
             <Pressable
@@ -630,7 +630,7 @@ export default function BiblioAssistantScreen() {
                 backgroundColor: isDark ? '#1F2925' : '#FFFFFF',
                 borderColor: c.border,
               }}
-              className="px-3 py-1.5 rounded-xl border flex-row items-center space-x-1.5 active:opacity-70 shadow-sm"
+              className="px-3 py-1.5 rounded-xl border flex-row items-center gap-1.5 active:opacity-70 shadow-sm"
             >
               <Zap size={11} color={c.accent} />
               <Text
@@ -666,7 +666,7 @@ export default function BiblioAssistantScreen() {
             Zero-Deduction payouts, or draft WhatsApp Status posts in natural language.
           </Text>
 
-          <View className="w-full space-y-2">
+          <View className="w-full gap-2">
             {categoryPrompts[selectedCategory].prompts.map((prompt, idx) => (
               <Pressable
                 key={idx}
@@ -731,9 +731,9 @@ export default function BiblioAssistantScreen() {
                   >
                     {/* Rich Product Card */}
                     {productCard ? (
-                      <View className="space-y-2.5">
+                      <View className="gap-2.5">
                         <View className="flex-row items-center justify-between border-b border-black/5 dark:border-white/5 pb-2">
-                          <View className="flex-row items-center space-x-1.5">
+                          <View className="flex-row items-center gap-1.5">
                             <Package size={15} color={c.accent} />
                             <Text style={{ color: c.accent }} className="text-xs font-bold">
                               Catalog Enriched
@@ -753,7 +753,7 @@ export default function BiblioAssistantScreen() {
                           {productCard.title}
                         </Text>
 
-                        <View className="flex-row items-center space-x-2">
+                        <View className="flex-row items-center gap-2">
                           <View className="bg-emerald-500/15 px-2.5 py-1 rounded-lg">
                             <Text className="text-xs font-bold text-emerald-500">
                               {productCard.price}
@@ -780,7 +780,7 @@ export default function BiblioAssistantScreen() {
                         )}
 
                         {productCard.vectorIndexed && (
-                          <View className="flex-row items-center space-x-1">
+                          <View className="flex-row items-center gap-1">
                             <Sparkles size={11} color={c.accent} />
                             <Text className="text-[10px] font-bold text-emerald-500">
                               Indexed in 512-dim Vector Search Engine
@@ -789,14 +789,14 @@ export default function BiblioAssistantScreen() {
                         )}
 
                         {/* Interactive Card Action Buttons */}
-                        <View className="flex-row items-center space-x-2 pt-2 border-t border-black/5 dark:border-white/5">
+                        <View className="flex-row items-center gap-2 pt-2 border-t border-black/5 dark:border-white/5">
                           <Pressable
                             onPress={() =>
                               handleSend(
                                 `Draft WhatsApp status copy for product ${productCard.sku}`
                               )
                             }
-                            className="flex-1 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 items-center flex-row justify-center space-x-1"
+                            className="flex-1 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 items-center flex-row justify-center gap-1"
                           >
                             <Share2 size={12} color={c.accent} />
                             <Text style={{ color: c.accent }} className="text-[11px] font-bold">
@@ -807,7 +807,7 @@ export default function BiblioAssistantScreen() {
                             onPress={() =>
                               handleSend(`Search catalog for items like ${productCard.title}`)
                             }
-                            className="flex-1 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 items-center flex-row justify-center space-x-1"
+                            className="flex-1 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 items-center flex-row justify-center gap-1"
                           >
                             <Sparkles size={12} color={c.textSecondary} />
                             <Text style={{ color: c.textSecondary }} className="text-[11px] font-semibold">
@@ -818,8 +818,8 @@ export default function BiblioAssistantScreen() {
                       </View>
                     ) : financeCard ? (
                       /* Rich Finance & VAN Settlement Card */
-                      <View className="space-y-2">
-                        <View className="flex-row items-center space-x-1.5 border-b border-black/5 dark:border-white/5 pb-1.5">
+                      <View className="gap-2">
+                        <View className="flex-row items-center gap-1.5 border-b border-black/5 dark:border-white/5 pb-1.5">
                           <Wallet size={15} color="#D97706" />
                           <Text style={{ color: '#D97706' }} className="text-xs font-bold">
                             Zero-Deduction Settlement Guarantee
@@ -830,7 +830,7 @@ export default function BiblioAssistantScreen() {
                         >
                           {item.content}
                         </Text>
-                        <View className="bg-amber-500/10 p-2 rounded-xl flex-row items-center space-x-1.5">
+                        <View className="bg-amber-500/10 p-2 rounded-xl flex-row items-center gap-1.5">
                           <ShieldCheck size={14} color="#D97706" />
                           <Text className="text-[10px] text-amber-700 dark:text-amber-300 font-medium flex-1">
                             Providus VAN auto-settles instant payouts without eating merchant margins.
@@ -839,8 +839,8 @@ export default function BiblioAssistantScreen() {
                       </View>
                     ) : profileCard ? (
                       /* Rich Profile / CAC Card */
-                      <View className="space-y-2">
-                        <View className="flex-row items-center space-x-1.5 border-b border-black/5 dark:border-white/5 pb-1.5">
+                      <View className="gap-2">
+                        <View className="flex-row items-center gap-1.5 border-b border-black/5 dark:border-white/5 pb-1.5">
                           <Building2 size={15} color={c.accent} />
                           <Text style={{ color: c.accent }} className="text-xs font-bold">
                             Business Profile Verified
@@ -867,7 +867,7 @@ export default function BiblioAssistantScreen() {
 
                     {/* Channel & Timestamp Subtitle */}
                     <View className="flex-row items-center justify-between mt-2 pt-1.5 border-t border-black/5 dark:border-white/5">
-                      <View className="flex-row items-center space-x-1">
+                      <View className="flex-row items-center gap-1">
                         {item.channel === 'whatsapp' ? (
                           <MessageSquare
                             size={10}
@@ -921,7 +921,7 @@ export default function BiblioAssistantScreen() {
 
       {/* ─── Typing / Reasoning Indicator ─── */}
       {sendMessageMutation.isPending && (
-        <View className="flex-row items-center px-4 py-2 space-x-2">
+        <View className="flex-row items-center px-4 py-2 gap-2">
           <View
             style={{ backgroundColor: c.accent }}
             className="w-6 h-6 rounded-full items-center justify-center"
@@ -930,7 +930,7 @@ export default function BiblioAssistantScreen() {
           </View>
           <View
             style={{ backgroundColor: isDark ? '#1F2925' : '#E2E8F0' }}
-            className="px-3 py-1.5 rounded-full flex-row items-center space-x-1.5"
+            className="px-3 py-1.5 rounded-full flex-row items-center gap-1.5"
           >
             <InlineLoadingDots color={c.accent} />
             <Text style={{ color: c.textSecondary }} className="text-xs">
@@ -949,7 +949,7 @@ export default function BiblioAssistantScreen() {
           }}
           className="mx-4 mb-2 p-3 rounded-2xl border flex-row items-center justify-between"
         >
-          <View className="flex-row items-center space-x-2.5">
+          <View className="flex-row items-center gap-2.5">
             <View className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
             <Text className="text-xs font-bold text-red-600">
               Recording Voice Note: 00:0{recordingSeconds}s
@@ -970,7 +970,7 @@ export default function BiblioAssistantScreen() {
           style={{ backgroundColor: isDark ? '#1F2925' : '#F1F5F9', borderColor: c.border }}
           className="mx-4 mb-2 p-2 rounded-xl border flex-row items-center justify-between"
         >
-          <View className="flex-row items-center space-x-2">
+          <View className="flex-row items-center gap-2">
             <ImageIcon size={16} color={c.accent} />
             <Text style={{ color: c.textPrimary }} className="text-xs font-medium" numberOfLines={1}>
               Image attached for extraction
@@ -993,7 +993,7 @@ export default function BiblioAssistantScreen() {
             borderTopWidth: 1,
             backgroundColor: isDark ? '#141A18' : '#FFFFFF',
           }}
-          className="p-3 flex-row items-center space-x-2"
+          className="p-3 flex-row items-center gap-2"
         >
           {/* Attachment (+) Button */}
           <Pressable
@@ -1033,7 +1033,7 @@ export default function BiblioAssistantScreen() {
               color: c.textPrimary,
               borderColor: c.border,
             }}
-            className="flex-1 py-2.5 px-4 rounded-full border text-sm max-h-24"
+            className="flex-1 py-2.5 px-4 rounded-3xl border text-sm max-h-24"
             placeholder={
               isRecordingVoice
                 ? 'Listening to voice note...'
@@ -1086,7 +1086,7 @@ export default function BiblioAssistantScreen() {
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
             }}
-            className="p-5 space-y-4"
+            className="p-5 gap-4"
           >
             <View className="flex-row items-center justify-between">
               <Text style={{ color: c.textPrimary }} className="text-base font-bold">
@@ -1097,7 +1097,7 @@ export default function BiblioAssistantScreen() {
               </Pressable>
             </View>
 
-            <View className="space-y-2.5">
+            <View className="gap-2.5">
               <Pressable
                 onPress={() =>
                   handleAttachImage('https://images.unsplash.com/photo-1594938298603-c8148c4dae35')
@@ -1106,7 +1106,7 @@ export default function BiblioAssistantScreen() {
                   backgroundColor: isDark ? '#1F2925' : '#F8FAFC',
                   borderColor: c.border,
                 }}
-                className="p-3.5 rounded-2xl border flex-row items-center space-x-3 active:opacity-70"
+                className="p-3.5 rounded-2xl border flex-row items-center gap-3 active:opacity-70"
               >
                 <View className="w-10 h-10 rounded-xl bg-emerald-500/15 items-center justify-center">
                   <ImageIcon size={20} color={c.accent} />
@@ -1129,7 +1129,7 @@ export default function BiblioAssistantScreen() {
                   backgroundColor: isDark ? '#1F2925' : '#F8FAFC',
                   borderColor: c.border,
                 }}
-                className="p-3.5 rounded-2xl border flex-row items-center space-x-3 active:opacity-70"
+                className="p-3.5 rounded-2xl border flex-row items-center gap-3 active:opacity-70"
               >
                 <View className="w-10 h-10 rounded-xl bg-amber-500/15 items-center justify-center">
                   <FileText size={20} color="#D97706" />

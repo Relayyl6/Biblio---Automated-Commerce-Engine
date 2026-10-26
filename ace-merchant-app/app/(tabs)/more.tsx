@@ -149,7 +149,7 @@ export default function MoreScreen() {
   };
 
   return (
-    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1">
+    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,}} className="flex-1">
       <Animated.View entering={FadeInDown.delay(50).springify()} className="px-6 mb-1.5 flex-row items-center justify-between">
         <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
           Menu

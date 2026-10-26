@@ -85,7 +85,7 @@ export default function SearchScreen() {
       className="flex-1"
     >
       <View className="px-4 flex-row items-center mb-3">
-        <Pressable onPress={() => router.back()} hitSlop={10} className="p-2 mr-2 active:opacity-60">
+        <Pressable onPress={() => router.back()} hitSlop={10} className="p-2 mr-0 active:opacity-60">
           <ArrowLeft size={24} color={c.textPrimary} />
         </Pressable>
         <Animated.View entering={FadeIn.delay(100)} className="flex-1">

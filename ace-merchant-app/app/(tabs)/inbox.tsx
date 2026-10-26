@@ -104,7 +104,7 @@ export default function InboxScreen() {
       <View
         style={{
           backgroundColor: c.bg,
-          paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6,
+          paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,
         }}
         className="flex-1"
       >
@@ -237,34 +237,23 @@ export default function InboxScreen() {
 
               <View className="w-full" style={{ gap: 8 }}>
                 <Pressable
-                  onPress={handleGenerateSampleCards}
-                  disabled={seedMutation.isPending}
+                  onPress={() => router.push('/(tabs)/chats')}
                   style={{ backgroundColor: c.accent }}
                   className="py-3 px-4 rounded-xl items-center justify-center flex-row active:opacity-80"
                 >
-                  {seedMutation.isPending ? (
-                    <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
-                  ) : (
-                    <>
-                      <Sparkles size={15} color={isDark ? '#090A0C' : '#FFFFFF'} />
-                      <Text
-                        style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
-                        className="font-bold text-xs ml-2"
-                      >
-                        Generate Sample Approval Cards
-                      </Text>
-                    </>
-                  )}
+                  <MessageCircle size={15} color={isDark ? '#090A0C' : '#FFFFFF'} />
+                  <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="font-bold text-xs ml-2">
+                    Open Live Customer Chats →
+                  </Text>
                 </Pressable>
 
                 <Pressable
-                  onPress={() => router.push('/chats')}
-                  style={{ backgroundColor: c.surfaceAlt }}
-                  className="py-3 px-4 rounded-xl items-center justify-center flex-row active:opacity-80"
+                  onPress={() => router.push('/crm')}
+                  style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
+                  className="py-3 px-4 rounded-xl border items-center justify-center flex-row active:opacity-80"
                 >
-                  <MessageCircle size={15} color={c.textPrimary} />
-                  <Text style={{ color: c.textPrimary }} className="font-bold text-xs ml-2">
-                    Open Live Customer Chats →
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
+                    Manage CRM & Inventory
                   </Text>
                 </Pressable>
               </View>

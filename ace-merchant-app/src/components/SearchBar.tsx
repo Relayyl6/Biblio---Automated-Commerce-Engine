@@ -32,7 +32,7 @@ export function SearchBar({ value, onChangeText, placeholder = 'Search...', auto
         borderColor: c.border,
         ...(isPill ? shadows.sm : {}),
       }}
-      className={`flex-row items-center border px-4 h-12 ${isPill ? 'rounded-full' : 'rounded-xl'}`}
+      className={`flex-row items-center border px-3 h-12 ${isPill ? 'rounded-full' : 'rounded-xl'}`}
     >
       <Search size={18} color={c.textSecondary} />
       <TextInput

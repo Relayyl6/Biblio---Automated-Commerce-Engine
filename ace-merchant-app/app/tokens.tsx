@@ -58,7 +58,7 @@ export default function TokensScreen() {
   const monthlyCap = tokenData?.monthly_cap ?? 100000;
   const spentToday = tokenData?.spent_today ?? 0;
   const spentMonth = tokenData?.spent_month ?? 0;
-  const burnRate7d = tokenData?.burn_rate_7d ?? 1200;
+  const burnRate7d = tokenData?.burn_rate_7d ?? 0;
   const usageBreakdown = tokenData?.usage_breakdown ?? [];
 
   // Threshold warning calculations

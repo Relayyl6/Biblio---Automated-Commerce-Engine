@@ -215,8 +215,8 @@ export function CustomAlertModal({
         )}
 
         <Animated.View
-          entering={ZoomIn.duration(190).springify().damping(17)}
-          exiting={ZoomOut.duration(130)}
+          entering={ZoomIn.duration(3).springify().damping(100)}
+          exiting={ZoomOut.duration(2).springify().damping(100)}
           style={{
             backgroundColor: c.surface,
             borderColor: c.border,

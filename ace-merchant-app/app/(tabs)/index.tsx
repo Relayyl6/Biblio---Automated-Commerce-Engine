@@ -36,7 +36,7 @@ export default function PulseScreen() {
 
   if (isLoading) {
     return (
-      <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }} className="flex-1">
+      <View style={{ backgroundColor: c.bg }} className="flex-1">
         <BentoGridSkeleton />
       </View>
     );
@@ -46,7 +46,7 @@ export default function PulseScreen() {
 
   return (
     <ScrollView
-      style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6 }}
+      style={{ backgroundColor: c.bg}}
       className="flex-1"
       contentContainerStyle={{ paddingBottom: 140 }}
       showsVerticalScrollIndicator={false}
@@ -398,14 +398,24 @@ export default function PulseScreen() {
 
         <Text className="text-white text-sm leading-relaxed mb-4">
           <Text style={{ color: c.success }} className="font-bold">
-            Opportunity:{' '}
+            Live Signal:{' '}
           </Text>
-          Inquiries for '{data?.market_pulse?.trend || 'Item'}' are up {data?.market_pulse?.surge_pct || 0}% in your zone. Competitors average ₦{(data?.market_pulse?.avg_price || 0).toLocaleString()}.
+          {data?.market_pulse?.avg_price && data?.market_pulse?.avg_price > 0 ? (
+            data?.market_pulse?.surge_pct && data?.market_pulse?.surge_pct > 0 ? (
+              `Inquiries for '${data.market_pulse.trend}' are up ${data.market_pulse.surge_pct}% in your zone. Catalog pricing averages ₦${data.market_pulse.avg_price.toLocaleString()}.`
+            ) : (
+              `Catalog active with '${data.market_pulse.trend}' (averaging ₦${data.market_pulse.avg_price.toLocaleString()}). Real-time buyer inquiries are streaming.`
+            )
+          ) : (
+            `Autonomous demand velocity is actively listening across WhatsApp channels. Sync your catalog to unlock SKU-level insights.`
+          )}
         </Text>
 
         <View className="flex-row items-center justify-between">
           <Text style={{ color: '#9CA3AF' }} className="text-xs">
-            Based on {(data?.market_pulse?.total_chats || 0).toLocaleString()} local chats
+            {(data?.market_pulse?.total_chats || 0) > 0
+              ? `Derived from ${(data?.market_pulse?.total_chats || 0).toLocaleString()} verified messages`
+              : 'Listening for first incoming message'}
           </Text>
           <Pressable onPress={() => router.push('/crm')}>
             <Text style={{ color: '#60A5FA' }} className="text-xs font-bold active:opacity-70">
