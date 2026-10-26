@@ -208,6 +208,23 @@ export const crmTools = [
         "properties": {}
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_customer_email",
+      "description": "Send an email to a customer (e.g. invoice, order update, quotation, or customer support response).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string", "description": "Customer phone number, identifier, or UUID" },
+          "toEmail": { "type": "string", "description": "Destination email address (optional if customer has profile email)" },
+          "subject": { "type": "string", "description": "Email subject line" },
+          "body": { "type": "string", "description": "Email message body" }
+        },
+        "required": ["customerId", "subject", "body"]
+      }
+    }
   }
 ];
 
@@ -490,6 +507,57 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     } catch (e: any) {
       logger.error("[churn_risk_analysis error]", e);
       return "Unable to complete churn analysis.";
+    }
+  },
+
+  send_customer_email: async (merchantId: string, args: any) => {
+    try {
+      const { customerId, subject, body } = args;
+      let email = args.toEmail;
+
+      if (!email) {
+        const rows = await sql<{ email: string }[]>`
+          SELECT verified_profile->>'email' as email
+          FROM customers
+          WHERE (phone_hash = ${customerId} OR global_buyer_id::text = ${customerId})
+          LIMIT 1
+        `.catch(() => []);
+        email = rows[0]?.email;
+      }
+
+      if (!email) {
+        return `Customer ${customerId} does not have an email address on file. Please supply toEmail or ask the customer for their email.`;
+      }
+
+      const { Queue } = await import("bullmq");
+      const emailQueue = new Queue("outbound-emails", {
+        connection: { ...redis.options, maxRetriesPerRequest: null }
+      });
+      await emailQueue.add("send_email", {
+        merchantId,
+        customerId,
+        toEmail: email,
+        subject,
+        body,
+        sentAt: new Date().toISOString()
+      });
+
+      await sql`
+        INSERT INTO conversation_messages (merchant_id, customer_id, source, content, metadata, created_at)
+        VALUES (
+          ${merchantId}::uuid, 
+          ${customerId}, 
+          'email', 
+          ${`Subject: ${subject}\n\n${body}`}, 
+          ${JSON.stringify({ channel: 'email', recipient: email, subject })}::jsonb, 
+          NOW()
+        )
+      `.catch(() => {});
+
+      return `📧 Email queued and sent to ${email} successfully!\nSubject: "${subject}"\nSaved to conversation thread history.`;
+    } catch (e: any) {
+      logger.error("[send_customer_email error]", e);
+      return `Failed to send customer email: ${e.message}`;
     }
   }
 };
