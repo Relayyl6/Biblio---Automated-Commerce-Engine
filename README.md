@@ -655,6 +655,14 @@ npm run web
 npm run start
 ```
 
+**Testing & Login Details:**
+- **Local Web URL**: [http://localhost:8081](http://localhost:8081)
+- **Local Network URL** (for physical smartphones on Wi-Fi): `http://10.91.190.253:8081`
+- **Merchant Login Testing**:
+  - Enter any phone number (e.g. `08012345678`).
+  - When prompted for the OTP verification code, enter the developer test code: **`123456`**.
+  - New accounts will instantly prompt for merchant details and take you directly to the Bento Grid Dashboard.
+
 ### 5. Verifying Live Endpoints
 Run quick verification checks from your terminal:
 ```bash
