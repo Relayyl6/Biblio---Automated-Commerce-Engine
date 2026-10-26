@@ -9,6 +9,7 @@ import { logger } from "@ace/shared/logger.js";
 import { sql } from '../clients.js';
 import { dataIntelligence } from '../data-intelligence/engine.js';
 import twilio from 'twilio';
+import crypto from 'crypto';
 
 export interface CustomerProfile {
   globalBuyerId: string;
@@ -23,6 +24,7 @@ export class IdentityResolutionEngine {
   
   private twilioClient: twilio.Twilio;
   private verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID || 'VA_DUMMY_SID';
+  private pepper = process.env.IDENTITY_PEPPER || process.env.JWT_SECRET || 'biblio-identity-pepper-secret-v7';
 
   constructor() {
     this.twilioClient = twilio(
@@ -79,8 +81,8 @@ export class IdentityResolutionEngine {
    * Resolves a WhatsApp phone number to a Global Buyer ID.
    * Creates a new profile if one doesn't exist.
    */
-  private async resolveBuyerIdentity(phoneNumber: string, merchantId: string, knownName?: string): Promise<string> {
-    // Basic hash to anonymize phone numbers in the global scope while remaining deterministic
+  public async resolveBuyerIdentity(phoneNumber: string, merchantId: string, knownName?: string): Promise<string> {
+    // Production HMAC-SHA256 hash with pepper to anonymize phone numbers in global scope
     const phoneHash = this.hashPhone(phoneNumber);
     
     const existing = await sql<{ global_buyer_id: string }[]>`
@@ -118,9 +120,8 @@ export class IdentityResolutionEngine {
     return newGlobalId;
   }
 
-  private hashPhone(phone: string): string {
-    // Stub hash function. In production, use standard SHA-256 with pepper.
-    return Buffer.from(`ace-salt-${phone}`).toString('base64');
+  public hashPhone(phone: string): string {
+    return crypto.createHmac('sha256', this.pepper).update(phone.trim()).digest('hex');
   }
 }
 

@@ -17,9 +17,9 @@ export class SupplierPinger {
 
     try {
       const supplierRows = await sql<any[]>`
-        SELECT id, merchant_id, name, contact_phone, contact_email, preferred_channel
+        SELECT id, tenant_id, display_name, legal_name, phone, email, metadata
         FROM suppliers
-        WHERE id = ${item.supplierId}
+        WHERE id = ${item.supplierId}::uuid
       `;
 
       if (supplierRows.length === 0) {
@@ -27,32 +27,28 @@ export class SupplierPinger {
         return null;
       }
 
-      const supplier: Supplier = {
-        id: supplierRows[0].id,
-        merchantId: supplierRows[0].merchant_id,
-        name: supplierRows[0].name,
-        contactPhone: supplierRows[0].contact_phone,
-        contactEmail: supplierRows[0].contact_email,
-        preferredChannel: supplierRows[0].preferred_channel || 'whatsapp'
-      };
+      const sRow = supplierRows[0];
+      const supplierName = sRow.display_name || sRow.legal_name || 'Supplier';
+      const supplierPhone = sRow.phone || sRow.metadata?.contact_phone;
+      const supplierEmail = sRow.email || sRow.metadata?.contact_email;
 
       const proposedQuantity = item.reorderBatchSize > 0 ? item.reorderBatchSize : 50;
       
-      const messageDraft = `Hello ${supplier.name},\n\nWe need to place a restock order for:\n\nItem: ${item.name} (SKU: ${item.sku})\nQuantity: ${proposedQuantity} units\n\nPlease confirm availability and invoice us. Thank you.`;
+      const messageDraft = `Hello ${supplierName},\n\nWe need to place a restock order for:\n\nItem: ${item.name} (SKU: ${item.sku})\nQuantity: ${proposedQuantity} units\n\nPlease confirm availability and invoice us. Thank you.`;
 
       const draftId = `rst_${Date.now()}`;
 
       await sql`
         INSERT INTO restock_drafts (id, merchant_id, supplier_id, inventory_item_id, proposed_quantity, message_draft, status, created_at)
-        VALUES (${draftId}, ${item.merchantId}, ${supplier.id}, ${item.id}, ${proposedQuantity}, ${messageDraft}, 'pending_approval', NOW())
+        VALUES (${draftId}, ${item.merchantId}::uuid, ${sRow.id}::uuid, ${item.id}::uuid, ${proposedQuantity}, ${messageDraft}, 'pending_approval', NOW())
       `;
 
-      logger.info({ draftId, supplierId: supplier.id }, 'Generated restock draft');
+      logger.info({ draftId, supplierId: sRow.id }, 'Generated restock draft');
 
       return {
         id: draftId,
         merchantId: item.merchantId,
-        supplierId: supplier.id,
+        supplierId: sRow.id,
         inventoryItemId: item.id,
         proposedQuantity,
         messageDraft,

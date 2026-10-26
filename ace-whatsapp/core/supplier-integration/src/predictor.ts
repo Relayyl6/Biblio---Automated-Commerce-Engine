@@ -7,15 +7,19 @@ const logger = P({ level: process.env.LOG_LEVEL || 'info' });
 export class StockoutPredictor {
   /**
    * Scans inventory for a specific merchant or globally to find items below their reorder threshold.
-   * In a real system, this could be triggered by an `order_paid` event in BullMQ.
+   * Triggered by cron or after order completion.
    */
   async getLowStockItems(merchantId?: string): Promise<InventoryItem[]> {
     try {
       const items = await sql<any[]>`
-        SELECT id, merchant_id, sku, name, stock_quantity, reorder_threshold, reorder_batch_size, supplier_id
+        SELECT id, COALESCE(merchant_id, tenant_id) as merchant_id, sku, name, 
+               COALESCE(quantity, stock, 0) as stock_quantity, 
+               COALESCE(low_stock_threshold, 5) as reorder_threshold, 
+               COALESCE(low_stock_threshold, 5) * 5 as reorder_batch_size, 
+               supplier_id
         FROM products
-        WHERE stock_quantity <= reorder_threshold
-        ${merchantId ? sql`AND merchant_id = ${merchantId}` : sql``}
+        WHERE COALESCE(quantity, stock, 0) <= COALESCE(low_stock_threshold, 5)
+        ${merchantId ? sql`AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)` : sql``}
       `;
 
       return items.map(row => ({
@@ -23,9 +27,9 @@ export class StockoutPredictor {
         merchantId: row.merchant_id,
         sku: row.sku,
         name: row.name,
-        stockQuantity: row.stock_quantity,
-        reorderThreshold: row.reorder_threshold,
-        reorderBatchSize: row.reorder_batch_size,
+        stockQuantity: Number(row.stock_quantity || 0),
+        reorderThreshold: Number(row.reorder_threshold || 5),
+        reorderBatchSize: Number(row.reorder_batch_size || 25),
         supplierId: row.supplier_id
       }));
     } catch (err) {
@@ -43,24 +47,28 @@ export class StockoutPredictor {
     for (const item of orderItems) {
       try {
         const rows = await sql<any[]>`
-          SELECT id, merchant_id, sku, name, stock_quantity, reorder_threshold, reorder_batch_size, supplier_id
+          SELECT id, COALESCE(merchant_id, tenant_id) as merchant_id, sku, name, 
+                 COALESCE(quantity, stock, 0) as stock_quantity, 
+                 COALESCE(low_stock_threshold, 5) as reorder_threshold, 
+                 COALESCE(low_stock_threshold, 5) * 5 as reorder_batch_size, 
+                 supplier_id
           FROM products
-          WHERE id = ${item.productId}
+          WHERE id = ${item.productId}::uuid
         `;
         
         if (rows.length > 0) {
           const row = rows[0];
-          // We assume the DB has already decremented the stock via the order transaction,
-          // so we just check if it's currently at or below threshold.
-          if (row.stock_quantity <= row.reorder_threshold) {
+          const currentStock = Number(row.stock_quantity || 0);
+          const threshold = Number(row.reorder_threshold || 5);
+          if (currentStock <= threshold) {
             lowStock.push({
               id: row.id,
               merchantId: row.merchant_id,
               sku: row.sku,
               name: row.name,
-              stockQuantity: row.stock_quantity,
-              reorderThreshold: row.reorder_threshold,
-              reorderBatchSize: row.reorder_batch_size,
+              stockQuantity: currentStock,
+              reorderThreshold: threshold,
+              reorderBatchSize: Number(row.reorder_batch_size || 25),
               supplierId: row.supplier_id
             });
           }

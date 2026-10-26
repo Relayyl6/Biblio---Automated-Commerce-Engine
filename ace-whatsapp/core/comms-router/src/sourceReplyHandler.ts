@@ -1,13 +1,10 @@
 import { logger } from "@ace/shared/logger.js";
-// core/comms-router/src/sourceReplyHandler.ts
-
-import { sql, redis, jsonb } from "@ace/shared/clients";
+import { sql, redis } from "@ace/shared/clients";
 import type { InboundMessage, PricingExpression } from "@ace/shared/types";
 import { extractPriceFromText, evaluatePricingRules } from "@ace/shared/pricingEngine";
-import { advanceArc, type NegotiationArc, ArcTransitionError } from "../../ai-negotiator/src/negotiationArc.js";
+import { advanceArc, type NegotiationArc } from "../../ai-negotiator/src/negotiationArc.js";
 import { runNegotiatorTurn } from "../../ai-negotiator/src/agentLoop.js";
 import { sendCustomerMessage } from "./outbound.js";
-import { vendorCommunique } from "./vendorCommunique.js";
 
 interface SourceRow {
   id: string;
@@ -25,11 +22,9 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
       AND status = 'pending'
     ORDER BY sent_at DESC
     LIMIT 1
-  `;
+  `.catch(() => []);
 
   if (pendingQuotes.length === 0) {
-    // If it's a warehouse API or similar, this shouldn't happen. If it's WhatsApp, they might just be chatting.
-    // We return false so it gets ignored or routed elsewhere (though it shouldn't go to debounce either).
     return true; // Return true to swallow the message so the source doesn't get treated as a customer
   }
 
@@ -38,15 +33,14 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
   
   const extractedCost = extractPriceFromText(replyText);
   if (extractedCost === null) {
-    // If they replied but we couldn't find a price, we might ask them again or escalate.
-    // For MVP, we escalate to the merchant to clarify.
+    // If they replied but we couldn't find a price, escalate to merchant
     await sql`
       UPDATE source_quotes SET status = 'escalated', reply_received = ${replyText}, replied_at = NOW() 
       WHERE id = ${quote.id}
-    `;
+    `.catch(() => {});
     
     // Fallback to merchant
-    const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${msg.toPhoneNumberId!} limit 1`;
+    const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${msg.toPhoneNumberId!}::uuid limit 1`.catch(() => []);
     const merchantPhone = merchantRows[0]?.contact_phone;
     if (merchantPhone) {
       await sendCustomerMessage({ toPhone: merchantPhone, text: `Supplier ${source.name} replied to query for ${quote.product_query}, but I couldn't understand the price. Reply: "${replyText}"` }, undefined, msg.toPhoneNumberId!);
@@ -57,7 +51,7 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
   // Load merchant defaults
   const defaultsRows = await sql<{pricing_rules: PricingExpression[]}[]>`
     SELECT pricing_rules FROM merchant_pricing_defaults WHERE merchant_id = ${msg.toPhoneNumberId!}
-  `;
+  `.catch(() => []);
   const defaultRules = defaultsRows[0]?.pricing_rules ?? [];
 
   const rules = source.pricing_rules.length > 0 ? source.pricing_rules : defaultRules;
@@ -67,12 +61,11 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
   let markup = 0;
 
   if (result.action === "ask_merchant") {
-    // We update the quote to escalated
     await sql`
       UPDATE source_quotes SET status = 'escalated', reply_received = ${replyText}, extracted_cost = ${extractedCost}, replied_at = NOW() 
       WHERE id = ${quote.id}
-    `;
-    const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${msg.toPhoneNumberId!} limit 1`;
+    `.catch(() => {});
+    const merchantRows = await sql<{contact_phone: string}[]>`select contact_phone from merchants where id = ${msg.toPhoneNumberId!}::uuid limit 1`.catch(() => []);
     const merchantPhone = merchantRows[0]?.contact_phone;
     if (merchantPhone) {
       await sendCustomerMessage({ toPhone: merchantPhone, text: `Supplier ${source.name} quoted ₦${extractedCost.toLocaleString()} for ${quote.product_query}. Your pricing rules say to ask you. What price should we quote the customer?` }, undefined, msg.toPhoneNumberId!);
@@ -93,7 +86,7 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
       customer_price = ${customerPrice}, 
       replied_at = NOW() 
     WHERE id = ${quote.id}
-  `;
+  `.catch(() => {});
 
   // Resume the Arc
   const arcKey = `arc:${msg.toPhoneNumberId!}:${quote.customer_id}`;
@@ -106,14 +99,11 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
         arc = advanceArc(arc, { type: "SOURCE_REPLIED", customerPrice, sourceName: source.name });
         await redis.setex(arcKey, 60 * 60 * 24, JSON.stringify(arc));
         
-        // We now need to trigger the agent loop so it resumes the conversation!
-        // We can just construct a ConversationTurn with a system prompt message injected.
-        // But runNegotiatorTurn pulls orderState from DB, which is fine.
-        // To pass the system context without it being a real message:
-        
         const orderRows = await sql<{state: any}[]>`
-          SELECT state FROM orders WHERE customer_id = ${quote.customer_id} AND merchant_id = ${msg.toPhoneNumberId!} ORDER BY updated_at DESC LIMIT 1
-        `;
+          SELECT state FROM orders 
+          WHERE (user_id = ${quote.customer_id}::uuid OR tenant_id = ${msg.toPhoneNumberId!}::uuid)
+          ORDER BY updated_at DESC LIMIT 1
+        `.catch(() => []);
         const orderState = orderRows[0]?.state ?? { status: "no_order" };
         
         // Trigger agent loop

@@ -12,6 +12,7 @@ export {
 
 export {
   sendCustomerMessage,
+  setupOutboundWorker,
   type SendClass,
 } from "./outbound.js";
 

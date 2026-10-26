@@ -17,10 +17,10 @@ export class ApprovalGate {
   async approveAndSend(draftId: string, merchantId: string): Promise<boolean> {
     try {
       const drafts = await sql<any[]>`
-        SELECT d.id, d.message_draft, d.status, s.contact_phone, s.contact_email, s.preferred_channel
+        SELECT d.id, d.message_draft, d.status, s.phone, s.email, s.metadata
         FROM restock_drafts d
         JOIN suppliers s ON d.supplier_id = s.id
-        WHERE d.id = ${draftId} AND d.merchant_id = ${merchantId}
+        WHERE d.id = ${draftId} AND d.merchant_id = ${merchantId}::uuid
       `;
 
       if (drafts.length === 0) {
@@ -30,7 +30,7 @@ export class ApprovalGate {
 
       const draft = drafts[0];
 
-      if (draft.status !== 'pending_approval') {
+      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft') {
         logger.warn({ draftId, status: draft.status }, 'Draft is not pending approval');
         return false;
       }
@@ -42,26 +42,29 @@ export class ApprovalGate {
         WHERE id = ${draftId}
       `;
 
-      // Dispatch via preferred channel
-      if (draft.preferred_channel === 'whatsapp' && draft.contact_phone) {
+      // Dispatch via preferred channel (WhatsApp phone or email)
+      const supplierPhone = draft.phone || draft.metadata?.contact_phone;
+      const supplierEmail = draft.email || draft.metadata?.contact_email;
+
+      if (supplierPhone) {
         await outboundQueue.add('send_system_message', {
           merchantId,
-          customerId: draft.contact_phone, // Routing it through standard comms as a system msg
+          customerId: supplierPhone,
           text: draft.message_draft,
           source: 'system'
         });
-        logger.info({ draftId, channel: 'whatsapp' }, 'Restock message dispatched to outbound queue');
-      } else if (draft.preferred_channel === 'email' && draft.contact_email) {
+        logger.info({ draftId, channel: 'whatsapp', supplierPhone }, 'Restock message dispatched to outbound queue');
+      } else if (supplierEmail) {
         await outboundQueue.add('send_email', {
-          to: draft.contact_email,
+          to: supplierEmail,
           subject: 'Restock Request from Biblio',
           body: draft.message_draft,
           merchantId,
           draftId
         });
-        logger.info({ draftId, email: draft.contact_email }, 'Restock email queued for dispatch');
+        logger.info({ draftId, email: supplierEmail }, 'Restock email queued for dispatch');
       } else {
-        logger.error({ draftId }, 'Supplier has no valid contact info for preferred channel');
+        logger.error({ draftId }, 'Supplier has no valid contact info');
         return false;
       }
 
@@ -80,7 +83,7 @@ export class ApprovalGate {
       const result = await sql`
         UPDATE restock_drafts 
         SET status = 'rejected', updated_at = NOW() 
-        WHERE id = ${draftId} AND merchant_id = ${merchantId} AND status = 'pending_approval'
+        WHERE id = ${draftId} AND merchant_id = ${merchantId}::uuid
         RETURNING id
       `;
       

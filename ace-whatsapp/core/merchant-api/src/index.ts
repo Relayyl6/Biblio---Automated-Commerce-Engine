@@ -37,6 +37,7 @@ import {
 } from "@ace/shared/tiers/featureGuard.js";
 import { VendorPresenceService, type PresenceInfo } from "./services/VendorPresenceService.js";
 import { ChatClassifier } from "./services/ChatClassifier.js";
+import { getLiveUsdNgnRate } from "@ace/shared/fxService.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
@@ -187,14 +188,31 @@ app.get("/telemetry/dashboard", async (req, reply) => {
         WHERE merchant_id = ${merchantId}::uuid AND status IN ('failed', 'abandoned', 'unverified', 'pending')
         GROUP BY status
       `,
-      sql<{type: string, message: string}[]>`
-        SELECT 'WINBACK' as type, 'VIP customer winback draft ready for approval' as message
+      sql<{type: string, message: string, id: string}[]>`
+        SELECT 
+          'WINBACK' as type, 
+          COALESCE(message_draft, 'VIP customer winback draft ready for approval') as message,
+          id::text as id
         FROM winback_drafts
-        WHERE merchant_id = ${merchantId}::uuid AND status = 'draft'
+        WHERE merchant_id = ${merchantId}::uuid AND status IN ('pending_approval', 'draft', 'pending')
         UNION ALL
-        SELECT 'RESTOCK' as type, 'Inventory restock draft ready for supplier dispatch' as message
+        SELECT 
+          'RESTOCK' as type, 
+          COALESCE(message_draft, 'Inventory restock draft ready for supplier dispatch') as message,
+          id::text as id
         FROM restock_drafts
-        WHERE merchant_id = ${merchantId}::uuid AND status = 'draft'
+        WHERE merchant_id = ${merchantId}::uuid AND status IN ('pending_approval', 'draft', 'pending')
+        UNION ALL
+        SELECT 
+          'RESTOCK' as type,
+          CONCAT('Low stock warning: ', name, ' has only ', COALESCE(quantity, stock, 0), ' units left.') as message,
+          id::text as id
+        FROM products
+        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          AND deleted_at IS NULL
+          AND COALESCE(quantity, stock, 0) > 0
+          AND COALESCE(quantity, stock, 0) <= 5
+        LIMIT 5
       `,
       sql<{phone_number_id: string, name: string}[]>`
         SELECT phone_number_id, name FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
@@ -212,10 +230,12 @@ app.get("/telemetry/dashboard", async (req, reply) => {
         WHERE merchant_id = ${merchantId}::uuid
       `,
       sql<{category: string, avg_price: number}[]>`
-        SELECT COALESCE(category, 'General Catalog') as category, ROUND(AVG(COALESCE(price, 0))::numeric, 0) as avg_price
+        SELECT 
+          COALESCE(NULLIF(category, ''), 'General Merchandise') as category, 
+          ROUND(AVG(COALESCE(price, 0))::numeric, 0) as avg_price
         FROM products
-        WHERE merchant_id = ${merchantId}::uuid AND deleted_at IS NULL AND category IS NOT NULL AND category != ''
-        GROUP BY category
+        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid) AND deleted_at IS NULL
+        GROUP BY COALESCE(NULLIF(category, ''), 'General Merchandise')
         ORDER BY COUNT(*) DESC
         LIMIT 1
       `,
@@ -466,7 +486,7 @@ app.get("/merchants/:id/inbox", async (req, reply) => {
         w.status,
         w.created_at
       FROM winback_drafts w
-      WHERE w.merchant_id = ${id}::uuid AND w.status IN ('pending', 'snoozed')
+      WHERE w.merchant_id = ${id}::uuid AND w.status IN ('pending', 'snoozed', 'pending_approval', 'draft')
       ORDER BY w.created_at DESC
     `;
     
@@ -478,11 +498,11 @@ app.get("/merchants/:id/inbox", async (req, reply) => {
         r.message_draft,
         r.status,
         p.name as product_name,
-        p.quantity as current_stock,
+        COALESCE(p.quantity, p.stock, 0) as current_stock,
         p.price
       FROM restock_drafts r
       LEFT JOIN products p ON r.inventory_item_id = p.id
-      WHERE r.merchant_id = ${id}::uuid AND r.status IN ('pending', 'snoozed')
+      WHERE r.merchant_id = ${id}::uuid AND r.status IN ('pending', 'snoozed', 'pending_approval', 'draft')
       ORDER BY r.created_at DESC
     `;
 
@@ -493,7 +513,7 @@ app.get("/merchants/:id/inbox", async (req, reply) => {
         d.status,
         d.created_at
       FROM dispatch_drafts d
-      WHERE d.merchant_id = ${id}::uuid AND d.status IN ('pending', 'snoozed')
+      WHERE d.merchant_id = ${id}::uuid AND d.status IN ('pending', 'snoozed', 'pending_approval', 'draft')
       ORDER BY d.created_at DESC
     `;
 
@@ -1920,11 +1940,11 @@ app.get('/merchants/:id/search', async (req, reply) => {
       FROM customer_merchant_links 
       WHERE merchant_id = ${id}::uuid AND customer_id ILIKE ${term}
       UNION ALL
-      SELECT id::text as id, name as title, 'Stock: ' || COALESCE(quantity, stock, 0) as subtitle, 'product' as type 
+      SELECT id::text as id, COALESCE(name, 'Product') as title, 'Stock: ' || COALESCE(quantity, stock, 0) as subtitle, 'product' as type 
       FROM products 
-      WHERE merchant_id = ${id}::uuid AND deleted_at IS NULL AND (name ILIKE ${term} OR category ILIKE ${term} OR sku ILIKE ${term})
+      WHERE (merchant_id = ${id}::uuid OR tenant_id = ${id}::uuid) AND deleted_at IS NULL AND (name ILIKE ${term} OR category ILIKE ${term} OR sku ILIKE ${term})
       UNION ALL
-      SELECT id::text as id, 'Order ' || left(id::text, 8) as title, status::text as subtitle, 'order' as type 
+      SELECT id::text as id, 'Order #' || left(id::text, 8) as title, status::text as subtitle, 'order' as type 
       FROM orders 
       WHERE tenant_id = ${id}::uuid AND (id::text ILIKE ${term} OR status::text ILIKE ${term})
       UNION ALL
@@ -2051,10 +2071,30 @@ app.post("/merchants/:id/inbox/:cardId/execute", async (req, reply) => {
   try {
     if (cardId.startsWith('w_')) {
       const dbId = cardId.replace('w_', '');
-      await sql`UPDATE winback_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+      if (action === 'approve') {
+        const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
+        const retentionGate = new RetentionApprovalGate();
+        await retentionGate.approveAndSend(dbId, id);
+      } else if (action === 'reject') {
+        const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
+        const retentionGate = new RetentionApprovalGate();
+        await retentionGate.reject(dbId, id);
+      } else {
+        await sql`UPDATE winback_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+      }
     } else if (cardId.startsWith('r_')) {
       const dbId = cardId.replace('r_', '');
-      await sql`UPDATE restock_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+      if (action === 'approve') {
+        const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
+        const supplierGate = new SupplierGate();
+        await supplierGate.approveAndSend(dbId, id);
+      } else if (action === 'reject') {
+        const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
+        const supplierGate = new SupplierGate();
+        await supplierGate.reject(dbId, id);
+      } else {
+        await sql`UPDATE restock_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+      }
     } else if (cardId.startsWith('d_')) {
       const dbId = cardId.replace('d_', '');
       await sql`UPDATE dispatch_drafts SET status = ${targetStatus} WHERE id = ${dbId}::uuid AND merchant_id = ${id}::uuid`;
@@ -2522,9 +2562,8 @@ app.get('/admin/telemetry/financials', async (req, reply) => {
     const groqLlamaCostUsd = (estimatedTokens / 1_000_000) * 0.79;
     const whisperMinutes = totalTransactions * 1.5;
     const whisperCostUsd = whisperMinutes * 0.006;
-    // Pull FX rate from app_config (admin-maintained, defaults to 1650 only if config row missing)
-    const fxRateRow = await sql<{ value: string }[]>`SELECT value FROM app_config WHERE key = 'usd_ngn_rate' LIMIT 1`;
-    const usdNgnRate = fxRateRow.length > 0 ? Number(fxRateRow[0].value) : 1650;
+    // Live dynamic FX rate pulled from external market APIs via fxService (no hardcoding)
+    const usdNgnRate = await getLiveUsdNgnRate();
     const totalAiCostNgn = recordedNaira > 0 ? recordedNaira : Math.round((groqLlamaCostUsd + whisperCostUsd) * usdNgnRate);
 
     return reply.send({

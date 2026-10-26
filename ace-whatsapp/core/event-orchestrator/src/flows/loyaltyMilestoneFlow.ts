@@ -9,26 +9,31 @@ export async function handleLoyaltyCheck(merchantId: string, customerId: string)
   if (!isNew) return;
 
   const rows = await sql`
-    SELECT SUM(total) as ltv, COUNT(id) as order_count 
-    FROM orders 
-    WHERE merchant_id = ${merchantId} AND customer_id = ${customerId} AND state->>'status' = 'completed'
-  `;
+    SELECT COALESCE(SUM(amount), 0) as ltv, COUNT(id) as order_count 
+    FROM transactions 
+    WHERE merchant_id = ${merchantId}::uuid AND customer_id = ${customerId} AND status = 'confirmed'
+  `.catch(() => []);
 
-  if (rows.length === 0) return;
-  const ltv = Number(rows[0].ltv);
-  const orderCount = Number(rows[0].order_count);
+  if (!rows || rows.length === 0) return;
+  const ltv = Number(rows[0].ltv || 0);
+  const orderCount = Number(rows[0].order_count || 0);
 
-  // Milestone thresholds — just log it to merchant, no automated reward
+  // Milestone thresholds
   const hitMilestone = orderCount === 5 || orderCount === 10 || orderCount === 20 || ltv > 100000;
   if (!hitMilestone) return;
 
   logger.log(`[LoyaltyMilestone] Customer ${customerId} hit milestone! LTV: ₦${ltv.toLocaleString()}, Orders: ${orderCount}`);
 
-  const customerRows = await sql`SELECT name FROM customers WHERE id = ${customerId} OR phone = ${customerId} LIMIT 1`;
-  const customerName = customerRows[0]?.name?.split(" ")[0] || "there";
+  const linkRows = await sql`
+    SELECT verified_profile FROM customers c 
+    JOIN customer_merchant_links l ON l.customer_id = ${customerId} 
+    WHERE c.global_buyer_id = l.merchant_id OR c.phone_hash IS NOT NULL 
+    LIMIT 1
+  `.catch(() => []);
+  const customerName = linkRows[0]?.verified_profile?.name?.split(" ")[0] || "A loyal customer";
 
-  // Inform the merchant — that's all. No discount, no suggestion.
-  const merchantRows = await sql`SELECT contact_phone FROM merchants WHERE id = ${merchantId} LIMIT 1`;
+  // Inform the merchant
+  const merchantRows = await sql`SELECT contact_phone FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1`.catch(() => []);
   const merchantPhone = merchantRows[0]?.contact_phone;
 
   if (merchantPhone) {

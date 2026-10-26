@@ -29,6 +29,7 @@ import { logger } from "@ace/shared/logger.js";
 // has real data to build on.
 
 import { redis } from "@ace/shared/clients";
+import { Worker } from "bullmq";
 import type { OutboundMessage } from "@ace/shared/types";
 import { sendWhatsAppMessage } from "./whatsapp";
 
@@ -112,7 +113,6 @@ export async function sendCustomerMessage(
 ): Promise<SendClass> {
   const targetPhone = msg.toPhone ?? msg.toSenderId ?? "";
   console.log(`\n💬 [WHATSAPP OUTBOUND to ${targetPhone}]: ${msg.text}\n`);
-  return "free_session";
 
   // ── Baileys fast path (HTTP to gateway process) ───────────────────────────
   // The gateway holds live Baileys sockets in its own process memory.
@@ -175,4 +175,37 @@ export async function setTypingIndicator(
   } catch (err) {
     logger.warn("[outbound] error setting typing indicator:", err);
   }
+}
+
+/**
+ * Universal Outbound Queue Workers:
+ * Listens to both `outbound_messages` and `outbound-messages` so no system messages,
+ * win-back offers, or order confirmations ever get stuck in Redis.
+ */
+export function setupOutboundWorker() {
+  const handler = async (job: any) => {
+    const data = job.data || {};
+    const merchantId = data.merchantId;
+    const targetPhone = data.customerId || data.toPhone || data.to;
+    const body = data.text || data.message || data.body;
+
+    if (targetPhone && body) {
+      logger.info({ job: job.name, targetPhone, merchantId }, "[outboundWorker] Processing outbound message");
+      await sendCustomerMessage({ toPhone: targetPhone, text: body }, undefined, merchantId);
+    } else {
+      logger.warn({ data }, "[outboundWorker] Skipping invalid outbound message job payload");
+    }
+  };
+
+  const w1 = new Worker("outbound_messages", handler, {
+    connection: { ...redis.options, maxRetriesPerRequest: null }
+  });
+  const w2 = new Worker("outbound-messages", handler, {
+    connection: { ...redis.options, maxRetriesPerRequest: null }
+  });
+
+  w1.on("error", (err) => logger.error("[outbound_messages] Worker error:", err));
+  w2.on("error", (err) => logger.error("[outbound-messages] Worker error:", err));
+
+  return [w1, w2];
 }

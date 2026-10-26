@@ -9,19 +9,18 @@ export class ChurnAnalyzer {
         SELECT 
           cml.customer_id, 
           cml.merchant_id, 
-          c.phone as contact_phone,
-          MAX(o.created_at) as last_order_date,
-          COUNT(o.id) as total_orders,
-          SUM(o.total_amount) as lifetime_value,
-          EXTRACT(DAY FROM (NOW() - MAX(o.created_at))) as days_since_last_order
+          cml.customer_id as contact_phone,
+          MAX(t.created_at) as last_order_date,
+          COUNT(t.id) as total_orders,
+          COALESCE(SUM(t.amount), 0) as lifetime_value,
+          EXTRACT(DAY FROM (NOW() - MAX(t.created_at))) as days_since_last_order
         FROM customer_merchant_links cml
-        JOIN customers c ON cml.customer_id = c.id
-        JOIN orders o ON o.customer_id = cml.customer_id AND o.merchant_id = cml.merchant_id
-        WHERE o.status IN ('paid', 'delivered')
-          ${merchantId ? sql`AND cml.merchant_id = ${merchantId}` : sql``}
-        GROUP BY cml.customer_id, cml.merchant_id, c.phone
-        HAVING EXTRACT(DAY FROM (NOW() - MAX(o.created_at))) >= ${daysThreshold}
-           AND COUNT(o.id) > 1
+        JOIN transactions t ON t.customer_id = cml.customer_id AND t.merchant_id = cml.merchant_id
+        WHERE t.status = 'confirmed'
+          ${merchantId ? sql`AND cml.merchant_id = ${merchantId}::uuid` : sql``}
+        GROUP BY cml.customer_id, cml.merchant_id
+        HAVING EXTRACT(DAY FROM (NOW() - MAX(t.created_at))) >= ${daysThreshold}
+           AND COUNT(t.id) >= 1
       `;
 
       return rows.map(r => ({

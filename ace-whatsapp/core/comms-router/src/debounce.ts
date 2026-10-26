@@ -38,6 +38,7 @@ import type { InboundMessage, ConversationTurn, OrderState } from "@ace/shared/t
 import { runNegotiatorTurn } from "../../ai-negotiator/src/agentLoop";
 import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop";
 import { handleSourceReply } from "./sourceReplyHandler.js";
+import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 
 const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 5_000); // 5s default — tune per merchant
 
@@ -152,6 +153,7 @@ export async function enqueueInboundMessage(msg: InboundMessage): Promise<void> 
     VALUES (${customerId}, ${merchantId})
     ON CONFLICT DO NOTHING
   `.catch(err => logger.error("[Debounce] Non-critical telemetry emit failed", err));
+  identityEngine.resolveBuyerIdentity(customerId, merchantId).catch(() => {});
 
   // Sliding debounce: unique per (merchantId, customerId)
   const bullJobId = `turn_${merchantId}_${customerId}`;

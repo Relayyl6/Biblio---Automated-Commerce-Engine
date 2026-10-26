@@ -13,9 +13,6 @@ const CONSUMER_NAME = `logistics_consumer_${Math.random().toString(36).substr(2,
 
 export async function startLogisticsStreamConsumer() {
   try {
-    // Create the consumer group if it doesn't exist. 
-    // Start reading from '$' (new messages only) or '0' (from beginning).
-    // MKSTREAM automatically creates the stream if it doesn't exist.
     await redis.xgroup("CREATE", STREAM_NAME, CONSUMER_GROUP, "$", "MKSTREAM");
     logger.info({ group: CONSUMER_GROUP }, "Consumer group created.");
   } catch (err: any) {
@@ -27,14 +24,12 @@ export async function startLogisticsStreamConsumer() {
 
   logger.info({ consumer: CONSUMER_NAME, stream: STREAM_NAME }, "Starting to read from stream...");
   
-  // Continuous reading loop
   while (true) {
     try {
-      // Block for up to 5 seconds to get a message
       const results = await redis.xreadgroup(
         "GROUP", CONSUMER_GROUP, CONSUMER_NAME,
         "BLOCK", 5000,
-        "STREAMS", STREAM_NAME, ">" // '>' means "messages never delivered to other consumers in this group"
+        "STREAMS", STREAM_NAME, ">"
       );
 
       if (results && results.length > 0) {
@@ -45,14 +40,12 @@ export async function startLogisticsStreamConsumer() {
           const payload = parseRedisFields(fields);
           
           await handlePaymentVerifiedEvent(payload);
-
-          // Acknowledge the message so it's removed from pending
           await redis.xack(STREAM_NAME, CONSUMER_GROUP, messageId);
         }
       }
     } catch (err) {
       logger.error({ err }, "Error reading from stream");
-      await new Promise(resolve => setTimeout(resolve, 3000)); // Sleep before retry
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 }
@@ -80,50 +73,46 @@ async function handlePaymentVerifiedEvent(payload: Record<string, string>) {
   if (!lock) return;
 
   try {
-    // 1. Check order state
     const rows = await sql<{ state: OrderState }[]>`
-      SELECT state FROM orders WHERE id = ${orderId}
-    `;
+      SELECT state FROM orders WHERE id = ${orderId}::uuid
+    `.catch(() => []);
 
     if (rows.length === 0) {
       logger.error({ orderId }, "Order not found in DB");
       return;
     }
 
-    const orderState = rows[0].state;
+    const orderState = rows[0].state || { status: "no_order" };
     if (orderState.status !== "payment_verified") {
       logger.info({ orderId, status: orderState.status }, "Order not in payment_verified state, ignoring dispatch");
       return;
     }
 
-    // 2. Book Rider via real API
     const providerRes = await bookRider(orderId, merchantId, customerId);
 
-    // 3. Transition state
     const newState = transition(orderState, { 
       type: "RIDER_ASSIGNED", 
       trackingUrl: providerRes.trackingUrl 
     });
 
-    // 4. Persist
     await sql`
       UPDATE orders 
-      SET state = ${jsonb(newState)}, updated_at = now() 
-      WHERE id = ${orderId}
-    `;
+      SET state = ${jsonb(newState)}, status = 'processing'::order_status, updated_at = now() 
+      WHERE id = ${orderId}::uuid
+    `.catch(err => {
+      logger.error({ err, orderId }, "Failed to update order in DB");
+    });
 
-    // 5. Notify Customer & Vendor appropriately
     if (providerRes.trackingUrl === "MANUAL_DISPATCH") {
       await sendCustomerMessage({
         toPhone: customerId,
         text: `📦 Good news! Your payment is confirmed. The store is packaging your order and arranging direct delivery. You will receive dispatch updates shortly! 🎉`
       }, phoneNumberId, merchantId);
 
-      // Alert vendor of manual dispatch requirement
       try {
         const vendor = await sql<{ contact_phone: string }[]>`
-          SELECT contact_phone FROM merchants WHERE id = ${merchantId} LIMIT 1
-        `;
+          SELECT contact_phone FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+        `.catch(() => []);
         if (vendor.length && vendor[0].contact_phone) {
           await sendCustomerMessage({
             toPhone: vendor[0].contact_phone,

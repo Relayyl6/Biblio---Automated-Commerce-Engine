@@ -59,7 +59,7 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
       SELECT merchant_id FROM vendors
       WHERE personal_number = ${fromPhone} OR business_line_number = ${fromPhone}
       LIMIT 1
-    `;
+    `.catch(() => []);
     
     const merchantId = vendorRows[0]?.merchant_id;
     if (merchantId) {
@@ -72,12 +72,12 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
     }
 
     // 2. Check if the sender is a Customer (Phase 2 Offline Escalation)
-    const customerRows = await sql<{ id: string, merchant_id: string }[]>`
-      SELECT id, merchant_id FROM customers 
-      WHERE phone = ${fromPhone}
-      ORDER BY updated_at DESC
+    const customerRows = await sql<{ merchant_id: string }[]>`
+      SELECT merchant_id FROM customer_merchant_links 
+      WHERE customer_id = ${fromPhone} OR customer_id = ${'+' + fromPhone}
+      ORDER BY created_at DESC
       LIMIT 1
-    `;
+    `.catch(() => []);
 
     const customerMatch = customerRows[0];
     if (customerMatch) {
@@ -108,7 +108,7 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
   }
 });
 
-const port = Number(process.env.PORT || 3005);
+const port = Number(process.env.SMS_WEBHOOK_PORT || 3006);
 app.listen({ port, host: "0.0.0.0" }, (err, address) => {
   if (err) {
     logger.error(err.message, { err });
@@ -116,4 +116,3 @@ app.listen({ port, host: "0.0.0.0" }, (err, address) => {
   }
   logger.log(`[smsWebhook] Server listening at ${address}`);
 });
-

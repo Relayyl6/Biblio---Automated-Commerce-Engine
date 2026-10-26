@@ -9,8 +9,8 @@ import { handleReviewRequest } from "./flows/postServiceReviewFlow.js";
 import { handleLoyaltyCheck } from "./flows/loyaltyMilestoneFlow.js";
 import { setupNightlyRetentionFlow } from "./flows/nightlyRetentionFlow.js";
 import { handleWebhookFanning } from "./flows/webhookDispatcher.js";
-import { setupLogisticsWorker } from "../../logistics-coordination/src/index.js";
-import { sendEscalationSms } from "../../comms-router/src/index.js";
+import { setupLogisticsWorker, handleDispatchOrderJob } from "../../logistics-coordination/src/index.js";
+import { sendEscalationSms, sendCustomerMessage, setupOutboundWorker } from "../../comms-router/src/index.js";
 import { setupOutboxRelay } from "./workers/outboxRelay.js";
 
 async function main() {
@@ -42,6 +42,15 @@ async function main() {
           case "escalation_sms":
             await sendEscalationSms(job.data.toPhone, job.data.message);
             break;
+          case "dispatch_order":
+            await handleDispatchOrderJob(job.data);
+            break;
+          case "whatsapp_outbound":
+            await sendCustomerMessage({
+              toPhone: job.data.customerId || job.data.customerPhone || job.data.toPhone,
+              text: job.data.text
+            }, undefined, job.data.merchantId);
+            break;
           default:
             logger.warn(`[EventOrchestrator] Unhandled domain event: ${job.name}`);
         }
@@ -58,9 +67,9 @@ async function main() {
 
   // Initialize other background flows that are purely cron-based
   const retentionWorker = await setupNightlyRetentionFlow();
-
   const logisticsWorker = await setupLogisticsWorker();
-  const allWorkers = [domainWorker, retentionWorker, logisticsWorker];
+  const outboundWorkers = setupOutboundWorker();
+  const allWorkers = [domainWorker, retentionWorker, logisticsWorker, ...outboundWorkers];
   await setupOutboxRelay();
 
   logger.log("[EventOrchestrator] All flows initialized and listening.");

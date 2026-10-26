@@ -11,10 +11,9 @@ export class RetentionApprovalGate {
   async approveAndSend(draftId: string, merchantId: string): Promise<boolean> {
     try {
       const drafts = await sql<any[]>`
-        SELECT d.id, d.message_draft, d.status, c.phone
+        SELECT d.id, d.customer_id, d.message_draft, d.status
         FROM winback_drafts d
-        JOIN customers c ON d.customer_id = c.id
-        WHERE d.id = ${draftId} AND d.merchant_id = ${merchantId}
+        WHERE d.id = ${draftId} AND d.merchant_id = ${merchantId}::uuid
       `;
 
       if (drafts.length === 0) {
@@ -24,7 +23,7 @@ export class RetentionApprovalGate {
 
       const draft = drafts[0];
 
-      if (draft.status !== 'pending_approval') {
+      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft') {
         logger.warn('Draft is not pending approval', { draftId, status: draft.status });
         return false;
       }
@@ -35,14 +34,15 @@ export class RetentionApprovalGate {
         WHERE id = ${draftId}
       `;
 
-      if (draft.phone) {
+      const targetPhone = draft.customer_id;
+      if (targetPhone) {
         await outboundQueue.add('send_system_message', {
           merchantId,
-          customerId: draft.phone,
+          customerId: targetPhone,
           text: draft.message_draft,
           source: 'system'
         });
-        logger.log('Winback message dispatched to outbound queue', { draftId });
+        logger.log('Winback message dispatched to outbound queue', { draftId, targetPhone });
       }
 
       return true;
@@ -57,7 +57,7 @@ export class RetentionApprovalGate {
       const result = await sql`
         UPDATE winback_drafts 
         SET status = 'rejected', updated_at = NOW() 
-        WHERE id = ${draftId} AND merchant_id = ${merchantId} AND status = 'pending_approval'
+        WHERE id = ${draftId} AND merchant_id = ${merchantId}::uuid
         RETURNING id
       `;
       return result.length > 0;

@@ -175,9 +175,20 @@ export class DataIntelligenceEngine {
   /**
    * Internal mechanism to flag behavioral anomalies across the network.
    */
-  private flagAnomaly(merchantId: string, anomalyType: string, context: unknown) {
+  private async flagAnomaly(merchantId: string, anomalyType: string, context: unknown) {
     logger.warn(`[DataIntel] ⚠️ Anomaly Detected [${anomalyType}] for merchant: ${merchantId}`);
-    // Emit to a specific alerting queue
+    try {
+      const { eventBus } = await import('../eventBus.js');
+      await eventBus.publish('anomaly_detected', { merchantId, anomalyType, context });
+      await this.auditLog({
+        service: 'data-intelligence',
+        merchantId,
+        action: `anomaly:${anomalyType}`,
+        metadata: { context } as Record<string, unknown>
+      });
+    } catch (e) {
+      logger.error('[DataIntel] Failed to emit anomaly event', e);
+    }
   }
 }
 

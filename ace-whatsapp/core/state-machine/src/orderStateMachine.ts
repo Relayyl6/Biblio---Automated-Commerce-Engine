@@ -1,3 +1,25 @@
+function mapStateToOrderStatus(status: string): string {
+  switch (status) {
+    case 'no_order':
+    case 'draft':
+    case 'awaiting_payment':
+      return 'pending';
+    case 'payment_verified':
+      return 'confirmed';
+    case 'rider_assigned':
+      return 'processing';
+    case 'in_transit':
+      return 'shipped';
+    case 'delivered':
+    case 'completed':
+      return 'delivered';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return 'pending';
+  }
+}
+
 // core/state-machine/src/orderStateMachine.ts
 //
 // THE CORE IDEA: `transition` is a pure function. Given the current state
@@ -222,7 +244,14 @@ export async function transitionAndEmit(
   if (!("code" in result)) {
     // It's a successful transition
     try {
-      await sql`UPDATE orders SET state = ${sql.json(result as any)}, updated_at = NOW() WHERE id = ${orderId}`;
+      const dbStatus = mapStateToOrderStatus((result as any).status);
+      await sql`
+        UPDATE orders 
+        SET state = ${sql.json(result as any)}, 
+            status = ${dbStatus}::order_status, 
+            updated_at = NOW() 
+        WHERE id = ${orderId}::uuid
+      `;
     } catch (err) {
       throw new Error(`Failed to update order state in DB: ${err}`);
     }
@@ -239,5 +268,20 @@ export async function transitionAndEmit(
     }
   }
   
-  return result;
+      // Telemetry and analytical state change capture
+    try {
+      const { dataIntelligence } = await import("@ace/shared/data-intelligence/engine.js");
+      await dataIntelligence.captureOrderStateChange({
+        merchantId,
+        customerId,
+        orderId,
+        fromState: currentState.status,
+        toState: (result as any).status,
+        timestamp: Date.now()
+      });
+    } catch (telemetryErr) {
+      // Non-blocking telemetry
+    }
+
+    return result;
 }

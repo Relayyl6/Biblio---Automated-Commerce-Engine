@@ -308,38 +308,49 @@ export default function PulseScreen() {
       </View>
 
       <SectionHeader title="The Oracle" c={c} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6 pb-2" contentContainerStyle={{ paddingRight: 24 }}>
-        {(data?.oracle_alerts || []).map((alert: any, idx: number) => {
-          const isWinback = alert.type === 'WINBACK';
-          const accentColor = isWinback ? '#F59E0B' : '#EF4444';
-          return (
-            <View
-              key={idx}
-              style={{ backgroundColor: c.surface, borderColor: c.border, borderLeftColor: accentColor }}
-              className="w-80 p-5 rounded-[24px] border border-l-4 mr-4"
-            >
-              <View className="flex-row items-center mb-2">
-                <Sparkles size={16} color={accentColor} />
-                <Text style={{ color: c.textPrimary }} className="font-bold ml-2">
-                  {isWinback ? 'VIP Win-Back' : 'Inventory Alert'}
-                </Text>
-              </View>
-              <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4">
-                {alert.message}
-              </Text>
-              <Pressable
-                onPress={() => router.push(isWinback ? '/inbox' : '/crm')}
-                style={{ backgroundColor: c.textPrimary }}
-                className="rounded-full py-2.5 items-center active:opacity-80"
+      {(data?.oracle_alerts || []).length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6 pb-2" contentContainerStyle={{ paddingRight: 24 }}>
+          {(data?.oracle_alerts || []).map((alert: any, idx: number) => {
+            const isWinback = alert.type === 'WINBACK';
+            const accentColor = isWinback ? '#F59E0B' : '#EF4444';
+            return (
+              <View
+                key={idx}
+                style={{ backgroundColor: c.surface, borderColor: c.border, borderLeftColor: accentColor }}
+                className="w-80 p-5 rounded-[24px] border border-l-4 mr-4"
               >
-                <Text style={{ color: c.bg }} className="font-bold text-sm">
-                  {isWinback ? 'Review Drafts' : 'Approve Restock'}
+                <View className="flex-row items-center mb-2">
+                  <Sparkles size={16} color={accentColor} />
+                  <Text style={{ color: c.textPrimary }} className="font-bold ml-2">
+                    {isWinback ? 'VIP Win-Back' : 'Inventory Alert'}
+                  </Text>
+                </View>
+                <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4">
+                  {alert.message}
                 </Text>
-              </Pressable>
-            </View>
-          );
-        })}
-      </ScrollView>
+                <Pressable
+                  onPress={() => router.push(isWinback ? '/inbox' : '/crm')}
+                  style={{ backgroundColor: c.textPrimary }}
+                  className="rounded-full py-2.5 items-center active:opacity-80"
+                >
+                  <Text style={{ color: c.bg }} className="font-bold text-sm">
+                    {isWinback ? 'Review Drafts' : 'Approve Restock'}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <View className="mx-6 p-4 rounded-2xl border flex-row items-center" style={{ backgroundColor: c.surface, borderColor: c.border }}>
+          <View className="w-8 h-8 rounded-full items-center justify-center mr-3" style={{ backgroundColor: c.accentSoft }}>
+            <Sparkles size={16} color={c.accent} />
+          </View>
+          <Text style={{ color: c.textSecondary }} className="text-xs flex-1">
+            Autonomous store intelligence active. All systems running nominal with zero escalations.
+          </Text>
+        </View>
+      )}
 
       <View className="mt-6">
         <SectionHeader title="Cash Flow" c={c} />
