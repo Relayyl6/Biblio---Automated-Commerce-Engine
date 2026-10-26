@@ -60,4 +60,11 @@ export class SupplierPinger {
       return null;
     }
   }
+
+  /**
+   * Alias for createRestockDraft to maintain seamless interop across workflows and negotiator tools.
+   */
+  async draftRestockOrder(item: InventoryItem): Promise<RestockDraft | null> {
+    return this.createRestockDraft(item);
+  }
 }

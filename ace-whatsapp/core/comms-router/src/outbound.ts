@@ -190,10 +190,10 @@ export function setupOutboundWorker() {
     const body = data.text || data.message || data.body;
 
     if (targetPhone && body) {
-      logger.info({ job: job.name, targetPhone, merchantId }, "[outboundWorker] Processing outbound message");
+      logger.info("[outboundWorker] Processing outbound message", { job: job.name, targetPhone, merchantId });
       await sendCustomerMessage({ toPhone: targetPhone, text: body }, undefined, merchantId);
     } else {
-      logger.warn({ data }, "[outboundWorker] Skipping invalid outbound message job payload");
+      logger.warn("[outboundWorker] Skipping invalid outbound message job payload", { data });
     }
   };
 

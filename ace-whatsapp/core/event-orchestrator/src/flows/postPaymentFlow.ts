@@ -76,7 +76,7 @@ export async function handlePaymentConfirmed(orderId: string, merchantId: string
       INSERT INTO dispatch_drafts (merchant_id, order_id, status)
       VALUES (${merchantId}::uuid, ${orderId}::uuid, 'pending')
     `.catch(err => {
-      logger.warn({ err, orderId }, 'Failed to insert dispatch draft');
+      logger.warn('Failed to insert dispatch draft', { err, orderId });
     });
   }
 }

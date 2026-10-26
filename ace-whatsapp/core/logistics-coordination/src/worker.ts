@@ -15,23 +15,31 @@ export async function handleDispatchOrderJob(payload: any) {
     const o = orderRows[0];
     const merchantRows = await sql`SELECT contact_phone, physical_address FROM merchants WHERE id = ${payload.merchantId}::uuid LIMIT 1`.catch(() => []);
     const m = merchantRows[0];
+    const customerPhone = payload.customerPhone || o?.state?.customerPhone || m?.contact_phone || 'Customer';
     fullPayload = {
       orderId: payload.orderId,
       merchantId: payload.merchantId,
-      customerPhone: payload.customerPhone || o?.state?.customerPhone || m?.contact_phone || 'Customer',
+      customerId: payload.customerId || o?.customer_id || customerPhone,
+      customerPhone,
+      totalWeightKg: payload.totalWeightKg || 1,
+      itemsDescription: payload.itemsDescription || 'Order Package',
+      declaredValue: payload.declaredValue || Number(o?.total_amount || 5000),
       pickupAddress: payload.pickupAddress || {
         street: m?.physical_address?.street || m?.physical_address?.address || '12 Broad Street',
         city: m?.physical_address?.city || 'Ikeja',
         state: m?.physical_address?.state || 'Lagos',
-        country: 'Nigeria'
+        country: 'Nigeria',
+        contactName: 'Merchant Store',
+        contactPhone: m?.contact_phone || '08000000000'
       },
       dropoffAddress: payload.dropoffAddress || {
         street: o?.state?.shipping?.destination?.street || o?.pickup_address || 'Lagos Island',
         city: 'Lagos',
         state: 'Lagos',
-        country: 'Nigeria'
-      },
-      items: payload.items || o?.items || [{ name: 'Order Package', quantity: 1, weightKg: 1 }]
+        country: 'Nigeria',
+        contactName: 'Customer',
+        contactPhone: customerPhone
+      }
     };
   }
 
@@ -46,7 +54,7 @@ export async function handleDispatchOrderJob(payload: any) {
           updated_at = NOW()
       WHERE id = ${payload.orderId}::uuid
     `.catch(err => {
-      logger.error({ err, orderId: payload.orderId }, 'Failed to update order status');
+      logger.error('Failed to update order status', { err, orderId: payload.orderId });
     });
     logger.log(`[LogisticsWorker] Order ${payload.orderId} dispatched via ${result.provider} (Tracking: ${result.trackingNumber})`);
     
@@ -60,7 +68,7 @@ export async function handleDispatchOrderJob(payload: any) {
         text: trackingMsg 
       })}::jsonb)
     `.catch(err => {
-      logger.error({ err, orderId: payload.orderId }, 'Failed to insert outbound tracking event');
+      logger.error('Failed to insert outbound tracking event', { err, orderId: payload.orderId });
     });
   } else {
     logger.error(`[LogisticsWorker] Auto-dispatch failed for ${payload.orderId}: ${result.error}`);

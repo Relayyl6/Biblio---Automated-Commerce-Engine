@@ -18,7 +18,31 @@ let memoryCachedRate: { rate: number; expiresAt: number } | null = null;
  * Tries primary free open API, then secondary fallback API.
  */
 async function fetchLiveRateFromApis(): Promise<number | null> {
-  // Provider 1: open.er-api.com
+  // Provider 1: APILayer Exchange Rates API (configured via APILAYER_API_KEY)
+  const apilayerKey = process.env.APILAYER_API_KEY || process.env.EXCHANGE_RATES_API_KEY;
+  if (apilayerKey) {
+    try {
+      const res = await fetch("https://api.apilayer.com/exchangerates_data/latest?base=USD&symbols=NGN", {
+        headers: {
+          "apikey": apilayerKey,
+          "User-Agent": "Biblio-Commerce-Engine/1.0",
+        },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        const rate = Number(data?.rates?.NGN);
+        if (rate && rate > 500 && rate < 5000) {
+          logger.info(`[FXService] Fetched live USD/NGN rate from APILayer: ₦${rate.toFixed(2)}`);
+          return rate;
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[FXService] APILayer FX API fetch failed: ${err.message}`);
+    }
+  }
+
+  // Provider 2: open.er-api.com (reliable open forex index)
   try {
     const res = await fetch("https://open.er-api.com/v6/latest/USD", {
       headers: { "User-Agent": "Biblio-Commerce-Engine/1.0" },
@@ -33,10 +57,10 @@ async function fetchLiveRateFromApis(): Promise<number | null> {
       }
     }
   } catch (err: any) {
-    logger.warn(`[FXService] Primary FX API fetch failed: ${err.message}`);
+    logger.warn(`[FXService] Primary open FX API fetch failed: ${err.message}`);
   }
 
-  // Provider 2: api.exchangerate-api.com
+  // Provider 3: api.exchangerate-api.com
   try {
     const res = await fetch("https://api.exchangerate-api.com/v4/latest/USD", {
       headers: { "User-Agent": "Biblio-Commerce-Engine/1.0" },

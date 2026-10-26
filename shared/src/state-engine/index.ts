@@ -5,6 +5,28 @@ import { sql, jsonb } from '../clients.js';
 
 export { TransitionError };
 
+function mapStateToOrderStatus(status: string): string {
+  switch (status) {
+    case 'no_order':
+    case 'draft':
+    case 'awaiting_payment':
+      return 'pending';
+    case 'payment_verified':
+      return 'confirmed';
+    case 'rider_assigned':
+      return 'processing';
+    case 'in_transit':
+      return 'shipped';
+    case 'delivered':
+    case 'completed':
+      return 'delivered';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return 'pending';
+  }
+}
+
 /**
  * Shared State Engine
  * 
@@ -23,16 +45,26 @@ export async function applyOrderEvent(
 
   // Skip no_order persistence
   if (nextState.status !== "no_order") {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerId);
+    const userId = isUuid ? customerId : null;
+    const dbStatus = mapStateToOrderStatus(nextState.status);
+
     await sql`
-      insert into orders (id, merchant_id, customer_id, state, updated_at)
+      insert into orders (id, tenant_id, user_id, state, status, items, updated_at)
       values (
-        ${nextState.orderId},
-        ${merchantId},
-        ${customerId},
+        ${nextState.orderId}::uuid,
+        ${merchantId}::uuid,
+        ${userId ? sql`${userId}::uuid` : null},
         ${jsonb(nextState)},
+        ${dbStatus}::order_status,
+        ${jsonb((nextState as any).items || [])},
         now()
       )
-      on conflict (id) do update set state = excluded.state, updated_at = now()
+      on conflict (id) do update 
+      set state = excluded.state, 
+          status = excluded.status, 
+          items = excluded.items, 
+          updated_at = now()
     `;
   }
 
