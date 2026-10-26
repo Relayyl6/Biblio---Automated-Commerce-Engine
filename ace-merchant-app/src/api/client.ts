@@ -5,7 +5,9 @@ import { useAuthStore } from '../store/authStore';
 // Production API endpoint with environment override
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
-  (__DEV__ ? 'http://10.104.150.253:3004' : 'https://api.biblio.africa');
+  (__DEV__
+    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://10.91.190.253:3004')
+    : 'https://api.biblio.africa');
 
 export const api = axios.create({
   baseURL: API_URL,

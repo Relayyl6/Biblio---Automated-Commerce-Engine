@@ -601,6 +601,82 @@ Merchants can operate and test their storefront directly on the same phone via W
 
 ---
 
+## 🚀 Quickstart & Local Testing Guide
+
+### 1. Prerequisites
+Ensure you have the following installed:
+- **Node.js** >= v20
+- **Redis** running locally (`redis://localhost:6379`) or via cloud Redis
+- **PostgreSQL** (Neon cloud connection string in `DATABASE_URL`)
+
+### 2. Environment Configuration
+Verify that `.env` in the root repository contains:
+```env
+DATABASE_URL=postgresql://neondb_owner:***@ep-***.us-east-2.aws.neon.tech/biblio?sslmode=require
+REDIS_URL=redis://localhost:6379
+MERCHANT_API_PORT=3004
+BAILEYS_GATEWAY_PORT=3005
+APILAYER_API_KEY=your_apilayer_key_here
+GROQ_API_KEY=your_groq_key_here
+ANTHROPIC_API_KEY=your_anthropic_key_here
+PAYSTACK_SECRET_KEY=your_paystack_key_here
+```
+
+### 3. Starting the Core Backend Services
+
+You can launch each service in its own terminal window:
+
+```bash
+# Terminal 1: Merchant API (Backend REST & Mobile Gateway on :3004)
+npm run merchant-api
+
+# Terminal 2: Baileys WhatsApp Gateway (Multi-session WhatsApp Manager on :3005)
+npm run baileys-gateway
+
+# Terminal 3: Comms Router & Outbound Queue Worker (Sliding Debounce)
+npm run comms-router
+
+# Terminal 4: Event Orchestrator (Retention, Logistics & Outbox Relays)
+npm run event-orchestrator
+```
+
+### 4. Starting the Mobile & Web Operator App
+
+Launch the merchant mobile app:
+
+```bash
+# Navigate to mobile app directory
+cd ace-merchant-app
+
+# Run in Web Browser (accessible at http://localhost:8081)
+npm run web
+
+# Or run in Expo Go / Android Emulator / iOS Simulator:
+npm run start
+```
+
+### 5. Verifying Live Endpoints
+Run quick verification checks from your terminal:
+```bash
+# Check Merchant API health
+curl http://localhost:3004/health
+# Response: {"ok":true}
+
+# Check Baileys Gateway health
+curl http://localhost:3005/health
+# Response: {"ok":true,"activeSessions":0,"sessions":[]}
+
+# Check Live Test Suite
+npm test
+# Result: 129 passed (129)
+
+# Verify Strict TypeScript Compilation
+npm run typecheck
+# Result: 0 errors
+```
+
+---
+
 ## Key Documents
 
 ### Product & Architecture

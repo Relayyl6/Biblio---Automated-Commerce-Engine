@@ -21,7 +21,7 @@ import {
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { colors, shadows } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { useVetoActions, useExecuteVetoAction, useVendorPresence, useUpdatePresence } from '../src/api/client';
+import { api, useVetoActions, useExecuteVetoAction, useVendorPresence, useUpdatePresence } from '../src/api/client';
 import { useAuthStore } from '../src/store/authStore';
 import { useAlert } from '../src/store/alertStore';
 import { LoadingScreen } from '../src/components/LoadingScreen';
@@ -92,7 +92,7 @@ export default function VetoPowerScreen() {
     try {
       alert.info('Export Started', 'Generating downloadable CSV audit log for your records.');
       // Direct API link for CSV export
-      const exportUrl = `http://localhost:3004/merchants/${merchantId}/veto/export`;
+      const exportUrl = `${api.defaults.baseURL || 'http://localhost:3004'}/merchants/${merchantId}/veto/export`;
       Linking.openURL(exportUrl).catch(() => {
         alert.success('Audit Log Ready', 'Audit log prepared with 25 records.');
       });
