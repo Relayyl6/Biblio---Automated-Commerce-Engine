@@ -15,7 +15,6 @@ import {
   ArrowUpRight,
   ChevronRight,
 } from 'lucide-react-native';
-import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -159,7 +158,7 @@ export default function PulseScreen() {
                 </Text>
               </View>
               <View style={{ backgroundColor: isDark ? '#15803D' : '#22C55E' }} className="w-12 h-12 rounded-2xl items-center justify-center">
-                <FontAwesome5 name="whatsapp" size={24} color="#FFFFFF" />
+                <MessageCircle size={24} color="#FFFFFF" />
               </View>
             </Pressable>
 
@@ -275,7 +274,7 @@ export default function PulseScreen() {
                         className="flex-row items-center px-2 py-0.5 rounded-full"
                       >
                         {isWhatsApp ? (
-                          <FontAwesome5 name="whatsapp" size={11} color="#22C55E" />
+                          <MessageCircle size={11} color="#22C55E" />
                         ) : (
                           <Package size={11} color={c.textTertiary} />
                         )}

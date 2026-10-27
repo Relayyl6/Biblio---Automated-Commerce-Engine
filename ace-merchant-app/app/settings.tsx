@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown, Coins, ShieldAlert, Trash2 } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown, Coins, ShieldAlert, Trash2, Sun, Moon } from 'lucide-react-native';
+import { useThemeStore } from '../src/store/themeStore';
 import { colors } from '../theme';
 import { useAuthStore } from '../src/store/authStore';
 import { useAlert } from '../src/store/alertStore';
@@ -34,7 +35,8 @@ const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: str
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { colorScheme } = useColorScheme();
+  const { colorScheme, setColorScheme } = useColorScheme();
+  const { theme, setTheme } = useThemeStore();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const alert = useAlert();
   const logout = useAuthStore(state => state.logout);
@@ -95,6 +97,20 @@ export default function SettingsScreen() {
             subtitle={config?.business_policies ? (config.business_policies.length > 50 ? config.business_policies.substring(0, 50) + '...' : config.business_policies) : 'Returns, warranty, customer policies & SLAs.'}
             icon={ShieldCheck}
             onPress={() => setActivePanel('profile')}
+            isLast
+          />
+        </Section>
+
+        <Section title="Appearance & Display" icon={Sun} delay={40}>
+          <ToggleRow
+            title="Dark Mode"
+            subtitle={colorScheme === 'dark' ? 'Dark theme active (optimized for OLED)' : 'Light theme active'}
+            value={colorScheme === 'dark'}
+            onValueChange={(enableDark) => {
+              const next = enableDark ? 'dark' : 'light';
+              setTheme(next);
+              setColorScheme(next);
+            }}
             isLast
           />
         </Section>

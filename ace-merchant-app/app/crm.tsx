@@ -12,8 +12,8 @@ import {
   RefreshCw,
   ExternalLink,
   Check,
+  MessageCircle,
 } from 'lucide-react-native';
-import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { colors, shadows } from '../theme';
@@ -29,6 +29,8 @@ import {
   useUpdateProduct,
   useDeleteProduct,
   useSyncWhatsAppCatalog,
+  useStatusSettings,
+  useVendorStatus,
 } from '../src/api/client';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
@@ -73,6 +75,12 @@ export default function CRMScreen() {
   const updateMutation = useUpdateProduct();
   const deleteMutation = useDeleteProduct();
   const syncMutation = useSyncWhatsAppCatalog();
+  const { data: statusSettings } = useStatusSettings();
+  const { data: vendorStatus } = useVendorStatus();
+  const isWhatsAppConnected =
+    statusSettings?.settings?.session_status === 'connected' ||
+    vendorStatus?.dbStatus === 'connected' ||
+    vendorStatus?.connected === true;
 
   // Auto-open panel if navigated with action=add
   useEffect(() => {
@@ -246,14 +254,21 @@ export default function CRMScreen() {
               </Pressable>
 
               <Pressable
-                onPress={() => router.push('/more')}
+                onPress={isWhatsAppConnected ? handleSyncWhatsApp : () => router.push('/(tabs)/more')}
+                disabled={syncMutation.isPending}
                 style={{ backgroundColor: '#22C55E1A', borderColor: '#22C55E40' }}
                 className="flex-1 py-3.5 rounded-2xl border items-center justify-center flex-row active:opacity-80"
               >
-                <FontAwesome5 name="whatsapp" size={16} color="#22C55E" />
-                <Text style={{ color: '#22C55E' }} className="font-bold text-xs ml-2">
-                  Connect WhatsApp
-                </Text>
+                {syncMutation.isPending ? (
+                  <InlineLoadingDots color="#22C55E" />
+                ) : (
+                  <>
+                    <MessageCircle size={16} color="#22C55E" />
+                    <Text style={{ color: '#22C55E' }} className="font-bold text-xs ml-2">
+                      {isWhatsAppConnected ? 'Sync WhatsApp Catalog' : 'Link WhatsApp'}
+                    </Text>
+                  </>
+                )}
               </Pressable>
             </View>
           </View>
@@ -277,7 +292,7 @@ export default function CRMScreen() {
                         </Text>
                         {isWhatsApp && (
                           <View style={{ backgroundColor: '#22C55E1A' }} className="px-2 py-0.5 rounded-full flex-row items-center">
-                            <FontAwesome5 name="whatsapp" size={10} color="#22C55E" />
+                            <MessageCircle size={10} color="#22C55E" />
                             <Text style={{ color: '#22C55E' }} className="text-[10px] font-bold ml-1">WA</Text>
                           </View>
                         )}
@@ -430,7 +445,7 @@ export default function CRMScreen() {
               className="p-4 rounded-2xl border mb-6"
             >
               <View className="flex-row items-center mb-1.5">
-                <FontAwesome5 name="whatsapp" size={16} color="#22C55E" />
+                <MessageCircle size={16} color="#22C55E" />
                 <Text style={{ color: c.textPrimary }} className="font-bold text-xs ml-2">
                   Already have a WhatsApp Business Catalog?
                 </Text>

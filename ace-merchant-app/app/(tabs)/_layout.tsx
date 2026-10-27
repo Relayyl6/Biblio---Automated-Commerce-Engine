@@ -125,7 +125,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       >
         {!showMore ? (
           <Animated.View entering={FadeInLeft.springify()} exiting={FadeOutLeft} style={{ flexDirection: 'row', flex: 1, justifyContent: 'space-around' }}>
-            {state.routes.map((route: any, index: number) => {
+            {state.routes.filter((r: any) => r.name !== 'tokens').map((route: any, index: number) => {
               const isFocused = state.index === index;
               const Icon = icons[route.name] ?? Home;
 
@@ -176,7 +176,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
             >
               <TabIcon Icon={User} isFocused={state.index === 3} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/tokens' as any); }} hitSlop={10}>
+            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.navigate('/(tabs)/tokens' as any); }} hitSlop={10}>
               <TabIcon Icon={Coins} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
             <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/settings' as any); }} hitSlop={10}>
@@ -231,6 +231,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="chats" options={{ title: 'Chats' }} />
       <Tabs.Screen name="inbox" options={{ title: 'Inbox' }} />
       <Tabs.Screen name="more" options={{ title: 'More' }} />
+      <Tabs.Screen name="tokens" options={{ title: 'Tokens' }} />
     </Tabs>
   );
 }

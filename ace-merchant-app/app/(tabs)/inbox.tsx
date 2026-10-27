@@ -2,15 +2,16 @@ import React, { useMemo, useState, useRef } from 'react';
 import { View, Text, StatusBar, ScrollView, Pressable } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SwipeableDraftCard } from '../../src/components/SwipeableDraftCard';
-import { CheckCircle2, ListFilter, CheckSquare, RotateCcw, Sparkles, MessageCircle } from 'lucide-react-native';
+import { TinderCardStack } from '../../src/components/TinderCardStack';
+import { CheckCircle2, ListFilter, RotateCcw, MessageCircle, Layers, LayoutGrid } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useInbox, useExecuteInboxAction, useSeedInboxCards } from '../../src/api/client';
+import { useAuthStore } from '../../src/store/authStore';
 import { colors } from '../../theme';
 import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
-import { InlineLoadingDots } from '../../src/components/PulsingSkeleton';
 
 type FilterKey = 'all' | 'priority' | 'restocks' | 'snoozed';
 
@@ -28,6 +29,9 @@ export default function InboxScreen() {
   const c = isDark ? colors.dark : colors.light;
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  const merchantId = useAuthStore((state) => state.merchantId);
+
+  const [viewMode, setViewMode] = useState<'stack' | 'list'>('stack');
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [undoToast, setUndoToast] = useState<{ visible: boolean; action: string; cardId: string | null }>({
     visible: false,
@@ -58,19 +62,21 @@ export default function InboxScreen() {
   }, [cards, activeFilter]);
 
   const removeCard = (id: string, actionStr: string) => {
-    queryClient.setQueryData(['inboxCards'], (oldData: any[]) => (oldData ? oldData.filter(card => card.id !== id) : []));
+    queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
+      oldData ? oldData.filter((card) => card.id !== id) : []
+    );
     showUndoToast(id, actionStr);
   };
 
   const showUndoToast = (id: string, actionStr: string) => {
     setUndoToast({ visible: true, action: actionStr, cardId: id });
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setUndoToast(prev => ({ ...prev, visible: false })), 5000);
+    timeoutRef.current = setTimeout(() => setUndoToast((prev) => ({ ...prev, visible: false })), 4500);
   };
 
   const handleUndo = () => {
     if (undoToast.cardId) {
-      queryClient.invalidateQueries({ queryKey: ['inboxCards'] });
+      queryClient.invalidateQueries({ queryKey: ['inboxCards', merchantId] });
     }
     setUndoToast({ visible: false, action: '', cardId: null });
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -91,14 +97,6 @@ export default function InboxScreen() {
     removeCard(id, 'Snoozed');
   };
 
-  const handleGenerateSampleCards = async () => {
-    try {
-      await seedMutation.mutateAsync();
-    } catch (err: any) {
-      console.warn('Seed sample cards error:', err?.message);
-    }
-  };
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View
@@ -109,28 +107,58 @@ export default function InboxScreen() {
         className="flex-1"
       >
         {/* Header */}
-        <View className="px-4 mb-2 flex-row justify-between items-start">
-          <View className="flex-1 pr-3">
+        <View className="px-4 mb-2 flex-row justify-between items-center">
+          <View className="flex-1 pr-2">
             <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
               Inbox
             </Text>
             <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-              Swipe right to approve AI drafts • Swipe left to reject
+              Swipe right to approve • Swipe left to reject
             </Text>
           </View>
-          <View className="flex-row">
+
+          {/* Mode & Action Pill Controls */}
+          <View className="flex-row items-center">
+            {/* View Mode Toggle: Card vs Grid */}
+            <View
+              style={{ backgroundColor: c.surface, borderColor: c.border }}
+              className="flex-row items-center p-0.5 rounded-full border mr-2"
+            >
+              <Pressable
+                onPress={() => setViewMode('stack')}
+                style={{ backgroundColor: viewMode === 'stack' ? c.accent : 'transparent' }}
+                className="px-2.5 py-1 rounded-full flex-row items-center active:opacity-80"
+              >
+                <Layers size={13} color={viewMode === 'stack' ? (isDark ? '#090A0C' : '#FFFFFF') : c.textTertiary} />
+                <Text
+                  style={{ color: viewMode === 'stack' ? (isDark ? '#090A0C' : '#FFFFFF') : c.textTertiary }}
+                  className="text-[11px] font-bold ml-1"
+                >
+                  Cards
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setViewMode('list')}
+                style={{ backgroundColor: viewMode === 'list' ? c.accent : 'transparent' }}
+                className="px-2.5 py-1 rounded-full flex-row items-center active:opacity-80"
+              >
+                <LayoutGrid size={13} color={viewMode === 'list' ? (isDark ? '#090A0C' : '#FFFFFF') : c.textTertiary} />
+                <Text
+                  style={{ color: viewMode === 'list' ? (isDark ? '#090A0C' : '#FFFFFF') : c.textTertiary }}
+                  className="text-[11px] font-bold ml-1"
+                >
+                  Grid
+                </Text>
+              </Pressable>
+            </View>
+
             <Pressable
               onPress={() => router.push('/chats')}
               style={{ backgroundColor: c.surface, borderColor: c.border }}
-              className="w-9 h-9 rounded-full border items-center justify-center mr-2 active:opacity-70"
+              className="w-8 h-8 rounded-full border items-center justify-center active:opacity-70"
             >
-              <MessageCircle size={16} color={c.textPrimary} />
-            </Pressable>
-            <Pressable
-              style={{ backgroundColor: c.textPrimary }}
-              className="w-9 h-9 rounded-full items-center justify-center active:opacity-70"
-            >
-              <ListFilter size={16} color={c.bg} />
+              <MessageCircle size={15} color={c.textPrimary} />
             </Pressable>
           </View>
         </View>
@@ -183,27 +211,38 @@ export default function InboxScreen() {
           </ScrollView>
         </View>
 
-        {/* Cards or Empty State */}
+        {/* Cards, Stack Deck, or Empty State */}
         {visibleCards.length > 0 ? (
-          <ScrollView
-            className="flex-1 px-4 pt-2"
-            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 88 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {visibleCards.map((card: any, i: number) => (
-              <Animated.View key={card.id} entering={FadeInDown.delay(i * 40).springify()}>
-                <SwipeableDraftCard
-                  id={card.id}
-                  type={card.type}
-                  title={card.title}
-                  subtitle={card.subtitle}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onSnooze={handleSnooze}
-                />
-              </Animated.View>
-            ))}
-          </ScrollView>
+          viewMode === 'stack' ? (
+            <View className="flex-1 px-4 pt-1" style={{ paddingBottom: Math.max(insets.bottom, 16) + 80 }}>
+              <TinderCardStack
+                cards={visibleCards}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onSnooze={handleSnooze}
+              />
+            </View>
+          ) : (
+            <ScrollView
+              className="flex-1 px-4 pt-2"
+              contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 88 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {visibleCards.map((card: any, i: number) => (
+                <Animated.View key={card.id} entering={FadeInDown.delay(i * 40).springify()}>
+                  <SwipeableDraftCard
+                    id={card.id}
+                    type={card.type}
+                    title={card.title}
+                    subtitle={card.subtitle}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                    onSnooze={handleSnooze}
+                  />
+                </Animated.View>
+              ))}
+            </ScrollView>
+          )
         ) : (
           <ScrollView
             className="flex-1 px-4"
@@ -261,11 +300,11 @@ export default function InboxScreen() {
           </ScrollView>
         )}
 
-        {/* Undo Toast */}
+        {/* Undo Toast - Slow, non-bouncy slide up animation */}
         {undoToast.visible && (
           <Animated.View
-            entering={SlideInDown.springify().damping(16)}
-            exiting={SlideOutDown}
+            entering={SlideInDown.duration(400)}
+            exiting={SlideOutDown.duration(280)}
             style={{
               backgroundColor: isDark ? c.surfaceAlt : c.textPrimary,
               bottom: Math.max(insets.bottom, 16) + 76,

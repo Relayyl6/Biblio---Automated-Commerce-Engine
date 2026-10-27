@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../theme';
-import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
+import { Camera, Video, Tv } from 'lucide-react-native';
 import { usePairWhatsApp, useMerchantConfig, useStatusSettings, useVendorStatus } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/authStore';
 import { useAlert } from '../../src/store/alertStore';
@@ -106,13 +106,18 @@ export default function MoreScreen() {
   const isWhatsAppConnected =
     statusSettings?.settings?.session_status === 'connected' ||
     vendorStatus?.dbStatus === 'connected' ||
-    vendorStatus?.connected === true ||
-    Boolean(merchantConfig?.phone_number_id);
+    vendorStatus?.connected === true;
 
   const connectedPhoneNumber =
     vendorStatus?.businessLineNumber ||
     statusSettings?.settings?.business_line_number ||
-    merchantConfig?.phone_number_id;
+    (isWhatsAppConnected ? merchantConfig?.phone_number_id : null);
+
+  React.useEffect(() => {
+    if (!phoneToPair && merchantConfig?.phone_number_id) {
+      setPhoneToPair(merchantConfig.phone_number_id.replace(/^\+/, ''));
+    }
+  }, [merchantConfig?.phone_number_id]);
 
   const storeName = merchantConfig?.name || 'Your Store';
   const storeDialect = merchantConfig?.dialect ? `${merchantConfig.dialect.charAt(0).toUpperCase() + merchantConfig.dialect.slice(1)} Pidgin` : 'Mixed Pidgin';
@@ -209,7 +214,7 @@ export default function MoreScreen() {
                 <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
                   {isWhatsAppConnected
                     ? `Linked: +${connectedPhoneNumber || 'Active'} • 24/7 background session`
-                    : 'Link Biblo as a companion device'}
+                    : 'Not Linked • Tap to link your WhatsApp phone'}
                 </Text>
               </View>
               {!showPairing && (
@@ -228,7 +233,7 @@ export default function MoreScreen() {
                     style={{ color: isWhatsAppConnected ? '#22C55E' : '#FFFFFF' }}
                     className="font-bold text-xs"
                   >
-                    {isWhatsAppConnected ? 'Live & Persistent' : 'Connect'}
+                    {isWhatsAppConnected ? 'Live & Persistent' : 'Link Phone'}
                   </Text>
                 </View>
               )}
@@ -322,7 +327,7 @@ export default function MoreScreen() {
             className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
           >
              <View style={{ backgroundColor: '#E1306C1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <FontAwesome5 name="instagram" size={20} color="#E1306C" />
+               <Camera size={20} color="#E1306C" />
              </View>
              <View className="flex-1">
                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Instagram DMs</Text>
@@ -341,7 +346,7 @@ export default function MoreScreen() {
             className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
           >
              <View style={{ backgroundColor: '#00F2FE1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <FontAwesome5 name="tiktok" size={20} color="#00F2FE" />
+               <Video size={20} color="#00F2FE" />
              </View>
              <View className="flex-1">
                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">TikTok Shop</Text>
@@ -360,7 +365,7 @@ export default function MoreScreen() {
             className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
           >
              <View style={{ backgroundColor: '#9146FF1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <FontAwesome5 name="twitch" size={20} color="#9146FF" />
+               <Tv size={20} color="#9146FF" />
              </View>
              <View className="flex-1">
                <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Twitch Chat</Text>

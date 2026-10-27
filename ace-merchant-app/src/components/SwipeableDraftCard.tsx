@@ -4,6 +4,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -29,6 +30,7 @@ export interface DraftCardProps {
 export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onReject, onSnooze }: DraftCardProps) {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const [isDismissed, setIsDismissed] = React.useState(false);
 
   const translateX = useSharedValue(0);
 
@@ -38,11 +40,13 @@ export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onRej
     })
     .onEnd(() => {
       if (translateX.value > SWIPE_THRESHOLD) {
-        translateX.value = withSpring(SCREEN_WIDTH, {}, () => {
+        translateX.value = withTiming(SCREEN_WIDTH * 1.5, { duration: 200 }, () => {
+          runOnJS(setIsDismissed)(true);
           runOnJS(onApprove)(id);
         });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        translateX.value = withSpring(-SCREEN_WIDTH, {}, () => {
+        translateX.value = withTiming(-SCREEN_WIDTH * 1.5, { duration: 200 }, () => {
+          runOnJS(setIsDismissed)(true);
           runOnJS(onReject)(id);
         });
       } else {
@@ -64,10 +68,12 @@ export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onRej
     };
   });
 
+  if (isDismissed) return null;
+
   return (
     <View className="mb-4 relative rounded-[24px] overflow-hidden" style={{ minHeight: 100 }}>
       {/* Background action indicators */}
-      <Animated.View style={[bgStyle]} className="absolute inset-0 flex-row items-center justify-between px-6 rounded-[24px]">
+      <Animated.View style={[bgStyle]} className="absolute inset-0 flex-row items-center justify-between px-4 rounded-[24px]">
         <View className="flex-row items-center">
           <Check size={28} color={c.success} />
           <Text style={{ color: c.success }} className="ml-2 font-bold text-lg">Execute</Text>

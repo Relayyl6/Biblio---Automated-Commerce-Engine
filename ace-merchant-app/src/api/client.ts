@@ -180,12 +180,16 @@ export const useInbox = () => {
 };
 
 export const useExecuteInboxAction = () => {
+  const queryClient = useQueryClient();
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async ({ cardId, action, payload }: { cardId: string, action: 'approve' | 'reject' | 'snooze', payload?: any }) => {
       const res = await api.post(`/merchants/${merchantId}/inbox/${cardId}/execute`, { action, payload });
       return res.data;
-    }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inboxCards', merchantId] });
+    },
   });
 };
 

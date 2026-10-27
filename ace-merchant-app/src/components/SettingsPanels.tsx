@@ -507,7 +507,7 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const [address, setAddress] = useState('');
   const [supportsPickup, setSupportsPickup] = useState(true);
   const companionConnected = statusSettings?.settings?.session_status === 'connected' || vendorStatus?.dbStatus === 'connected';
-  const metaConnected = Boolean(config?.whatsapp_catalog_id || config?.phone_number_id || companionConnected);
+  const metaConnected = Boolean(config?.whatsapp_catalog_id || companionConnected);
 
   useEffect(() => {
     if (config) {

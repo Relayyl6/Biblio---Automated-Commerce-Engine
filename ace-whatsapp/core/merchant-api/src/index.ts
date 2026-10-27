@@ -1339,15 +1339,16 @@ app.post("/vendors/:vendorId/pair", async (req, reply) => {
 app.get("/vendors/:vendorId/status", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
 
-  const rows = await sql<{ session_status: string; business_line_number: string | null }[]>`
-    SELECT session_status, business_line_number FROM vendors WHERE id = ${vendorId} LIMIT 1
+  const rows = await sql<{ id: string; session_status: string; business_line_number: string | null }[]>`
+    SELECT id, session_status, business_line_number FROM vendors WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid LIMIT 1
   `;
   if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
 
   // Also check live status from the Baileys gateway
   let gatewayStatus: Record<string, unknown> = {};
+  const activeVendorId = rows[0].id;
   try {
-    const res = await fetch(`${BAILEYS_GATEWAY_URL}/sessions/${vendorId}`);
+    const res = await fetch(`${BAILEYS_GATEWAY_URL}/sessions/${activeVendorId}`);
     if (res.ok) gatewayStatus = await res.json() as Record<string, unknown>;
   } catch {
     // Gateway may not be running — return DB status only
