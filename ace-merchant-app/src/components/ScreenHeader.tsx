@@ -56,11 +56,11 @@ export function ScreenHeader({ title, subtitle, variant = 'floating', rightActio
 
   if (variant === 'bar') {
     return (
-      <View style={{ backgroundColor: c.surface, borderBottomColor: c.border, borderBottomWidth: 1, paddingTop: topPad }} className="pb-3 px-6">
+      <View style={{ backgroundColor: c.surface, borderBottomColor: c.border, borderBottomWidth: 1, paddingTop: topPad }} className="pb-3 px-4">
         {content}
       </View>
     );
   }
 
-  return <View style={{ paddingTop: topPad }} className="px-6 mb-2">{content}</View>;
+  return <View style={{ paddingTop: topPad }} className="px-4 mb-2">{content}</View>;
 }

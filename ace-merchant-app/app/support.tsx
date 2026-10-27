@@ -264,7 +264,7 @@ export default function SupportScreen() {
           borderBottomColor: c.border,
           borderBottomWidth: 1,
         }}
-        className="px-6 pt-14 pb-3 flex-row items-center justify-between"
+        className="px-4 pt-14 pb-3 flex-row items-center justify-between"
       >
         <View className="flex-row items-center">
           <Pressable
@@ -305,7 +305,7 @@ export default function SupportScreen() {
       </View>
 
       <ScrollView
-        className="flex-1 pt-3 px-6"
+        className="flex-1 pt-3 px-4"
         contentContainerStyle={{ paddingBottom: 100 }}
         keyboardShouldPersistTaps="handled"
       >
@@ -543,7 +543,7 @@ export default function SupportScreen() {
         <View style={{ flex: 1, backgroundColor: c.bg }}>
           <View
             style={{ backgroundColor: c.surface, borderBottomColor: c.border }}
-            className="px-6 py-4 border-b flex-row items-center justify-between"
+            className="px-4 py-4 border-b flex-row items-center justify-between"
           >
             <View>
               <Text style={{ color: c.textPrimary }} className="text-base font-bold">
@@ -562,7 +562,7 @@ export default function SupportScreen() {
             </Pressable>
           </View>
 
-          <ScrollView className="flex-1 px-6 pt-5" contentContainerStyle={{ paddingBottom: 60 }}>
+          <ScrollView className="flex-1 px-4 pt-5" contentContainerStyle={{ paddingBottom: 60 }}>
             <Text style={{ color: c.textPrimary }} className="text-2xl font-black tracking-tight mb-2">
               Why Biblio asks for your birthday for Merchant Accounts
             </Text>

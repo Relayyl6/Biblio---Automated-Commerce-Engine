@@ -11,12 +11,12 @@ type Props = {
   placeholder?: string;
   secure?: boolean;
   helper?: string;
+  multiline?: boolean;
 };
 
-/** Freeform labeled text field for panel content (API keys, addresses) —
- *  InputRow in SettingsRows.tsx is numeric-only, this one isn't, and it
- *  supports a show/hide toggle for secrets. */
-export function PanelField({ label, value, onChangeText, placeholder, secure, helper }: Props) {
+/** Freeform labeled text field for panel content (API keys, addresses, policies) —
+ *  supports secret toggling as well as multiline text areas. */
+export function PanelField({ label, value, onChangeText, placeholder, secure, helper, multiline }: Props) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
@@ -27,9 +27,12 @@ export function PanelField({ label, value, onChangeText, placeholder, secure, he
       <Text style={{ color: c.textPrimary }} className="font-semibold text-sm mb-2">
         {label}
       </Text>
-      <View style={{ backgroundColor: isDark ? '#1F2937' : '#F1F5F9', borderColor: c.border }} className="flex-row items-center border rounded-xl px-4 h-12">
+      <View
+        style={{ backgroundColor: isDark ? '#1F2937' : '#F1F5F9', borderColor: c.border }}
+        className={`flex-row border rounded-xl px-4 ${multiline ? 'min-h-[88px] py-3 items-start' : 'h-12 items-center'}`}
+      >
         <TextInput
-          style={{ color: c.textPrimary }}
+          style={[{ color: c.textPrimary }, multiline ? { textAlignVertical: 'top' } : undefined]}
           className="flex-1 text-base"
           value={value}
           onChangeText={onChangeText}
@@ -38,6 +41,7 @@ export function PanelField({ label, value, onChangeText, placeholder, secure, he
           secureTextEntry={secure && !reveal}
           autoCapitalize="none"
           autoCorrect={false}
+          multiline={multiline}
         />
         {secure && (
           <Pressable onPress={() => setReveal(r => !r)} hitSlop={8}>

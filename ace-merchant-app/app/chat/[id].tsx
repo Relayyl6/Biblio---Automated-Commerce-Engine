@@ -29,7 +29,7 @@ export default function ChatDetailScreen() {
 
   const [replyText, setReplyText] = useState('');
   const [showOptionsModal, setShowOptionsModal] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
 
   const isHumanOverride = chatData?.isHumanOverride || false;
   const messages: ChatMessage[] = chatData?.messages || [];

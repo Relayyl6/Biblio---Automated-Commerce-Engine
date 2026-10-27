@@ -119,7 +119,7 @@ export default function VetoPowerScreen() {
       />
 
       {/* Tabs */}
-      <View className="px-6 mb-3 flex-row gap-2">
+      <View className="px-4 mb-3 flex-row gap-2">
         <Pressable
           onPress={() => setActiveTab('queue')}
           style={{

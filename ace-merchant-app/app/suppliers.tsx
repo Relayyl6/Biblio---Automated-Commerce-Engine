@@ -142,12 +142,12 @@ export default function SuppliersScreen() {
           </Pressable>
         }
       />
-      <View className="px-6 mb-2.5">
+      <View className="px-4 mb-2.5">
         <SearchBar value={searchQuery} onChangeText={setSearchQuery} placeholder="Search suppliers, groups, categories..." variant="pill" />
       </View>
 
       <ScrollView className="flex-1 pt-2" contentContainerStyle={{ paddingBottom: 100 }}>
-        <View className="px-6 mb-4 flex-row justify-between items-center">
+        <View className="px-4 mb-4 flex-row justify-between items-center">
           <Text style={{ color: c.textSecondary }} className="text-sm font-bold uppercase tracking-wider">
             Connected Sourcing Channels
           </Text>
@@ -163,7 +163,7 @@ export default function SuppliersScreen() {
             const Icon = getIconForType(node.channelType);
             return (
               <Animated.View key={node.id} entering={FadeInDown.delay(index * 50).springify()}>
-                <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="mx-6 mb-4 p-5 rounded-[24px] border">
+                <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="mx-4 mb-4 p-5 rounded-[24px] border">
                   <View className="flex-row justify-between items-start mb-3">
                     <View className="flex-1 pr-4">
                       <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-1">

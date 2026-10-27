@@ -125,7 +125,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       >
         {!showMore ? (
           <Animated.View entering={FadeInLeft.springify()} exiting={FadeOutLeft} style={{ flexDirection: 'row', flex: 1, justifyContent: 'space-around' }}>
-            {state.routes.map((route, index) => {
+            {state.routes.map((route: any, index: number) => {
               const isFocused = state.index === index;
               const Icon = icons[route.name] ?? Home;
 
@@ -135,16 +135,11 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                   setShowMore(true);
                   return;
                 }
-                const event = nav?.emit
-                  ? nav.emit({ type: 'tabPress', target: route.key, canPreventDefault: true })
-                  : { defaultPrevented: false };
-                if (!isFocused && !event?.defaultPrevented) {
-                  if (nav?.navigate) {
-                    nav.navigate(route.name, route.params as object);
-                  } else {
-                    router.navigate(`/(tabs)/${route.name}` as any);
-                  }
-                }
+                try {
+                  nav?.emit?.({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                } catch (_) {}
+                const targetPath = route.name === 'index' ? '/(tabs)' : `/(tabs)/${route.name}`;
+                router.navigate(targetPath as any);
               };
 
               return (
@@ -175,11 +170,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                if (nav?.navigate) {
-                  nav.navigate('more');
-                } else {
-                  router.navigate('/(tabs)/more' as any);
-                }
+                router.navigate('/(tabs)/more' as any);
               }}
               hitSlop={10}
             >

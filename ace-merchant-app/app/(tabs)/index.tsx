@@ -60,7 +60,7 @@ export default function PulseScreen() {
       contentContainerStyle={{ paddingBottom: 140 }}
       showsVerticalScrollIndicator={false}
     >
-      <View className="px-6 flex-row justify-between items-center mb-3">
+      <View className="px-4 flex-row justify-between items-center mb-3">
         <View>
           <Text style={{ color: c.textSecondary }} className="text-xs font-semibold uppercase tracking-wider">
             Good morning
@@ -79,7 +79,7 @@ export default function PulseScreen() {
       </View>
 
       {/* ── Top Bento Grid (Xbox / App Store Hero Pattern) ── */}
-      <Animated.View entering={FadeInDown.delay(80).springify()} className="mx-6 mb-6">
+      <Animated.View entering={FadeInDown.delay(80).springify()} className="mx-4 mb-6">
         <View style={{ gap: 12 }}>
           {/* Bento Hero Card (Today's Revenue with Live Velocity) */}
           <Pressable
@@ -211,7 +211,7 @@ export default function PulseScreen() {
 
       {/* Autonomy Debt */}
       {!!data?.autonomy_debt?.interventions && (
-        <Animated.View entering={FadeInDown.delay(170).springify()} className="mx-6 mb-6">
+        <Animated.View entering={FadeInDown.delay(170).springify()} className="mx-4 mb-6">
           <View style={{ backgroundColor: c.warningSoft, borderColor: isDark ? 'rgba(251,191,36,0.2)' : '#FDE68A' }} className="p-4 rounded-2xl border flex-row items-center">
             <AlertTriangle size={22} color={isDark ? '#FBBF24' : '#D97706'} />
             <View className="flex-1 ml-3">
@@ -231,7 +231,7 @@ export default function PulseScreen() {
 
       {/* Horizontal Carousel: Live / Recently Synced Inventory */}
       <View className="mb-6">
-        <View className="mx-6 flex-row justify-between items-center mb-3">
+        <View className="mx-4 flex-row justify-between items-center mb-3">
           <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight">
             Live Inventory & Sync
           </Text>
@@ -241,7 +241,7 @@ export default function PulseScreen() {
           </Pressable>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6" contentContainerStyle={{ paddingRight: 24 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-4" contentContainerStyle={{ paddingRight: 16 }}>
           {recentProducts.length === 0 ? (
             <Pressable
               onPress={() => router.push({ pathname: '/crm', params: { action: 'add' } })}
@@ -318,7 +318,7 @@ export default function PulseScreen() {
 
       <SectionHeader title="The Oracle" c={c} />
       {(data?.oracle_alerts || []).length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-6 pb-2" contentContainerStyle={{ paddingRight: 24 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pl-4 pb-2" contentContainerStyle={{ paddingRight: 16 }}>
           {(data?.oracle_alerts || []).map((alert: any, idx: number) => {
             const isWinback = alert.type === 'WINBACK';
             const accentColor = isWinback ? '#F59E0B' : '#EF4444';
@@ -351,7 +351,7 @@ export default function PulseScreen() {
           })}
         </ScrollView>
       ) : (
-        <View className="mx-6 p-4 rounded-2xl border flex-row items-center" style={{ backgroundColor: c.surface, borderColor: c.border }}>
+        <View className="mx-4 p-4 rounded-2xl border flex-row items-center" style={{ backgroundColor: c.surface, borderColor: c.border }}>
           <View className="w-8 h-8 rounded-full items-center justify-center mr-3" style={{ backgroundColor: c.accentSoft }}>
             <Sparkles size={16} color={c.accent} />
           </View>
@@ -366,7 +366,7 @@ export default function PulseScreen() {
         <Pressable
           onPress={() => router.push('/finance')}
           style={{ backgroundColor: c.surface, borderColor: c.border }}
-          className="mx-6 p-5 rounded-3xl border mb-6 flex-row justify-between items-center active:opacity-80"
+          className="mx-4 p-5 rounded-3xl border mb-6 flex-row justify-between items-center active:opacity-80"
         >
           <View>
             <Text style={{ color: c.success }} className="font-bold text-lg">
@@ -389,14 +389,14 @@ export default function PulseScreen() {
       </View>
 
       <SectionHeader title="Leak Map" c={c} />
-      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="mx-6 p-5 rounded-3xl border mb-6">
+      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="mx-4 p-5 rounded-3xl border mb-6">
         <LeakRow icon={ShoppingCart} title="Abandoned Carts" subtitle="Revenue leaked" amount={data?.leak_map?.abandoned_carts} c={c} onPress={() => router.push('/finance')} showDivider />
         <LeakRow icon={CreditCard} title="Failed Payments" subtitle="Card declined" amount={data?.leak_map?.failed_payments} c={c} onPress={() => router.push('/finance')} showDivider />
         <LeakRow icon={AlertCircle} title="Unverified Payments" subtitle="Missing receipts" amount={data?.leak_map?.unverified} c={c} onPress={() => router.push('/finance')} />
       </View>
 
       <SectionHeader title="Market Intelligence" c={c} />
-      <View style={{ backgroundColor: isDark ? c.surface : '#0F172A', borderColor: isDark ? c.border : '#1E293B' }} className="mx-6 p-5 rounded-3xl border mb-6">
+      <View style={{ backgroundColor: isDark ? c.surface : '#0F172A', borderColor: isDark ? c.border : '#1E293B' }} className="mx-4 p-5 rounded-3xl border mb-6">
         <View className="flex-row items-center justify-between mb-4 pb-4" style={{ borderBottomWidth: 1, borderBottomColor: '#1F2937' }}>
           <View className="flex-row items-center flex-1">
             <View style={{ backgroundColor: 'rgba(59,130,246,0.15)', borderColor: 'rgba(59,130,246,0.3)' }} className="w-10 h-10 rounded-full border items-center justify-center mr-3">
@@ -446,7 +446,7 @@ export default function PulseScreen() {
       </View>
 
       <SectionHeader title="Deep-Dive Analytics" c={c} />
-      <View className="px-6">
+      <View className="px-4">
         <DeepDiveRow title="Product Performance Matrix" c={c} onPress={() => router.push('/crm')} />
         <DeepDiveRow title="Customer Cohort Analysis" c={c} onPress={() => router.push('/crm')} />
         <DeepDiveRow title="Conversation Analytics" c={c} onPress={() => router.push('/inbox')} />
@@ -458,7 +458,7 @@ export default function PulseScreen() {
 
 function SectionHeader({ title, c }: { title: string; c: typeof colors.light }) {
   return (
-    <Text style={{ color: c.textPrimary }} className="px-6 text-lg font-bold tracking-tight mb-4">
+    <Text style={{ color: c.textPrimary }} className="px-4 text-lg font-bold tracking-tight mb-4">
       {title}
     </Text>
   );

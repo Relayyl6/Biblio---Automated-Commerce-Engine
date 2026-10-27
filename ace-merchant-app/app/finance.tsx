@@ -68,7 +68,7 @@ export default function FinanceScreen() {
       <ScrollView
         className="flex-1 px-4"
         contentContainerStyle={{ paddingBottom: 100 }}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={c.accent} />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { refetch(); }} tintColor={c.accent} />}
       >
         {/* Receivables hero */}
         <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-6 rounded-[24px] mb-4 border overflow-hidden relative">

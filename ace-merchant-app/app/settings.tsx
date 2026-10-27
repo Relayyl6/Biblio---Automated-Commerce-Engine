@@ -26,7 +26,7 @@ const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: str
   dispatch: { title: 'Dispatch API Keys', subtitle: 'Gokada, Kwik and MAX logistics credentials.' },
   tone: { title: 'Tone & Dialect Calibration', subtitle: "Adjust the AI's Pidgin ratio and politeness markers." },
   ledger: { title: 'Ledger & Bank Webhooks', subtitle: 'Connect a provider for real-time virtual accounts.' },
-  profile: { title: 'Store Profile & WhatsApp API', subtitle: 'Pickup address and Meta OAuth status.' },
+  profile: { title: 'Store & Business Profile', subtitle: 'Store identity, owner details, warehouse address & policies.' },
   developer: { title: 'Developer API Keys', subtitle: 'Override platform defaults with your own provider keys.' },
   status: { title: 'WhatsApp Status Engine', subtitle: 'Smart ranking strategy, auto-broadcast cycles & instant pushes.' },
   plan: { title: 'Subscription & Features', subtitle: 'Your active plan and unlocked platform capabilities.' },
@@ -83,6 +83,22 @@ export default function SettingsScreen() {
       <ScreenHeader title="System Brain" variant="bar" />
 
       <ScrollView className="flex-1 pt-3" contentContainerStyle={{ paddingBottom: 100 }}>
+        <Section title="Store & Business Profile" icon={Building2} delay={30}>
+          <NavigationRow
+            title="Edit Store Profile & Warehouse"
+            subtitle={config?.name ? `${config.name} • ${config.delivery_info || 'Pickup address & details'}` : 'Store name, owner identity, warehouse address & fulfillment options.'}
+            icon={Building2}
+            onPress={() => setActivePanel('profile')}
+          />
+          <NavigationRow
+            title="Store Policies & Return Guidelines"
+            subtitle={config?.business_policies ? (config.business_policies.length > 50 ? config.business_policies.substring(0, 50) + '...' : config.business_policies) : 'Returns, warranty, customer policies & SLAs.'}
+            icon={ShieldCheck}
+            onPress={() => setActivePanel('profile')}
+            isLast
+          />
+        </Section>
+
         <Section title="Catalog & Pricing Floors" icon={Package} delay={50}>
           <NavigationRow
             title="Manage Inventory & Pricing"
@@ -201,18 +217,12 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title="Business Identity & Data" icon={Building2} delay={300}>
+        <Section title="Data & Privacy Controls" icon={Database} delay={300}>
           <ToggleRow
             title="Federated Data Training"
             subtitle="Allow anonymized chat data to improve the ACE intelligence network."
             value={dataConsent}
             onValueChange={setDataConsent}
-          />
-          <NavigationRow
-            title="Store Profile & WhatsApp API"
-            subtitle="Edit store address (for rider pickups) and Meta OAuth status."
-            icon={Database}
-            onPress={() => setActivePanel('profile')}
             isLast
           />
         </Section>

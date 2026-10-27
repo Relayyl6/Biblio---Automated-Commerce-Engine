@@ -113,7 +113,7 @@ export default function NotificationHistoryScreen() {
         }
       />
 
-      <View className="px-6 pt-4 pb-2">
+      <View className="px-4 pt-4 pb-2">
         <SegmentedControl
           options={['All', 'WhatsApp', 'SMS', 'In-App']}
           value={activeFilter}
@@ -122,10 +122,10 @@ export default function NotificationHistoryScreen() {
       </View>
 
       <ScrollView
-        className="flex-1 px-6 pt-2"
+        className="flex-1 px-4 pt-2"
         contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={c.accent} colors={[c.accent]} />
+          <RefreshControl refreshing={isRefetching} onRefresh={() => { refetch(); }} tintColor={c.accent} colors={[c.accent]} />
         }
       >
         {isLoading ? (

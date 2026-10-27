@@ -501,6 +501,9 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   const { data: vendorStatus } = useVendorStatus();
 
   const [storeName, setStoreName] = useState('');
+  const [ownerFirstName, setOwnerFirstName] = useState('');
+  const [ownerLastName, setOwnerLastName] = useState('');
+  const [businessPolicies, setBusinessPolicies] = useState('');
   const [address, setAddress] = useState('');
   const [supportsPickup, setSupportsPickup] = useState(true);
   const companionConnected = statusSettings?.settings?.session_status === 'connected' || vendorStatus?.dbStatus === 'connected';
@@ -509,7 +512,18 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   useEffect(() => {
     if (config) {
       if (config.name) setStoreName(config.name);
-      if (config.delivery_info) setAddress(config.delivery_info);
+      if (config.owner_first_name || config.ownerFirstName) {
+        setOwnerFirstName(config.owner_first_name || config.ownerFirstName);
+      }
+      if (config.owner_last_name || config.ownerLastName) {
+        setOwnerLastName(config.owner_last_name || config.ownerLastName);
+      }
+      if (config.business_policies || config.businessPolicies) {
+        setBusinessPolicies(config.business_policies || config.businessPolicies);
+      }
+      if (config.delivery_info || config.deliveryInfo) {
+        setAddress(config.delivery_info || config.deliveryInfo);
+      }
     }
   }, [config]);
 
@@ -529,7 +543,10 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
       await Promise.all([
         updateConfig.mutateAsync({
           name: storeName.trim() || undefined,
+          ownerFirstName: ownerFirstName.trim() || undefined,
+          ownerLastName: ownerLastName.trim() || undefined,
           deliveryInfo: address.trim() || undefined,
+          businessPolicies: businessPolicies.trim() || undefined,
         }),
         updateIntegrations.mutateAsync({
           fulfillment: {
@@ -538,7 +555,7 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
           },
         }),
       ]);
-      alert.success('Profile Saved', 'Store details, pickup address, and in-person store pickup settings updated successfully.');
+      alert.success('Profile Saved', 'Store details, owner profile, and fulfillment policies updated successfully.');
       onSave();
     } catch (e: any) {
       alert.error('Update Failed', e?.message || 'Could not save store profile.');
@@ -575,12 +592,40 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
         helper="Display name shown across notifications and customer receipts."
       />
 
+      <View className="flex-row gap-2.5">
+        <View className="flex-1">
+          <PanelField
+            label="Owner First Name"
+            value={ownerFirstName}
+            onChangeText={setOwnerFirstName}
+            placeholder="e.g. Leonard"
+          />
+        </View>
+        <View className="flex-1">
+          <PanelField
+            label="Owner Last Name"
+            value={ownerLastName}
+            onChangeText={setOwnerLastName}
+            placeholder="e.g. Oseghale"
+          />
+        </View>
+      </View>
+
       <PanelField
         label="Store Pickup & Warehouse Address"
         value={address}
         onChangeText={setAddress}
         placeholder="Shop 14, Alaba International Market, Lagos"
         helper="Address used for rider dispatches and customer store pickups."
+      />
+
+      <PanelField
+        label="Store Policies & Return Guidelines"
+        value={businessPolicies}
+        onChangeText={setBusinessPolicies}
+        placeholder="e.g. 48-hour return window for unworn items with tags. Delivery within 24h in Lagos."
+        helper="Shared with customers asking about return windows, delivery guarantees, or warranty."
+        multiline
       />
 
       <View className="flex-row items-center justify-between py-3 mb-3" style={{ borderTopWidth: 1, borderTopColor: c.border }}>
@@ -605,7 +650,6 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   );
 }
 
-/** Panel content for "Developer API Keys" — overriding platform defaults. */
 export function DeveloperApiKeysPanel({ onSave }: { onSave: () => void }) {
   const c = useThemeColors();
   const alert = useAlert();

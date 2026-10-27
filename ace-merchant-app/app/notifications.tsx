@@ -205,13 +205,13 @@ function TimePickerModal({
           style={{ backgroundColor: c.bg }}
           className="rounded-t-3xl max-h-[70%]"
         >
-          <View style={{ borderColor: c.border }} className="px-6 py-4 border-b items-center">
+          <View style={{ borderColor: c.border }} className="px-4 py-4 border-b items-center">
             <View style={{ backgroundColor: c.border }} className="w-10 h-1 rounded-full mb-3" />
             <Text style={{ color: c.textPrimary }} className="text-base font-bold">
               {title}
             </Text>
           </View>
-          <ScrollView className="px-6" contentContainerStyle={{ paddingVertical: 8, paddingBottom: 24 }}>
+          <ScrollView className="px-4" contentContainerStyle={{ paddingVertical: 8, paddingBottom: 24 }}>
             {TIME_OPTIONS.map((time) => {
               const selected = time === value;
               return (
@@ -329,7 +329,7 @@ export default function NotificationsScreen() {
     <View style={{ backgroundColor: c.bg }} className="flex-1">
       <ScreenHeader title="Notifications" variant="bar" />
 
-      <ScrollView className="flex-1 px-6 pt-3" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView className="flex-1 px-4 pt-3" contentContainerStyle={{ paddingBottom: 100 }}>
         {permission === 'denied' && (
           <View
             style={{ backgroundColor: '#F59E0B1A', borderColor: '#F59E0B40' }}

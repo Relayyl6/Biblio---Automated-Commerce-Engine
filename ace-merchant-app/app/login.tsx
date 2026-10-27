@@ -96,7 +96,7 @@ export default function LoginScreen() {
   const [tempAuth, setTempAuth] = useState<{ merchantId: string; token: string } | null>(null);
 
   const setAuth = useAuthStore((state) => state.setAuth);
-  const otpRefs = useRef<Array<TextInput | null>>([]);
+  const otpRefs = useRef<Array<any>>([]);
 
   const code = otpDigits.join('');
 
@@ -429,7 +429,7 @@ export default function LoginScreen() {
                     <TextInput
                       key={i}
                       ref={(ref) => {
-                        otpRefs.current[i] = ref;
+                        otpRefs.current[i] = ref as any;
                       }}
                       value={digit}
                       onChangeText={(t) => handleOtpChange(t, i)}

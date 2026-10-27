@@ -27,13 +27,13 @@ export function Section({
   const c = useThemeColors();
   return (
     <Animated.View entering={FadeInDown.delay(delay).springify()} className="mb-6">
-      <View className="flex-row items-center mb-3 px-6">
+      <View className="flex-row items-center mb-3 px-4">
         {Icon && <Icon size={18} color={c.textTertiary} style={{ marginRight: 8 }} />}
         <Text style={{ color: c.textTertiary }} className="font-bold text-xs uppercase tracking-wider">
           {title}
         </Text>
       </View>
-      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="mx-6 px-5 rounded-[24px] border">
+      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="mx-4 px-4 rounded-[24px] border">
         {children}
       </View>
     </Animated.View>

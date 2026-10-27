@@ -99,7 +99,7 @@ export default function SearchScreen() {
         </Animated.View>
       </View>
 
-      <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
+      <ScrollView className="flex-1 px-4" keyboardShouldPersistTaps="handled">
         {isLoading && hasQuery ? (
           <SearchSkeleton count={5} />
         ) : hasQuery ? (

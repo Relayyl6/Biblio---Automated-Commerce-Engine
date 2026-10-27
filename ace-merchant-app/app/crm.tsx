@@ -207,12 +207,12 @@ export default function CRMScreen() {
           </Pressable>
         }
       />
-      <View className="px-6 mb-2.5">
+      <View className="px-4 mb-2.5">
         <SearchBar value={searchQuery} onChangeText={setSearchQuery} placeholder="Search SKUs, categories, items..." variant="pill" />
       </View>
 
       <ScrollView className="flex-1 pt-2" contentContainerStyle={{ paddingBottom: 100 }}>
-        <View className="px-6 mb-4 flex-row justify-between items-center">
+        <View className="px-4 mb-4 flex-row justify-between items-center">
           <Text style={{ color: c.textSecondary }} className="text-sm font-bold uppercase tracking-wider">
             Catalog Details
           </Text>
@@ -222,7 +222,7 @@ export default function CRMScreen() {
         </View>
 
         {filteredInventory.length === 0 ? (
-          <View className="mx-6 p-6 rounded-[28px] border border-dashed items-center justify-center mt-4" style={{ borderColor: c.border, backgroundColor: c.surface }}>
+          <View className="mx-4 p-5 rounded-[28px] border border-dashed items-center justify-center mt-4" style={{ borderColor: c.border, backgroundColor: c.surface }}>
             <View style={{ backgroundColor: c.accentSoft }} className="w-14 h-14 rounded-2xl items-center justify-center mb-4">
               <Package size={28} color={c.accent} />
             </View>
@@ -268,7 +268,7 @@ export default function CRMScreen() {
 
             return (
               <Animated.View key={item.sku || item.id || index} entering={FadeInDown.delay(index * 40).springify()}>
-                <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="mx-6 mb-4 p-5 rounded-[24px] border">
+                <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="mx-4 mb-4 p-5 rounded-[24px] border">
                   <View className="flex-row justify-between items-start mb-2">
                     <View className="flex-1 pr-3">
                       <View className="flex-row items-center mb-1">

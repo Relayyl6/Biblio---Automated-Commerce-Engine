@@ -50,7 +50,7 @@ const WORKSPACE_ITEMS: MenuItem[] = [
   { id: 'suppliers', title: 'Suppliers & Restock', subtitle: 'Automated procurement channels & groups', icon: Users, route: '/suppliers', tint: '#F59E0B' },
   { id: 'notifications', title: 'Notifications', subtitle: 'Push alerts, channels & quiet hours', icon: Bell, route: '/notifications', tint: '#EC4899' },
   { id: 'notification-history', title: 'Carrier Logs', subtitle: 'WhatsApp & SMS delivery audit trail', icon: History, route: '/notification-history', tint: '#06B6D4' },
-  { id: 'settings', title: 'System Brain Settings', subtitle: 'Autonomy boundaries, tone & API keys', icon: Settings, route: '/settings', tint: '#6366F1' },
+  { id: 'settings', title: 'Store & Brain Settings', subtitle: 'Store profile, warehouse, autonomy & policies', icon: Settings, route: '/settings', tint: '#6366F1' },
   { id: 'support', title: 'Help & Support', subtitle: 'Knowledge base, status & live tickets', icon: HelpCircle, route: '/support', tint: '#14B8A6' },
 ];
 
@@ -150,14 +150,14 @@ export default function MoreScreen() {
 
   return (
     <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,}} className="flex-1">
-      <Animated.View entering={FadeInDown.delay(50).springify()} className="px-6 mb-1.5 flex-row items-center justify-between">
+      <Animated.View entering={FadeInDown.delay(50).springify()} className="px-4 mb-1.5 flex-row items-center justify-between">
         <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
           Menu
         </Text>
       </Animated.View>
 
       {/* Merchant Profile Header */}
-      <Animated.View entering={FadeInDown.delay(100).springify()} className="px-6 mb-3">
+      <Animated.View entering={FadeInDown.delay(100).springify()} className="px-4 mb-3">
         <Pressable
           onPress={() => router.push('/settings')}
           style={{ backgroundColor: c.surface, borderColor: c.border }}
@@ -179,7 +179,7 @@ export default function MoreScreen() {
               <CheckCircle2 size={15} color="#22C55E" />
             </View>
             <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-              Dialect: {storeDialect} • Tap to calibrate
+              {storeDialect} • Tap to edit store profile & settings
             </Text>
           </View>
           <ChevronRight size={16} color={c.textTertiary} />
@@ -299,7 +299,7 @@ export default function MoreScreen() {
                     <Text style={{ color: c.textSecondary }} className="text-sm mb-3 text-center">
                       Open WhatsApp → Settings → Linked Devices → Link a Device → Link with Phone Number.
                     </Text>
-                    <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-6 py-4 rounded-2xl border mb-3">
+                    <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-4 py-4 rounded-2xl border mb-3">
                       <Text style={{ color: c.textPrimary, letterSpacing: 8 }} className="text-3xl font-black">
                         {pairingCode}
                       </Text>

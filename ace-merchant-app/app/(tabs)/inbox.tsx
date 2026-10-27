@@ -109,7 +109,7 @@ export default function InboxScreen() {
         className="flex-1"
       >
         {/* Header */}
-        <View className="px-6 mb-2 flex-row justify-between items-start">
+        <View className="px-4 mb-2 flex-row justify-between items-start">
           <View className="flex-1 pr-3">
             <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
               Inbox
@@ -140,7 +140,7 @@ export default function InboxScreen() {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            className="pl-6"
+            className="pl-4"
             contentContainerStyle={{ paddingRight: 24, alignItems: 'center' }}
           >
             {FILTERS.map((f) => {
@@ -186,7 +186,7 @@ export default function InboxScreen() {
         {/* Cards or Empty State */}
         {visibleCards.length > 0 ? (
           <ScrollView
-            className="flex-1 px-6 pt-2"
+            className="flex-1 px-4 pt-2"
             contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 88 }}
             showsVerticalScrollIndicator={false}
           >
@@ -206,7 +206,7 @@ export default function InboxScreen() {
           </ScrollView>
         ) : (
           <ScrollView
-            className="flex-1 px-6"
+            className="flex-1 px-4"
             contentContainerStyle={{
               paddingTop: 8,
               alignItems: 'center',
@@ -270,7 +270,7 @@ export default function InboxScreen() {
               backgroundColor: isDark ? c.surfaceAlt : c.textPrimary,
               bottom: Math.max(insets.bottom, 16) + 76,
             }}
-            className="absolute left-6 right-6 rounded-2xl flex-row items-center justify-between px-5 py-4 shadow-lg"
+            className="absolute left-4 right-4 rounded-2xl flex-row items-center justify-between px-5 py-4 shadow-lg"
           >
             <Text className="text-white text-sm font-medium">
               Action applied ({undoToast.action})
