@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StatusBar, Pressable, ScrollView, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   MessageCircle,
   CreditCard,
@@ -92,8 +93,10 @@ export default function MoreScreen() {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const alert = useAlert();
   const logout = useAuthStore(state => state.logout);
+  const merchantId = useAuthStore(state => state.merchantId);
   const { data: merchantConfig } = useMerchantConfig();
   const { data: statusSettings } = useStatusSettings();
   const { data: vendorStatus } = useVendorStatus();
@@ -126,7 +129,10 @@ export default function MoreScreen() {
     if (!phoneToPair) return;
     try {
       const res = await pairMutation.mutateAsync(phoneToPair);
-      if (res.code) setPairingCode(res.code);
+      if (res.code) {
+        setPairingCode(res.code);
+        queryClient.invalidateQueries({ queryKey: ['vendorStatus', merchantId] });
+      }
     } catch (e: any) {
       alert.error('Pairing Error', e?.message || 'Could not initiate WhatsApp device pairing.');
     }

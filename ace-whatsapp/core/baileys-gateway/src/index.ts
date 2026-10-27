@@ -66,8 +66,9 @@ app.get("/health", async () => ({
 // Body: { phoneNumber: string, vendorId?: string }
 // Returns: { ok: true, code: string, vendorId: string, merchantId: string }
 app.post("/pair", async (req, reply) => {
-  const { vendorId, phoneNumber } = req.body as {
+  const { vendorId, merchantId, phoneNumber } = req.body as {
     vendorId?: string;
+    merchantId?: string;
     phoneNumber?: string;
   };
 
@@ -76,10 +77,10 @@ app.post("/pair", async (req, reply) => {
   }
 
   try {
-    const res = await pairVendorNumber(phoneNumber, vendorId);
+    const res = await pairVendorNumber(phoneNumber, vendorId, merchantId);
     return reply.send({ ok: true, ...res });
   } catch (err) {
-    req.log.error({ err, vendorId, phoneNumber }, "Pairing failed");
+    req.log.error({ err, vendorId, merchantId, phoneNumber }, "Pairing failed");
     return reply.code(500).send({ ok: false, error: (err as Error).message });
   }
 });

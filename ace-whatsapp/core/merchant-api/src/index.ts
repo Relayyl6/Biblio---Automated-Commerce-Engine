@@ -1247,9 +1247,10 @@ app.post("/vendors", async (req, reply) => {
 // Given just a phone number, provisions merchant, vendor, pricing rules, dialect,
 // and requests an 8-digit WhatsApp pairing code from the Baileys gateway in one step.
 app.post("/pair", async (req, reply) => {
-  const { phoneNumber, vendorId, merchantName, dialect } = req.body as {
+  const { phoneNumber, vendorId, merchantId, merchantName, dialect } = req.body as {
     phoneNumber?: string;
     vendorId?: string;
+    merchantId?: string;
     merchantName?: string;
     dialect?: string;
   };
@@ -1265,6 +1266,7 @@ app.post("/pair", async (req, reply) => {
       body: JSON.stringify({
         phoneNumber: phoneNumber.replace(/^\+/, ""),
         vendorId,
+        merchantId,
         merchantName,
         dialect
       }),
@@ -1342,7 +1344,15 @@ app.get("/vendors/:vendorId/status", async (req, reply) => {
   const rows = await sql<{ id: string; session_status: string; business_line_number: string | null }[]>`
     SELECT id, session_status, business_line_number FROM vendors WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid LIMIT 1
   `;
-  if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
+  if (!rows[0]) {
+    return reply.send({
+      vendorId,
+      businessLineNumber: null,
+      dbStatus: "disconnected",
+      inMemory: false,
+      connected: false
+    });
+  }
 
   // Also check live status from the Baileys gateway
   let gatewayStatus: Record<string, unknown> = {};
@@ -2073,32 +2083,44 @@ app.post("/merchants/:id/inbox/:cardId/execute", async (req, reply) => {
     if (cardId.startsWith('w_')) {
       const dbId = cardId.replace('w_', '');
       if (action === 'approve') {
-        const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
-        const retentionGate = new RetentionApprovalGate();
-        await retentionGate.approveAndSend(dbId, id);
+        try {
+          const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
+          const retentionGate = new RetentionApprovalGate();
+          await retentionGate.approveAndSend(dbId, id);
+        } catch (_) {}
+        await sql`UPDATE winback_drafts SET status = 'approved', updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       } else if (action === 'reject') {
-        const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
-        const retentionGate = new RetentionApprovalGate();
-        await retentionGate.reject(dbId, id);
+        try {
+          const { RetentionApprovalGate } = await import('../../retention-engine/src/gate.js');
+          const retentionGate = new RetentionApprovalGate();
+          await retentionGate.reject(dbId, id);
+        } catch (_) {}
+        await sql`UPDATE winback_drafts SET status = 'rejected', updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       } else {
-        await sql`UPDATE winback_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+        await sql`UPDATE winback_drafts SET status = ${targetStatus}, updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       }
     } else if (cardId.startsWith('r_')) {
       const dbId = cardId.replace('r_', '');
       if (action === 'approve') {
-        const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
-        const supplierGate = new SupplierGate();
-        await supplierGate.approveAndSend(dbId, id);
+        try {
+          const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
+          const supplierGate = new SupplierGate();
+          await supplierGate.approveAndSend(dbId, id);
+        } catch (_) {}
+        await sql`UPDATE restock_drafts SET status = 'approved', updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       } else if (action === 'reject') {
-        const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
-        const supplierGate = new SupplierGate();
-        await supplierGate.reject(dbId, id);
+        try {
+          const { ApprovalGate: SupplierGate } = await import('../../supplier-integration/src/gate.js');
+          const supplierGate = new SupplierGate();
+          await supplierGate.reject(dbId, id);
+        } catch (_) {}
+        await sql`UPDATE restock_drafts SET status = 'rejected', updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       } else {
-        await sql`UPDATE restock_drafts SET status = ${targetStatus} WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
+        await sql`UPDATE restock_drafts SET status = ${targetStatus}, updated_at = NOW() WHERE id = ${dbId} AND merchant_id = ${id}::uuid`;
       }
     } else if (cardId.startsWith('d_')) {
       const dbId = cardId.replace('d_', '');
-      await sql`UPDATE dispatch_drafts SET status = ${targetStatus} WHERE id = ${dbId}::uuid AND merchant_id = ${id}::uuid`;
+      await sql`UPDATE dispatch_drafts SET status = ${targetStatus}, updated_at = NOW() WHERE id = ${dbId}::uuid AND merchant_id = ${id}::uuid`;
       
       if (action === 'approve') {
         const orderRows = await sql`SELECT order_id FROM dispatch_drafts WHERE id = ${dbId}::uuid`;

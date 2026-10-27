@@ -253,7 +253,7 @@ export async function loadVendorConfig(vendorId: string): Promise<VendorConfig> 
            auto_status_enabled, posting_frequency_hours,
            approve_before_post
     FROM vendors
-    WHERE id = ${vendorId}
+    WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid
     LIMIT 1
   `;
   if (!rows[0]) throw new Error(`Vendor ${vendorId} not found`);
@@ -264,39 +264,48 @@ export async function loadVendorConfig(vendorId: string): Promise<VendorConfig> 
  * Auto-provisions a merchant and vendor record if one does not already exist
  * for the given phone number. Enables zero-configuration pairing for new merchants.
  */
-export async function getOrCreateVendorByPhone(phoneNumber: string): Promise<VendorConfig> {
+export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?: string): Promise<VendorConfig> {
   const cleanPhone = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
 
-  // 1. Try finding existing vendor by business_line_number or personal_number
+  // 1. Try finding existing vendor by business_line_number, personal_number, or merchant_id
   const existing = await sql<VendorConfig[]>`
     SELECT id, merchant_id, business_line_number, personal_number,
            auto_status_enabled, posting_frequency_hours,
            approve_before_post
     FROM vendors
-    WHERE business_line_number = ${cleanPhone} OR personal_number = ${cleanPhone}
+    WHERE business_line_number = ${cleanPhone} 
+       OR personal_number = ${cleanPhone}
+       ${merchantId ? sql`OR merchant_id = ${merchantId}::uuid` : sql``}
     LIMIT 1
   `;
   if (existing[0]) {
     return existing[0];
   }
 
-  // 2. Check if a merchant exists with this phone or create one
-  const existingMerchant = await sql<{ id: string }[]>`
-    SELECT id FROM merchants WHERE phone = ${cleanPhone} LIMIT 1
-  `;
+  // 2. Check if a merchant exists with this phone or merchantId
+  let targetMerchantId = merchantId;
+  if (!targetMerchantId) {
+    const existingMerchant = await sql<{ id: string }[]>`
+      SELECT id FROM merchants 
+      WHERE phone_number_id = ${cleanPhone} 
+         OR contact_phone = ${cleanPhone} 
+         OR support_phone = ${cleanPhone} 
+      LIMIT 1
+    `;
+    targetMerchantId = existingMerchant[0]?.id;
+  }
 
-  let merchantId = existingMerchant[0]?.id;
-  if (!merchantId) {
+  if (!targetMerchantId) {
     const merchantRows = await sql<{ id: string }[]>`
       INSERT INTO merchants (
-        name, phone, currency, dialect, tone_guide
+        name, phone_number_id, contact_phone, dialect, tone_guide
       ) VALUES (
-        ${`Store +${cleanPhone}`}, ${cleanPhone}, 'NGN', 'pidgin',
+        ${`Store +${cleanPhone}`}, ${cleanPhone}, ${cleanPhone}, 'pidgin',
         'Warm, respectful Nigerian merchant. Fast, polite, no-nonsense.'
       )
       RETURNING id
     `;
-    merchantId = merchantRows[0].id;
+    targetMerchantId = merchantRows[0].id;
 
     // Seed default pricing rules for this new merchant
     await sql`
@@ -304,7 +313,7 @@ export async function getOrCreateVendorByPhone(phoneNumber: string): Promise<Ven
         merchant_id, max_discount_pct, bundle_discount_pct, loyalty_discount_pct,
         floor_margin_pct, bulk_threshold_units, payment_method_discounts, dynamic_pricing_enabled
       ) VALUES (
-        ${merchantId}, 0.20, 0.10, 0.15,
+        ${targetMerchantId}, 0.20, 0.10, 0.15,
         0.10, 3, '{"transfer": 0.05, "card": 0.0}'::jsonb, true
       )
       ON CONFLICT (merchant_id) DO NOTHING
@@ -317,7 +326,7 @@ export async function getOrCreateVendorByPhone(phoneNumber: string): Promise<Ven
       merchant_id, business_line_number, personal_number,
       session_status, auto_status_enabled, posting_frequency_hours, approve_before_post
     ) VALUES (
-      ${merchantId}, ${cleanPhone}, ${cleanPhone},
+      ${targetMerchantId}, ${cleanPhone}, ${cleanPhone},
       'pending', false, 24, false
     )
     RETURNING id, merchant_id, business_line_number, personal_number,
@@ -325,7 +334,7 @@ export async function getOrCreateVendorByPhone(phoneNumber: string): Promise<Ven
               approve_before_post
   `;
 
-  logger.info({ phone: cleanPhone, vendorId: vendorRows[0].id, merchantId }, "Auto-provisioned new merchant and vendor");
+  logger.info({ phone: cleanPhone, vendorId: vendorRows[0].id, merchantId: targetMerchantId }, "Auto-provisioned new merchant and vendor");
   return vendorRows[0];
 }
 
@@ -570,17 +579,18 @@ export interface PairResult {
   merchantId: string;
 }
 
-export async function pairVendorNumber(phoneNumber: string, vendorId?: string): Promise<PairResult> {
+export async function pairVendorNumber(phoneNumber: string, vendorId?: string, merchantId?: string): Promise<PairResult> {
   // phoneNumber MUST be E.164 WITHOUT the '+' sign: "2348012345678"
   const normalised = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
-  logger.info({ vendorId, normalised }, "pairVendorNumber called");
+  logger.info({ vendorId, merchantId, normalised }, "pairVendorNumber called");
 
   let vendor: VendorConfig;
-  if (vendorId) {
+  const lookupId = vendorId || merchantId;
+  if (lookupId) {
     try {
-      vendor = await loadVendorConfig(vendorId);
+      vendor = await loadVendorConfig(lookupId);
     } catch {
-      vendor = await getOrCreateVendorByPhone(normalised);
+      vendor = await getOrCreateVendorByPhone(normalised, merchantId || vendorId);
     }
   } else {
     vendor = await getOrCreateVendorByPhone(normalised);

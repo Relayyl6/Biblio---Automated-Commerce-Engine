@@ -232,14 +232,28 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
             <View>
               {/* Header info */}
               <View className="flex-row justify-between items-center mb-4">
-                <View
-                  style={{ backgroundColor: c.accentSoft }}
-                  className="px-3.5 py-1.5 rounded-full flex-row items-center"
-                >
-                  <Tag size={13} color={c.accent} style={{ marginRight: 6 }} />
-                  <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
-                    {(topCard.type || 'Draft').replace('_', ' ')}
-                  </Text>
+                <View className="flex-row items-center" style={{ gap: 6 }}>
+                  <View
+                    style={{ backgroundColor: c.accentSoft }}
+                    className="px-3.5 py-1.5 rounded-full flex-row items-center"
+                  >
+                    <Tag size={13} color={c.accent} style={{ marginRight: 6 }} />
+                    <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
+                      {(topCard.type || 'Draft').replace('_', ' ')}
+                    </Text>
+                  </View>
+
+                  {topCard.status === 'snoozed' && (
+                    <View
+                      style={{ backgroundColor: '#F59E0B20' }}
+                      className="px-2.5 py-1 rounded-full flex-row items-center"
+                    >
+                      <Clock size={11} color="#F59E0B" style={{ marginRight: 3 }} />
+                      <Text style={{ color: '#F59E0B' }} className="text-[10px] font-bold uppercase">
+                        Snoozed
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 <Pressable

@@ -46,18 +46,18 @@ export default function InboxScreen() {
 
   const counts = useMemo(
     () => ({
-      all: cards.length,
-      priority: cards.filter((item: any) => item.priority === 'high' || !item.priority).length,
-      restocks: cards.filter((item: any) => item.type === 'restock').length,
+      all: cards.filter((item: any) => item.status !== 'snoozed').length,
+      priority: cards.filter((item: any) => (item.priority === 'high' || !item.priority) && item.status !== 'snoozed').length,
+      restocks: cards.filter((item: any) => item.type === 'restock' && item.status !== 'snoozed').length,
       snoozed: cards.filter((item: any) => item.status === 'snoozed').length,
     }),
     [cards]
   );
 
   const visibleCards = useMemo(() => {
-    if (activeFilter === 'all') return cards;
-    if (activeFilter === 'priority') return cards.filter((item: any) => item.priority === 'high' || !item.priority);
-    if (activeFilter === 'restocks') return cards.filter((item: any) => item.type === 'restock');
+    if (activeFilter === 'all') return cards.filter((item: any) => item.status !== 'snoozed');
+    if (activeFilter === 'priority') return cards.filter((item: any) => (item.priority === 'high' || !item.priority) && item.status !== 'snoozed');
+    if (activeFilter === 'restocks') return cards.filter((item: any) => item.type === 'restock' && item.status !== 'snoozed');
     return cards.filter((item: any) => item.status === 'snoozed');
   }, [cards, activeFilter]);
 
@@ -93,8 +93,22 @@ export default function InboxScreen() {
   };
 
   const handleSnooze = (id: string) => {
-    executeAction({ cardId: id, action: 'snooze' });
-    removeCard(id, 'Snoozed');
+    const target = cards.find((c: any) => c.id === id);
+    const isAlreadySnoozed = target?.status === 'snoozed';
+
+    if (isAlreadySnoozed) {
+      executeAction({ cardId: id, action: 'unsnooze' as any });
+      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
+        oldData ? oldData.map((c) => (c.id === id ? { ...c, status: 'pending' } : c)) : []
+      );
+      showUndoToast(id, 'Restored to Active');
+    } else {
+      executeAction({ cardId: id, action: 'snooze' });
+      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
+        oldData ? oldData.map((c) => (c.id === id ? { ...c, status: 'snoozed' } : c)) : []
+      );
+      showUndoToast(id, 'Snoozed');
+    }
   };
 
   return (
@@ -235,6 +249,7 @@ export default function InboxScreen() {
                     type={card.type}
                     title={card.title}
                     subtitle={card.subtitle}
+                    status={card.status}
                     onApprove={handleApprove}
                     onReject={handleReject}
                     onSnooze={handleSnooze}

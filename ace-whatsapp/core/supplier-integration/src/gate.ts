@@ -30,7 +30,7 @@ export class ApprovalGate {
 
       const draft = drafts[0];
 
-      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft') {
+      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft' && draft.status !== 'snoozed') {
         logger.warn({ draftId, status: draft.status }, 'Draft is not pending approval');
         return false;
       }

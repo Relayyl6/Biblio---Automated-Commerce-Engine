@@ -23,7 +23,7 @@ export class RetentionApprovalGate {
 
       const draft = drafts[0];
 
-      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft') {
+      if (draft.status !== 'pending_approval' && draft.status !== 'pending' && draft.status !== 'draft' && draft.status !== 'snoozed') {
         logger.warn('Draft is not pending approval', { draftId, status: draft.status });
         return false;
       }

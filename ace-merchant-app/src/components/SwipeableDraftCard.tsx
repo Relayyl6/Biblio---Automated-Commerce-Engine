@@ -22,12 +22,13 @@ export interface DraftCardProps {
   type: DraftType;
   title: string;
   subtitle: string;
+  status?: string;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onSnooze?: (id: string) => void;
 }
 
-export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onReject, onSnooze }: DraftCardProps) {
+export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprove, onReject, onSnooze }: DraftCardProps) {
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const [isDismissed, setIsDismissed] = React.useState(false);
@@ -87,13 +88,27 @@ export function SwipeableDraftCard({ id, type, title, subtitle, onApprove, onRej
       <GestureDetector gesture={panGesture}>
         <Animated.View style={[animatedStyle, { backgroundColor: c.surface, borderColor: c.border }]} className="flex-1 p-5 border rounded-[24px] shadow-sm">
           <View className="flex-row justify-between items-start mb-2">
-            <View 
-              style={{ backgroundColor: c.accentSoft }}
-              className="px-3 py-1 rounded-full"
-            >
-              <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
-                {type.replace('_', ' ')}
-              </Text>
+            <View className="flex-row items-center" style={{ gap: 6 }}>
+              <View 
+                style={{ backgroundColor: c.accentSoft }}
+                className="px-3 py-1 rounded-full"
+              >
+                <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
+                  {type.replace('_', ' ')}
+                </Text>
+              </View>
+
+              {status === 'snoozed' && (
+                <View 
+                  style={{ backgroundColor: '#F59E0B20' }}
+                  className="px-2.5 py-1 rounded-full flex-row items-center"
+                >
+                  <Clock size={11} color="#F59E0B" style={{ marginRight: 3 }} />
+                  <Text style={{ color: '#F59E0B' }} className="text-[10px] font-bold uppercase">
+                    Snoozed
+                  </Text>
+                </View>
+              )}
             </View>
             
             {onSnooze && (

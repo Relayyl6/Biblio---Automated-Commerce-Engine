@@ -325,9 +325,10 @@ export const useDeleteSupplier = () => {
 };
 
 export const usePairWhatsApp = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async (phoneNumber: string) => {
-      const res = await api.post('/pair', { phoneNumber });
+      const res = await api.post('/pair', { phoneNumber, merchantId });
       return res.data;
     }
   });
