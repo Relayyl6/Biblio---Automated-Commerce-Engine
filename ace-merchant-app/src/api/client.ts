@@ -6,7 +6,7 @@ import { useAuthStore } from '../store/authStore';
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   (__DEV__
-    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://10.91.190.253:3004')
+    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://192.168.100.75:3004')
     : 'https://api.biblio.africa');
 
 export const api = axios.create({
