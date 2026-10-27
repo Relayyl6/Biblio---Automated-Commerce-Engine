@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, Pressable, Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -9,13 +9,16 @@ import Animated, {
   interpolate,
   runOnJS,
 } from 'react-native-reanimated';
-import { Check, X, Clock, Sparkles, MessageCircle, ArrowRight, ShieldCheck, Tag } from 'lucide-react-native';
+import { Check, X, Clock, Sparkles, MessageCircle, ShieldCheck, Tag, Zap, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useColorScheme } from 'nativewind';
 import { colors, shadows } from '../../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.35;
+// Taller card height: 56% of screen height or minimum 460px
+const CARD_HEIGHT = Math.max(Math.round(SCREEN_HEIGHT * 0.54), 460);
 
 export interface TinderCardStackProps {
   cards: any[];
@@ -48,7 +51,7 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
   const panGesture = Gesture.Pan()
     .onUpdate((event) => {
       translateX.value = event.translationX;
-      translateY.value = event.translationY * 0.3; // dampen vertical drag
+      translateY.value = event.translationY * 0.25;
     })
     .onEnd(() => {
       if (translateX.value > SWIPE_THRESHOLD) {
@@ -92,13 +95,13 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
     const translateYNext = interpolate(
       Math.abs(translateX.value),
       [0, SWIPE_THRESHOLD],
-      [16, 0],
+      [18, 0],
       'clamp'
     );
     const opacity = interpolate(
       Math.abs(translateX.value),
       [0, SWIPE_THRESHOLD],
-      [0.72, 1],
+      [0.65, 1],
       'clamp'
     );
     return {
@@ -134,44 +137,47 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
   if (!topCard) return null;
 
   return (
-    <View className="flex-1 justify-between px-2 pt-1 pb-4">
-      {/* Stack Deck Area */}
-      <View className="relative w-full" style={{ minHeight: 390, justifyContent: 'center' }}>
+    <View className="flex-1 justify-between px-1 pt-1 pb-2">
+      {/* Stack Deck Area with Taller Height */}
+      <View className="relative w-full" style={{ height: CARD_HEIGHT + 24, justifyContent: 'center' }}>
         {/* Next Card in Stack (Preview Underneath) */}
         {nextCard && (
           <Animated.View
             style={[
               nextCardStyle,
               {
+                height: CARD_HEIGHT,
                 backgroundColor: c.surface,
                 borderColor: c.border,
                 ...shadows.sm,
               },
             ]}
-            className="absolute inset-x-2 top-0 p-5 rounded-[30px] border"
+            className="absolute inset-x-2 top-0 p-6 rounded-[32px] border justify-between"
           >
-            <View className="flex-row justify-between items-center mb-3">
-              <View
-                style={{ backgroundColor: c.accentSoft }}
-                className="px-3 py-1 rounded-full flex-row items-center"
-              >
-                <Text style={{ color: c.accent }} className="text-[11px] font-bold uppercase tracking-wider">
-                  {(nextCard.type || 'Draft').replace('_', ' ')}
+            <View>
+              <View className="flex-row justify-between items-center mb-3">
+                <View
+                  style={{ backgroundColor: c.accentSoft }}
+                  className="px-3.5 py-1 rounded-full flex-row items-center"
+                >
+                  <Text style={{ color: c.accent }} className="text-[11px] font-bold uppercase tracking-wider">
+                    {(nextCard.type || 'Draft').replace('_', ' ')}
+                  </Text>
+                </View>
+                <Text style={{ color: c.textTertiary }} className="text-xs font-semibold">
+                  Up Next
                 </Text>
               </View>
-              <Text style={{ color: c.textTertiary }} className="text-xs font-semibold">
-                Up Next
+
+              <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight mb-2" numberOfLines={2}>
+                {nextCard.title || 'Pending AI Draft'}
+              </Text>
+              <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4" numberOfLines={3}>
+                {nextCard.subtitle || nextCard.message_draft || 'AI synthesized recommendation ready for review.'}
               </Text>
             </View>
 
-            <Text style={{ color: c.textPrimary }} className="text-xl font-bold tracking-tight mb-2" numberOfLines={2}>
-              {nextCard.title || 'Pending AI Draft'}
-            </Text>
-            <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4" numberOfLines={4}>
-              {nextCard.subtitle || nextCard.message_draft || 'AI synthesized recommendation ready for review.'}
-            </Text>
-
-            <View style={{ backgroundColor: c.surfaceAlt }} className="p-3.5 rounded-2xl flex-row items-center">
+            <View style={{ backgroundColor: c.surfaceAlt }} className="p-4 rounded-2xl flex-row items-center">
               <Sparkles size={16} color={c.accent} />
               <Text style={{ color: c.textSecondary }} className="text-xs ml-2 flex-1" numberOfLines={1}>
                 {nextCard.proposed_discount_percent ? `${nextCard.proposed_discount_percent}% loyalty discount` : 'Autonomous agent queue'}
@@ -186,13 +192,14 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
             style={[
               topCardStyle,
               {
+                height: CARD_HEIGHT,
                 backgroundColor: c.surface,
                 borderColor: c.border,
                 ...shadows.md,
                 zIndex: 10,
               },
             ]}
-            className="w-full p-5 rounded-[30px] border relative overflow-hidden"
+            className="w-full p-6 rounded-[32px] border relative overflow-hidden justify-between"
           >
             {/* Stamp Overlays */}
             <Animated.View
@@ -200,9 +207,9 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
                 approveStampStyle,
                 { borderColor: '#22C55E', backgroundColor: '#22C55E1A' },
               ]}
-              className="absolute top-6 left-6 border-2 px-3.5 py-1.5 rounded-xl z-20 flex-row items-center"
+              className="absolute top-7 left-7 border-2 px-4 py-2 rounded-xl z-20 flex-row items-center"
             >
-              <Check size={18} color="#22C55E" />
+              <Check size={20} color="#22C55E" />
               <Text style={{ color: '#22C55E' }} className="font-black text-sm uppercase ml-1.5 tracking-wider">
                 EXECUTE
               </Text>
@@ -213,78 +220,94 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
                 rejectStampStyle,
                 { borderColor: '#EF4444', backgroundColor: '#EF44441A' },
               ]}
-              className="absolute top-6 right-6 border-2 px-3.5 py-1.5 rounded-xl z-20 flex-row items-center"
+              className="absolute top-7 right-7 border-2 px-4 py-2 rounded-xl z-20 flex-row items-center"
             >
-              <X size={18} color="#EF4444" />
+              <X size={20} color="#EF4444" />
               <Text style={{ color: '#EF4444' }} className="font-black text-sm uppercase ml-1.5 tracking-wider">
                 DISCARD
               </Text>
             </Animated.View>
 
-            {/* Header info */}
-            <View className="flex-row justify-between items-center mb-3">
-              <View
-                style={{ backgroundColor: c.accentSoft }}
-                className="px-3.5 py-1 rounded-full flex-row items-center"
-              >
-                <Tag size={12} color={c.accent} style={{ marginRight: 5 }} />
-                <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
-                  {(topCard.type || 'Draft').replace('_', ' ')}
-                </Text>
+            {/* Top section */}
+            <View>
+              {/* Header info */}
+              <View className="flex-row justify-between items-center mb-4">
+                <View
+                  style={{ backgroundColor: c.accentSoft }}
+                  className="px-3.5 py-1.5 rounded-full flex-row items-center"
+                >
+                  <Tag size={13} color={c.accent} style={{ marginRight: 6 }} />
+                  <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
+                    {(topCard.type || 'Draft').replace('_', ' ')}
+                  </Text>
+                </View>
+
+                <Pressable
+                  onPress={() => onSnooze(topCard.id)}
+                  hitSlop={10}
+                  style={{ backgroundColor: c.surfaceAlt }}
+                  className="px-3 py-1.5 rounded-full flex-row items-center active:opacity-70"
+                >
+                  <Clock size={13} color={c.textTertiary} style={{ marginRight: 5 }} />
+                  <Text style={{ color: c.textTertiary }} className="text-xs font-semibold">
+                    Snooze
+                  </Text>
+                </Pressable>
               </View>
 
-              <Pressable
-                onPress={() => onSnooze(topCard.id)}
-                hitSlop={8}
-                style={{ backgroundColor: c.surfaceAlt }}
-                className="px-2.5 py-1 rounded-full flex-row items-center active:opacity-70"
-              >
-                <Clock size={12} color={c.textTertiary} style={{ marginRight: 4 }} />
-                <Text style={{ color: c.textTertiary }} className="text-xs font-medium">
-                  Snooze
-                </Text>
-              </Pressable>
+              {/* Title & context */}
+              <Text style={{ color: c.textPrimary }} className="text-2xl font-extrabold tracking-tight mb-2">
+                {topCard.title}
+              </Text>
+
+              <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4">
+                {topCard.subtitle}
+              </Text>
             </View>
 
-            {/* Title & context */}
-            <Text style={{ color: c.textPrimary }} className="text-xl font-bold tracking-tight mb-2">
-              {topCard.title}
-            </Text>
-
-            <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed mb-4">
-              {topCard.subtitle}
-            </Text>
-
-            {/* Simulated WhatsApp draft speech bubble */}
+            {/* Simulated WhatsApp draft speech bubble - Generous height */}
             <View
               style={{
                 backgroundColor: isDark ? '#1F2937' : '#F1F5F9',
                 borderColor: c.border,
               }}
-              className="p-4 rounded-2xl border mb-3"
+              className="p-5 rounded-2xl border flex-1 mb-4 justify-between"
             >
-              <View className="flex-row items-center justify-between mb-1.5">
+              <View className="flex-row items-center justify-between mb-2">
                 <View className="flex-row items-center">
-                  <MessageCircle size={14} color="#22C55E" />
-                  <Text style={{ color: '#22C55E' }} className="text-[11px] font-bold uppercase ml-1.5 tracking-wider">
+                  <MessageCircle size={15} color="#22C55E" />
+                  <Text style={{ color: '#22C55E' }} className="text-xs font-bold uppercase ml-1.5 tracking-wider">
                     WhatsApp Message Draft
                   </Text>
                 </View>
-                <ShieldCheck size={14} color={c.textTertiary} />
+                <ShieldCheck size={15} color={c.textTertiary} />
               </View>
-              <Text style={{ color: c.textPrimary }} className="text-xs leading-relaxed italic">
-                "{topCard.subtitle || 'Automated customer dispatch ready.'}"
+
+              <Text style={{ color: c.textPrimary }} className="text-sm leading-relaxed italic my-auto">
+                "{topCard.subtitle || 'Automated customer communication ready for execution.'}"
               </Text>
+
+              <View className="flex-row items-center justify-between pt-2 border-t" style={{ borderColor: c.border }}>
+                <Text style={{ color: c.textTertiary }} className="text-[11px]">
+                  Autonomous Agent Turn
+                </Text>
+                <View className="flex-row items-center">
+                  <Zap size={11} color={c.accent} style={{ marginRight: 3 }} />
+                  <Text style={{ color: c.accent }} className="text-[10px] font-bold uppercase">
+                    Zero Hallucination
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            {/* Hint / Helper */}
+            {/* Hint / Helper Footer */}
             <View className="flex-row items-center justify-between pt-1">
-              <Text style={{ color: c.textTertiary }} className="text-[11px]">
-                Swipe right to approve • Swipe left to reject
+              <Text style={{ color: c.textTertiary }} className="text-xs font-medium">
+                Swipe right to execute • Swipe left to discard
               </Text>
-              <View style={{ backgroundColor: c.surfaceAlt }} className="px-2 py-0.5 rounded-md">
+              <View style={{ backgroundColor: c.surfaceAlt }} className="px-2.5 py-1 rounded-md">
                 <Text style={{ color: c.textSecondary }} className="text-[10px] font-bold uppercase">
-                  AI Generated
+                  Hold to inspect
                 </Text>
               </View>
             </View>
@@ -294,7 +317,7 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
 
       {/* Floating Action Controls */}
       <View className="items-center mt-3">
-        <View className="flex-row items-center justify-center gap-6 mb-2">
+        <View className="flex-row items-center justify-center gap-7 mb-2">
           {/* Reject button */}
           <Pressable
             onPress={triggerSwipeLeft}
@@ -302,14 +325,14 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
             style={{
               backgroundColor: '#EF444418',
               borderColor: '#EF444455',
-              width: 58,
-              height: 58,
-              borderRadius: 29,
+              width: 62,
+              height: 62,
+              borderRadius: 31,
               ...shadows.sm,
             }}
             className="items-center justify-center border active:opacity-75"
           >
-            <X size={26} color="#EF4444" />
+            <X size={28} color="#EF4444" />
           </Pressable>
 
           {/* Snooze button */}
@@ -319,13 +342,13 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
             style={{
               backgroundColor: c.surfaceAlt,
               borderColor: c.border,
-              width: 46,
-              height: 46,
-              borderRadius: 23,
+              width: 48,
+              height: 48,
+              borderRadius: 24,
             }}
             className="items-center justify-center border active:opacity-75"
           >
-            <Clock size={20} color={c.textSecondary} />
+            <Clock size={22} color={c.textSecondary} />
           </Pressable>
 
           {/* Approve button */}
@@ -335,14 +358,14 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
             style={{
               backgroundColor: '#22C55E18',
               borderColor: '#22C55E55',
-              width: 58,
-              height: 58,
-              borderRadius: 29,
+              width: 62,
+              height: 62,
+              borderRadius: 31,
               ...shadows.sm,
             }}
             className="items-center justify-center border active:opacity-75"
           >
-            <Check size={26} color="#22C55E" />
+            <Check size={28} color="#22C55E" />
           </Pressable>
         </View>
 
