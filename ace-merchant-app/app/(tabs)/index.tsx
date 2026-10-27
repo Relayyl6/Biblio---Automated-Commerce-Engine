@@ -36,7 +36,13 @@ export default function PulseScreen() {
 
   if (isLoading) {
     return (
-      <View style={{ backgroundColor: c.bg }} className="flex-1">
+      <View
+        style={{
+          backgroundColor: c.bg,
+          paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,
+        }}
+        className="flex-1"
+      >
         <BentoGridSkeleton />
       </View>
     );
@@ -46,7 +52,10 @@ export default function PulseScreen() {
 
   return (
     <ScrollView
-      style={{ backgroundColor: c.bg}}
+      style={{
+        backgroundColor: c.bg,
+        paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,
+      }}
       className="flex-1"
       contentContainerStyle={{ paddingBottom: 140 }}
       showsVerticalScrollIndicator={false}

@@ -27,7 +27,7 @@ export function ScreenHeader({ title, subtitle, variant = 'floating', rightActio
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const insets = useSafeAreaInsets();
-  const topPad = Math.max(insets.top, StatusBar.currentHeight || 0) + 4;
+  const topPad = Math.max(insets.top, StatusBar.currentHeight || 0) + 2;
 
   const content = (
     <View className="flex-row items-center justify-between">

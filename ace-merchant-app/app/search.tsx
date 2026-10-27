@@ -80,7 +80,7 @@ export default function SearchScreen() {
       exiting={SlideOutRight}
       style={{
         backgroundColor: c.bg,
-        paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 6,
+        paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,
       }}
       className="flex-1"
     >

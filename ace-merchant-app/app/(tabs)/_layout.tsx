@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs, useRouter, useNavigation } from 'expo-router';
 import { Home, Inbox, MoreHorizontal, Search, ArrowLeft, MessageCircle, User, Settings as SettingsIcon, Coins } from 'lucide-react-native';
 import { View, Text, Pressable, Keyboard } from 'react-native';
 import { useColorScheme } from 'nativewind';
@@ -71,6 +71,8 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const c = isDark ? colors.dark : colors.light;
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const fallbackNav = useNavigation();
+  const nav: any = navigation || fallbackNav;
   const inboxBadge = useInboxBadgeCount();
   const [showMore, setShowMore] = useState(false);
   const [kbVisible, setKbVisible] = useState(false);
@@ -133,9 +135,15 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                   setShowMore(true);
                   return;
                 }
-                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-                if (!isFocused && !event.defaultPrevented) {
-                  navigation.navigate(route.name, route.params as object);
+                const event = nav?.emit
+                  ? nav.emit({ type: 'tabPress', target: route.key, canPreventDefault: true })
+                  : { defaultPrevented: false };
+                if (!isFocused && !event?.defaultPrevented) {
+                  if (nav?.navigate) {
+                    nav.navigate(route.name, route.params as object);
+                  } else {
+                    router.navigate(`/(tabs)/${route.name}` as any);
+                  }
                 }
               };
 
@@ -164,7 +172,17 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
             <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowMore(false); }} hitSlop={10}>
               <TabIcon Icon={ArrowLeft} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); navigation.navigate('more'); }} hitSlop={10}>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (nav?.navigate) {
+                  nav.navigate('more');
+                } else {
+                  router.navigate('/(tabs)/more' as any);
+                }
+              }}
+              hitSlop={10}
+            >
               <TabIcon Icon={User} isFocused={state.index === 3} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
             <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/tokens' as any); }} hitSlop={10}>
