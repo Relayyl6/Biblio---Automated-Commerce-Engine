@@ -191,7 +191,9 @@ export class VendorCommuniqueEngine {
     }
 
     const session = JSON.parse(sessionRaw);
-    const code = replyText.trim();
+    const trimmed = replyText.trim();
+    const digitMatch = trimmed.match(/^[123]/);
+    const code = digitMatch ? digitMatch[0] : trimmed;
 
     let decision = "unknown";
     if (code === "1") decision = "approve_exception";
@@ -203,15 +205,19 @@ export class VendorCommuniqueEngine {
     }
 
     // Persist decision (vendor_decisions table)
-    await sql`
-      INSERT INTO vendor_decisions (merchant_id, decision_type, channel, choice)
-      VALUES (
-        ${merchantId},
-        'escalation_reply',
-        ${session.channel ?? "unknown"},
-        ${decision}
-      )
-    `;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantId);
+    if (isUuid) {
+      await sql`
+        INSERT INTO vendor_decisions (merchant_id, decision_type, channel, choice, customer_id)
+        VALUES (
+          ${merchantId}::uuid,
+          'escalation_reply',
+          ${session.channel ?? "unknown"},
+          ${decision},
+          ${session.customerId ?? null}
+        )
+      `.catch((e) => logger.warn('[VendorCommunique] DB insert vendor_decisions error:', e));
+    }
 
     await redis.del(sessionKey);
 

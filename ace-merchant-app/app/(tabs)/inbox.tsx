@@ -40,30 +40,32 @@ export default function InboxScreen() {
   });
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { data: cards = [], isLoading } = useInbox();
+  const { data: rawCards = [], isLoading } = useInbox();
+  const cards = useMemo(() => (Array.isArray(rawCards) ? rawCards : []), [rawCards]);
   const { mutate: executeAction } = useExecuteInboxAction();
   const seedMutation = useSeedInboxCards();
 
-  const counts = useMemo(
-    () => ({
-      all: cards.filter((item: any) => item.status !== 'snoozed').length,
-      priority: cards.filter((item: any) => (item.priority === 'high' || !item.priority) && item.status !== 'snoozed').length,
-      restocks: cards.filter((item: any) => item.type === 'restock' && item.status !== 'snoozed').length,
-      snoozed: cards.filter((item: any) => item.status === 'snoozed').length,
-    }),
-    [cards]
-  );
+  const counts = useMemo(() => {
+    const safe = Array.isArray(cards) ? cards : [];
+    return {
+      all: safe.filter((item: any) => item && item.status !== 'snoozed').length,
+      priority: safe.filter((item: any) => item && (item.priority === 'high' || !item.priority) && item.status !== 'snoozed').length,
+      restocks: safe.filter((item: any) => item && item.type === 'restock' && item.status !== 'snoozed').length,
+      snoozed: safe.filter((item: any) => item && item.status === 'snoozed').length,
+    };
+  }, [cards]);
 
   const visibleCards = useMemo(() => {
-    if (activeFilter === 'all') return cards.filter((item: any) => item.status !== 'snoozed');
-    if (activeFilter === 'priority') return cards.filter((item: any) => (item.priority === 'high' || !item.priority) && item.status !== 'snoozed');
-    if (activeFilter === 'restocks') return cards.filter((item: any) => item.type === 'restock' && item.status !== 'snoozed');
-    return cards.filter((item: any) => item.status === 'snoozed');
+    const safe = Array.isArray(cards) ? cards : [];
+    if (activeFilter === 'all') return safe.filter((item: any) => item && item.status !== 'snoozed');
+    if (activeFilter === 'priority') return safe.filter((item: any) => item && (item.priority === 'high' || !item.priority) && item.status !== 'snoozed');
+    if (activeFilter === 'restocks') return safe.filter((item: any) => item && item.type === 'restock' && item.status !== 'snoozed');
+    return safe.filter((item: any) => item && item.status === 'snoozed');
   }, [cards, activeFilter]);
 
   const removeCard = (id: string, actionStr: string) => {
-    queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
-      oldData ? oldData.filter((card) => card.id !== id) : []
+    queryClient.setQueryData(['inboxCards', merchantId], (oldData: any) =>
+      Array.isArray(oldData) ? oldData.filter((card) => card && card.id !== id) : []
     );
     showUndoToast(id, actionStr);
   };
@@ -93,19 +95,19 @@ export default function InboxScreen() {
   };
 
   const handleSnooze = (id: string) => {
-    const target = cards.find((c: any) => c.id === id);
+    const target = cards.find((c: any) => c && c.id === id);
     const isAlreadySnoozed = target?.status === 'snoozed';
 
     if (isAlreadySnoozed) {
       executeAction({ cardId: id, action: 'unsnooze' as any });
-      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
-        oldData ? oldData.map((c) => (c.id === id ? { ...c, status: 'pending' } : c)) : []
+      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any) =>
+        Array.isArray(oldData) ? oldData.map((c) => (c && c.id === id ? { ...c, status: 'pending' } : c)) : []
       );
       showUndoToast(id, 'Restored to Active');
     } else {
       executeAction({ cardId: id, action: 'snooze' });
-      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any[]) =>
-        oldData ? oldData.map((c) => (c.id === id ? { ...c, status: 'snoozed' } : c)) : []
+      queryClient.setQueryData(['inboxCards', merchantId], (oldData: any) =>
+        Array.isArray(oldData) ? oldData.map((c) => (c && c.id === id ? { ...c, status: 'snoozed' } : c)) : []
       );
       showUndoToast(id, 'Snoozed');
     }
@@ -168,7 +170,7 @@ export default function InboxScreen() {
             </View>
 
             <Pressable
-              onPress={() => router.push('/chats')}
+              onPress={() => router.push('/(tabs)/chats')}
               style={{ backgroundColor: c.surface, borderColor: c.border }}
               className="w-8 h-8 rounded-full border items-center justify-center active:opacity-70"
             >

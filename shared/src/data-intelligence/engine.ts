@@ -4,13 +4,9 @@ import { logger } from "@ace/shared/logger.js";
 // Role: Centralized Data-Intelligence Fixture for telemetry and analytical processing.
 // This is the core Layer 3 data ingestion point for the "Scale AI of informal commerce" arc.
 // All ACE apps and services pipe their analytical events here. 
-//
-// In a full production setup (post-Phase 2), this module will buffer events into Kafka
-// or write directly to ClickHouse. For immediate velocity (Phase 2/3 MVP), we provide
-// an interface that abstracts the data sink, temporarily backing it with PostgreSQL/stdout 
-// or Redis streams.
 
 import { OrderState, ConversationTurn } from '../types.js';
+import { sql } from '../clients.js';
 
 // --- Types ---
 
@@ -62,14 +58,20 @@ export interface AuditLogPayload {
   timestamp: number;
 }
 
+export interface RFMScore {
+  recencyDays: number;
+  frequency: number;
+  monetaryTotal: number;
+  averageOrderValue: number;
+  segment: 'champions' | 'loyal' | 'at_risk' | 'hibernating' | 'new';
+}
+
 // --- The Data Intelligence Engine ---
 
 export class DataIntelligenceEngine {
   private static instance: DataIntelligenceEngine;
 
-  private constructor() {
-    // Initialization: setup ClickHouse/Kafka clients here eventually
-  }
+  private constructor() {}
 
   public static getInstance(): DataIntelligenceEngine {
     if (!DataIntelligenceEngine.instance) {
@@ -83,7 +85,6 @@ export class DataIntelligenceEngine {
    * Feeds the FMCG Market Intelligence product.
    */
   public async logNegotiationTrace(trace: NegotiationTrace): Promise<void> {
-    // TODO: Write to ClickHouse `negotiation_analytics` or publish to Kafka `negotiations.traces`
     logger.log(`[DataIntel] 📈 NegotiationTrace Logged: Session ${trace.sessionId} | Outcome: ${trace.outcome} | Elasticity: ${trace.priceElasticitySignal.toFixed(2)}`);
     
     // Pattern Detection: Identify aggressive downward elasticity
@@ -98,16 +99,11 @@ export class DataIntelligenceEngine {
    */
   public async captureOrderStateChange(metrics: OrderMetricsPayload): Promise<void> {
     logger.log(`[DataIntel] 🔄 OrderStateChange: Order ${metrics.orderId} [${metrics.fromState} -> ${metrics.toState}]`);
-    
-    // Feature extraction: Delivery speed
-    if (metrics.toState === 'delivered') {
-      // Logic to measure time-in-pipeline would go here
-      // and feed the merchant's operational reliability score.
-    }
   }
 
   /**
    * High-priority centralized audit logger for system events.
+   * Persists to PostgreSQL audit_logs table for enterprise compliance.
    */
   public async auditLog(payload: Omit<AuditLogPayload, 'timestamp'>): Promise<void> {
     const log: AuditLogPayload = {
@@ -115,8 +111,40 @@ export class DataIntelligenceEngine {
       timestamp: Date.now()
     };
     
-    // TODO: Write to cold storage / Elastic
     logger.log(`[DataIntel] 🔒 Audit [${log.service}]: ${log.merchantId} - ${log.action}`);
+    
+    try {
+      await sql`
+        INSERT INTO audit_logs (service, merchant_id, action, metadata, created_at)
+        VALUES (
+          ${log.service},
+          ${log.merchantId},
+          ${log.action},
+          ${sql.json((log.metadata || {}) as any)},
+          NOW()
+        )
+      `;
+    } catch (dbErr) {
+      logger.warn('[DataIntel] Failed to persist audit log to DB:', dbErr);
+    }
+  }
+
+  /**
+   * Retrieve audit logs per merchant for compliance and dashboard viewing.
+   */
+  public async getAuditLogs(merchantId: string, limit: number = 50): Promise<any[]> {
+    try {
+      const rows = await sql<any[]>`
+        SELECT id, service, merchant_id, action, metadata, created_at
+        FROM audit_logs
+        WHERE merchant_id = ${merchantId}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `;
+      return rows;
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -130,7 +158,7 @@ export class DataIntelligenceEngine {
     completionTokens: number;
   }): Promise<void> {
     const total = payload.promptTokens + payload.completionTokens;
-    console.info(
+    logger.info(
       `[DataIntel] 🤖 TokenUsage [${payload.service}]: merchant=${payload.merchantId} ` +
       `model=${payload.model} prompt=${payload.promptTokens} completion=${payload.completionTokens} total=${total}`
     );
@@ -160,7 +188,7 @@ export class DataIntelligenceEngine {
     stock: number;
     source: "whatsapp_voice" | "whatsapp_image" | "manual" | "catalog_sync";
   }): Promise<void> {
-    console.info(
+    logger.info(
       `[DataIntel] 📦 InventoryIngestion: merchant=${payload.merchantId} vendor=${payload.vendorId} ` +
       `sku=${payload.sku} price=₦${payload.price ?? 0} stock=${payload.stock} source=${payload.source}`
     );
@@ -170,6 +198,65 @@ export class DataIntelligenceEngine {
       action: "inventory_ingested",
       metadata: payload as Record<string, unknown>,
     });
+  }
+
+  /**
+   * Computes RFM (Recency, Frequency, Monetary) analytics for customer segmentation.
+   * Handles 0-order customers gracefully without NaN or errors.
+   */
+  public calculateRFM(orders: { createdAt: number | string | Date; amount: number }[]): RFMScore {
+    if (!orders || orders.length === 0) {
+      return {
+        recencyDays: 999,
+        frequency: 0,
+        monetaryTotal: 0,
+        averageOrderValue: 0,
+        segment: 'new'
+      };
+    }
+
+    const now = Date.now();
+    const timestamps = orders.map(o => new Date(o.createdAt).getTime());
+    const latestTimestamp = Math.max(...timestamps);
+    const recencyDays = Math.max(0, Math.floor((now - latestTimestamp) / (24 * 60 * 60 * 1000)));
+
+    const frequency = orders.length;
+    const monetaryTotal = orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+    const averageOrderValue = frequency > 0 ? Math.round(monetaryTotal / frequency) : 0;
+
+    let segment: 'champions' | 'loyal' | 'at_risk' | 'hibernating' | 'new' = 'new';
+    if (frequency >= 5 && recencyDays <= 30) {
+      segment = 'champions';
+    } else if (frequency >= 2 && recencyDays <= 30) {
+      segment = 'loyal';
+    } else if (frequency >= 1 && recencyDays > 30 && recencyDays <= 90) {
+      segment = 'at_risk';
+    } else if (recencyDays > 90) {
+      segment = 'hibernating';
+    }
+
+    return {
+      recencyDays,
+      frequency,
+      monetaryTotal,
+      averageOrderValue,
+      segment
+    };
+  }
+
+  /**
+   * Computes Customer Lifetime Value (CLV).
+   * Guaranteed safe against division by zero.
+   */
+  public calculateCLV(orders: { amount: number }[], churnRate: number = 0.2): number {
+    if (!orders || orders.length === 0 || churnRate <= 0) {
+      return 0;
+    }
+    const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+    const aov = totalRevenue / orders.length;
+    const purchaseFrequency = orders.length;
+    const customerValue = aov * purchaseFrequency;
+    return Math.round(customerValue / churnRate);
   }
 
   /**
@@ -194,4 +281,3 @@ export class DataIntelligenceEngine {
 
 // Export singleton instance for immediate use
 export const dataIntelligence = DataIntelligenceEngine.getInstance();
-

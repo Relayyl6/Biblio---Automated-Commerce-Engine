@@ -13,12 +13,12 @@ export class StockoutPredictor {
     try {
       const items = await sql<any[]>`
         SELECT id, COALESCE(merchant_id, tenant_id) as merchant_id, sku, name, 
-               COALESCE(quantity, stock, 0) as stock_quantity, 
+               COALESCE(NULLIF(stock, 0), quantity, 0) as stock_quantity, 
                COALESCE(low_stock_threshold, 5) as reorder_threshold, 
                COALESCE(low_stock_threshold, 5) * 5 as reorder_batch_size, 
                supplier_id
         FROM products
-        WHERE COALESCE(quantity, stock, 0) <= COALESCE(low_stock_threshold, 5)
+        WHERE COALESCE(NULLIF(stock, 0), quantity, 0) <= COALESCE(low_stock_threshold, 5)
         ${merchantId ? sql`AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)` : sql``}
       `;
 
@@ -48,7 +48,7 @@ export class StockoutPredictor {
       try {
         const rows = await sql<any[]>`
           SELECT id, COALESCE(merchant_id, tenant_id) as merchant_id, sku, name, 
-                 COALESCE(quantity, stock, 0) as stock_quantity, 
+                 COALESCE(NULLIF(stock, 0), quantity, 0) as stock_quantity, 
                  COALESCE(low_stock_threshold, 5) as reorder_threshold, 
                  COALESCE(low_stock_threshold, 5) * 5 as reorder_batch_size, 
                  supplier_id

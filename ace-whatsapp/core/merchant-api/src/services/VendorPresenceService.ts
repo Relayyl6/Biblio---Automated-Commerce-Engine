@@ -1,4 +1,4 @@
-import { sql } from "@ace/shared/clients";
+import { sql, redis } from "@ace/shared/clients";
 
 export type PresenceState = 'present' | 'delayed' | 'away' | 'off';
 
@@ -11,11 +11,17 @@ export interface PresenceInfo {
   context_summary?: string;
 }
 
+const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
 export class VendorPresenceService {
   /**
    * Get current presence state for a merchant
    */
   static async getPresence(merchantId: string): Promise<PresenceInfo> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
     const rows = await sql<PresenceInfo[]>`
       SELECT state, sla_minutes, read_grace_minutes, cover_me, last_active_at, context_summary
       FROM vendor_presence
@@ -29,15 +35,18 @@ export class VendorPresenceService {
         VALUES (${merchantId}::uuid, 'present', 10, 5, false, NOW())
         ON CONFLICT (merchant_id) DO NOTHING
       `;
-      return {
+      const def: PresenceInfo = {
         state: 'present',
         sla_minutes: 10,
         read_grace_minutes: 5,
         cover_me: false,
         last_active_at: new Date().toISOString()
       };
+      await redis.set(`vendor:presence:${merchantId}`, JSON.stringify(def)).catch(() => {});
+      return def;
     }
 
+    await redis.set(`vendor:presence:${merchantId}`, JSON.stringify(rows[0])).catch(() => {});
     return rows[0];
   }
 
@@ -45,28 +54,78 @@ export class VendorPresenceService {
    * Update presence configuration and status
    */
   static async updatePresence(merchantId: string, updates: Partial<PresenceInfo>): Promise<PresenceInfo> {
-    const current = await this.getPresence(merchantId);
-    const state = updates.state ?? current.state;
-    const sla = updates.sla_minutes ?? current.sla_minutes;
-    const readGrace = updates.read_grace_minutes ?? current.read_grace_minutes;
-    const coverMe = updates.cover_me ?? current.cover_me;
-    const summary = updates.context_summary ?? current.context_summary ?? null;
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
 
-    const rows = await sql<PresenceInfo[]>`
+    const validStates: PresenceState[] = ['present', 'delayed', 'away', 'off'];
+    if (updates.state !== undefined && !validStates.includes(updates.state)) {
+      throw new Error(`Invalid presence state: must be one of 'present', 'delayed', 'away', 'off'`);
+    }
+
+    if (updates.sla_minutes !== undefined && (typeof updates.sla_minutes !== 'number' || !Number.isFinite(updates.sla_minutes) || updates.sla_minutes < 0)) {
+      throw new Error("Invalid sla_minutes: must be a non-negative number");
+    }
+
+    if (updates.read_grace_minutes !== undefined && (typeof updates.read_grace_minutes !== 'number' || !Number.isFinite(updates.read_grace_minutes) || updates.read_grace_minutes < 0)) {
+      throw new Error("Invalid read_grace_minutes: must be a non-negative number");
+    }
+
+    if (updates.cover_me !== undefined && typeof updates.cover_me !== 'boolean') {
+      throw new Error("Invalid cover_me: must be a boolean");
+    }
+
+    const hasState = updates.state !== undefined;
+    const hasSla = typeof updates.sla_minutes === 'number';
+    const hasReadGrace = typeof updates.read_grace_minutes === 'number';
+    const hasCoverMe = typeof updates.cover_me === 'boolean';
+    const hasSummary = updates.context_summary !== undefined;
+
+    const summaryVal = updates.context_summary ?? null;
+
+    const rows = (await sql`
       INSERT INTO vendor_presence (merchant_id, state, sla_minutes, read_grace_minutes, cover_me, context_summary, last_active_at, updated_at)
-      VALUES (${merchantId}::uuid, ${state}, ${sla}, ${readGrace}, ${coverMe}, ${summary}, NOW(), NOW())
+      VALUES (
+        ${merchantId}::uuid,
+        ${hasState ? updates.state! : 'present'},
+        ${hasSla ? Math.max(0, Math.floor(updates.sla_minutes!)) : 10},
+        ${hasReadGrace ? Math.max(0, Math.floor(updates.read_grace_minutes!)) : 5},
+        ${hasCoverMe ? updates.cover_me! : false},
+        ${summaryVal},
+        NOW(),
+        NOW()
+      )
       ON CONFLICT (merchant_id) DO UPDATE SET
-        state = EXCLUDED.state,
-        sla_minutes = EXCLUDED.sla_minutes,
-        read_grace_minutes = EXCLUDED.read_grace_minutes,
-        cover_me = EXCLUDED.cover_me,
-        context_summary = COALESCE(EXCLUDED.context_summary, vendor_presence.context_summary),
+        state = CASE WHEN ${hasState} THEN EXCLUDED.state ELSE vendor_presence.state END,
+        sla_minutes = CASE WHEN ${hasSla} THEN EXCLUDED.sla_minutes ELSE vendor_presence.sla_minutes END,
+        read_grace_minutes = CASE WHEN ${hasReadGrace} THEN EXCLUDED.read_grace_minutes ELSE vendor_presence.read_grace_minutes END,
+        cover_me = CASE WHEN ${hasCoverMe} THEN EXCLUDED.cover_me ELSE vendor_presence.cover_me END,
+        context_summary = CASE WHEN ${hasSummary} THEN EXCLUDED.context_summary ELSE vendor_presence.context_summary END,
         last_active_at = NOW(),
         updated_at = NOW()
       RETURNING state, sla_minutes, read_grace_minutes, cover_me, last_active_at, context_summary
-    `;
+    `) as unknown as PresenceInfo[];
 
-    return rows[0];
+    const updated = rows[0];
+
+    // Synchronize to Redis Single Source of Truth
+    try {
+      if (updated.state === 'off') {
+        await redis.set(`killswitch:global:${merchantId}`, "1");
+      } else {
+        await redis.del(`killswitch:global:${merchantId}`);
+      }
+
+      if (updated.cover_me) {
+        await redis.set(`vendor:cover_me:${merchantId}`, "1");
+      } else {
+        await redis.del(`vendor:cover_me:${merchantId}`);
+      }
+
+      await redis.set(`vendor:presence:${merchantId}`, JSON.stringify(updated));
+    } catch (_) {}
+
+    return updated;
   }
 
   /**
@@ -82,18 +141,29 @@ export class VendorPresenceService {
   /**
    * Check if Biblio should yield to the vendor for a specific chat.
    * Biblio yields if:
-   * 1. The vendor has hands_off enabled for this chat.
+   * 1. The vendor has hands_off enabled for this chat or human takeover is active.
    * 2. The vendor is active ('present') and within the SLA window.
    * 3. Vendor read-without-reply is still inside the read grace window.
    */
   static async shouldBiblioYield(merchantId: string, chatId: string): Promise<{ yield: boolean; reason: string }> {
-    // 1. Check hands-off override
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
+    // 1. Check hands-off override from Redis (killswitch & human_override) and Database
+    const cachedHandsOff = await redis.get(`killswitch:chat:${merchantId}:${chatId}`).catch(() => null);
+    const cachedHumanOverride = await redis.get(`human_override:${chatId}`).catch(() => null);
+    if (cachedHandsOff || cachedHumanOverride) {
+      return { yield: true, reason: 'Chat is marked Hands-Off / Human Override active.' };
+    }
+
     const override = await sql<{ hands_off: boolean }[]>`
       SELECT hands_off FROM chat_overrides
       WHERE merchant_id = ${merchantId}::uuid AND chat_id = ${chatId}
     `;
 
     if (override.length > 0 && override[0].hands_off) {
+      await redis.set(`killswitch:chat:${merchantId}:${chatId}`, "1").catch(() => {});
       return { yield: true, reason: 'Chat is marked Hands-Off by vendor.' };
     }
 
@@ -119,6 +189,10 @@ export class VendorPresenceService {
    * Set 'hands off' per-chat silence
    */
   static async setHandsOff(merchantId: string, chatId: string, handsOff: boolean): Promise<boolean> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
     await sql`
       INSERT INTO chat_overrides (merchant_id, chat_id, hands_off, updated_at)
       VALUES (${merchantId}::uuid, ${chatId}, ${handsOff}, NOW())
@@ -126,6 +200,17 @@ export class VendorPresenceService {
         hands_off = ${handsOff},
         updated_at = NOW()
     `;
+
+    try {
+      if (handsOff) {
+        await redis.set(`killswitch:chat:${merchantId}:${chatId}`, "1");
+        await redis.set(`human_override:${chatId}`, "1", "EX", 3600);
+      } else {
+        await redis.del(`killswitch:chat:${merchantId}:${chatId}`);
+        await redis.del(`human_override:${chatId}`);
+      }
+    } catch (_) {}
+
     return handsOff;
   }
 
@@ -133,10 +218,20 @@ export class VendorPresenceService {
    * Handback context passing: on takeover or resumption, summarize context
    */
   static async recordHandback(merchantId: string, chatId: string, direction: 'to_vendor' | 'to_biblio', summary: string): Promise<void> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
+    if (!direction || !['to_vendor', 'to_biblio'].includes(direction)) {
+      throw new Error(`Invalid direction: must be 'to_vendor' or 'to_biblio'`);
+    }
+
     await sql`
-      UPDATE vendor_presence
-      SET context_summary = ${summary}, updated_at = NOW()
-      WHERE merchant_id = ${merchantId}::uuid
+      INSERT INTO vendor_presence (merchant_id, state, sla_minutes, read_grace_minutes, cover_me, context_summary, last_active_at, updated_at)
+      VALUES (${merchantId}::uuid, 'present', 10, 5, false, ${summary || null}, NOW(), NOW())
+      ON CONFLICT (merchant_id) DO UPDATE SET
+        context_summary = EXCLUDED.context_summary,
+        updated_at = NOW()
     `;
 
     // Also record audit log entry
@@ -147,7 +242,7 @@ export class VendorPresenceService {
         ${chatId},
         ${direction === 'to_vendor' ? 'live_barge_in' : 'reply_review'},
         'operator',
-        ${summary},
+        ${summary || 'Handback recorded'},
         ${JSON.stringify({ direction, timestamp: new Date().toISOString() })}::jsonb
       )
     `;

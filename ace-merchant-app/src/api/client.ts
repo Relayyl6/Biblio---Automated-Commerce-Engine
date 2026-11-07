@@ -6,7 +6,7 @@ import { useAuthStore } from '../store/authStore';
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   (__DEV__
-    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://192.168.100.75:3004')
+    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://10.86.227.253:3004')
     : 'https://api.biblio.africa');
 
 export const api = axios.create({
@@ -28,6 +28,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Intercept responses to handle 401 Unauthorized session invalidation
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const { token, logout } = useAuthStore.getState();
+      if (token) {
+        logout();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // --- TELEMETRY / PULSE ---
 export const usePulseData = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
@@ -47,10 +61,15 @@ export const useProducts = () => {
   return useQuery({
     queryKey: ['products', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/products`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/products`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -71,7 +90,7 @@ export const useDeleteProduct = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async (sku: string) => {
-      const res = await api.delete(`/merchants/${merchantId}/products/${sku}`);
+      const res = await api.delete(`/merchants/${encodeURIComponent(merchantId || '')}/products/${encodeURIComponent(sku)}`);
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products', merchantId] }),
@@ -94,7 +113,7 @@ export const useUpdateProduct = () => {
       imageUrl?: string;
       active?: boolean;
     }) => {
-      const res = await api.patch(`/merchants/${merchantId}/products/${sku}`, data);
+      const res = await api.patch(`/merchants/${encodeURIComponent(merchantId || '')}/products/${encodeURIComponent(sku)}`, data);
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products', merchantId] }),
@@ -147,10 +166,15 @@ export const useChats = () => {
   return useQuery({
     queryKey: ['chats', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/chats`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/chats`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 // --- CUSTOMERS ---
@@ -159,10 +183,15 @@ export const useCustomers = () => {
   return useQuery({
     queryKey: ['customers', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/customers`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/customers`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -172,10 +201,22 @@ export const useInbox = () => {
   return useQuery({
     queryKey: ['inboxCards', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/inbox`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/inbox`);
+        if (Array.isArray(res.data)) {
+          return res.data;
+        }
+        if (res.data && Array.isArray((res.data as any).cards)) {
+          return (res.data as any).cards;
+        }
+        return [];
+      } catch (err) {
+        console.warn('Failed to fetch inbox cards:', err);
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -184,7 +225,7 @@ export const useExecuteInboxAction = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async ({ cardId, action, payload }: { cardId: string, action: 'approve' | 'reject' | 'snooze', payload?: any }) => {
-      const res = await api.post(`/merchants/${merchantId}/inbox/${cardId}/execute`, { action, payload });
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/inbox/${encodeURIComponent(cardId)}/execute`, { action, payload });
       return res.data;
     },
     onSuccess: () => {
@@ -219,16 +260,75 @@ export const useFinanceData = () => {
   });
 };
 
+export interface QuarantineRecord {
+  id: string;
+  merchant_id: string;
+  contact_raw_phone: string;
+  sender_name: string | null;
+  trigger_message: string;
+  confidence_score: number;
+  intent_detected: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export const useQuarantineChats = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  return useQuery<QuarantineRecord[]>({
+    queryKey: ['quarantineChats', merchantId],
+    queryFn: async () => {
+      if (!merchantId) return [];
+      const res = await api.get(`/merchants/${merchantId}/quarantine`);
+      return Array.isArray(res.data) ? res.data : [];
+    },
+    enabled: !!merchantId,
+    refetchInterval: 5000,
+  });
+};
+
+export const useResolveQuarantine = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      quarantineId,
+      action,
+      draftText,
+    }: {
+      quarantineId: string;
+      action: 'reply_as_biblio' | 'draft_for_me' | 'ignore';
+      draftText?: string;
+    }) => {
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/quarantine/${encodeURIComponent(quarantineId)}/resolve`, {
+        action,
+        draftText,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quarantineChats', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['agentMessages', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['inboxCards', merchantId] });
+    },
+  });
+};
+
 
 export function useSearchData(id: string, q: string) {
   return useQuery({
     queryKey: ['search', id, q],
     queryFn: async () => {
-      if (!q || q.length < 2) return [];
-      const { data } = await api.get(`/merchants/${id}/search?q=${encodeURIComponent(q)}`);
-      return data;
+      try {
+        if (!q || q.length < 2) return [];
+        const { data } = await api.get(`/merchants/${encodeURIComponent(id)}/search?q=${encodeURIComponent(q)}`);
+        return Array.isArray(data) ? data : [];
+      } catch (e) {
+        return [];
+      }
     },
-    enabled: !!id && q.length >= 2
+    enabled: !!id && q.length >= 2,
+    initialData: [],
   });
 }
 
@@ -238,7 +338,7 @@ export const useChatDetails = (customerId: string) => {
   return useQuery({
     queryKey: ['chat', merchantId, customerId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/chats/${customerId}`);
+      const res = await api.get(`/merchants/${encodeURIComponent(merchantId || '')}/chats/${encodeURIComponent(customerId)}`);
       return res.data;
     },
     enabled: !!merchantId && !!customerId,
@@ -249,7 +349,7 @@ export const useTakeoverChat = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async (customerId: string) => {
-      const res = await api.post(`/merchants/${merchantId}/chats/${customerId}/takeover`);
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/chats/${encodeURIComponent(customerId)}/takeover`);
       return res.data;
     }
   });
@@ -259,7 +359,7 @@ export const useReleaseTakeoverChat = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async (customerId: string) => {
-      const res = await api.post(`/merchants/${merchantId}/chats/${customerId}/release-takeover`);
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/chats/${encodeURIComponent(customerId)}/release-takeover`);
       return res.data;
     }
   });
@@ -269,7 +369,7 @@ export const useSendChatMessage = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async ({ customerId, text }: { customerId: string, text: string }) => {
-      const res = await api.post(`/merchants/${merchantId}/chats/${customerId}/send`, { text });
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/chats/${encodeURIComponent(customerId)}/send`, { text });
       return res.data;
     }
   });
@@ -281,10 +381,15 @@ export const useSuppliers = () => {
   return useQuery({
     queryKey: ['suppliers', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/suppliers`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/suppliers`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -305,7 +410,7 @@ export const useUpdateSupplier = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async ({ id, ...data }: any) => {
-      const res = await api.patch(`/merchants/${merchantId}/suppliers/${id}`, data);
+      const res = await api.patch(`/merchants/${encodeURIComponent(merchantId || '')}/suppliers/${encodeURIComponent(id)}`, data);
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['suppliers', merchantId] }),
@@ -317,7 +422,7 @@ export const useDeleteSupplier = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await api.delete(`/merchants/${merchantId}/suppliers/${id}`);
+      const res = await api.delete(`/merchants/${encodeURIComponent(merchantId || '')}/suppliers/${encodeURIComponent(id)}`);
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['suppliers', merchantId] }),
@@ -369,15 +474,45 @@ export const useUpdateStatusSettings = () => {
   });
 };
 
+export interface StatusCandidate {
+  sku: string;
+  name: string;
+  price: number;
+  image_url?: string;
+  margin_pct: number;
+  recent_sales_velocity: number;
+  promotion_score: number;
+  last_posted_at?: string;
+}
+
+export interface StatusCandidatesResponse {
+  ok: boolean;
+  candidates: StatusCandidate[];
+  strategy?: string;
+  marginWeight?: number;
+  velocityWeight?: number;
+}
+
 export const useStatusCandidates = (limit = 5) => {
   const merchantId = useAuthStore((state) => state.merchantId);
-  return useQuery({
+  return useQuery<StatusCandidatesResponse>({
     queryKey: ['statusCandidates', merchantId, limit],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/status-candidates?limit=${limit}`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/status-candidates?limit=${limit}`);
+        if (res.data && Array.isArray(res.data.candidates)) {
+          return res.data;
+        }
+        if (Array.isArray(res.data)) {
+          return { ok: true, candidates: res.data };
+        }
+        return { ok: true, candidates: [] };
+      } catch (e) {
+        return { ok: false, candidates: [] };
+      }
     },
     enabled: !!merchantId,
+    initialData: { ok: true, candidates: [] },
   });
 };
 
@@ -401,10 +536,15 @@ export const useStatusLog = (limit = 10) => {
   return useQuery({
     queryKey: ['statusLog', merchantId, limit],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/status-log?limit=${limit}`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/status-log?limit=${limit}`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -468,10 +608,15 @@ export const useSupportTickets = () => {
   return useQuery({
     queryKey: ['supportTickets', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/support-tickets`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/support-tickets`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -489,11 +634,15 @@ export const useAgentMessages = () => {
   return useQuery<AgentMessage[]>({
     queryKey: ['agentMessages', merchantId],
     queryFn: async () => {
+      if (!merchantId) return [];
       const res = await api.get(`/merchants/${merchantId}/agent-messages`);
-      return res.data;
+      return Array.isArray(res.data) ? res.data : [];
     },
     enabled: !!merchantId,
-    refetchInterval: 3000,
+    staleTime: 3000,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+    placeholderData: (previousData) => previousData,
   });
 };
 
@@ -501,8 +650,49 @@ export const useSendAgentMessage = () => {
   const merchantId = useAuthStore((state) => state.merchantId);
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ text, imageUrl }: { text: string; imageUrl?: string }) => {
-      const res = await api.post(`/merchants/${merchantId}/agent-messages`, { text, imageUrl });
+    mutationFn: async ({
+      text,
+      imageUrl,
+      imageBase64,
+      attachmentType,
+    }: {
+      text?: string;
+      imageUrl?: string;
+      imageBase64?: string;
+      attachmentType?: string;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/agent-messages`, {
+        text: text || '',
+        imageUrl,
+        imageBase64,
+        attachmentType,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agentMessages', merchantId] });
+    },
+  });
+};
+
+export const useSendAgentAudio = () => {
+  const merchantId = useAuthStore((state) => state.merchantId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      audioBase64,
+      mimeType,
+      durationSeconds,
+    }: {
+      audioBase64: string;
+      mimeType?: string;
+      durationSeconds?: number;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/agent-audio`, {
+        audioBase64,
+        mimeType: mimeType || 'audio/m4a',
+        durationSeconds,
+      });
       return res.data;
     },
     onSuccess: () => {
@@ -528,10 +718,15 @@ export const useDisputes = () => {
   return useQuery<DisputeItem[]>({
     queryKey: ['disputes', merchantId],
     queryFn: async () => {
-      const res = await api.get(`/merchants/${merchantId}/disputes`);
-      return res.data;
+      try {
+        const res = await api.get(`/merchants/${merchantId}/disputes`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (err) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -540,12 +735,12 @@ export const useResolveDispute = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ disputeId, decision, note }: { disputeId: string; decision: 'approve' | 'reject'; note?: string }) => {
-      const res = await api.post(`/merchants/${merchantId}/disputes/${disputeId}/resolve`, { decision, note });
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId || '')}/disputes/${encodeURIComponent(disputeId)}/resolve`, { decision, note });
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['disputes', merchantId] });
-      queryClient.invalidateQueries({ queryKey: ['inbox', merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['inboxCards', merchantId] });
     },
   });
 };
@@ -801,6 +996,9 @@ export interface VendorStatusData {
   businessLineNumber: string | null;
   dbStatus: string;
   connected?: boolean;
+  inMemory?: boolean;
+  isPairing?: boolean;
+  lastError?: string | null;
   state?: string;
   [key: string]: any;
 }
@@ -823,9 +1021,14 @@ export const useVendors = () => {
   return useQuery({
     queryKey: ['vendors'],
     queryFn: async () => {
-      const res = await api.get('/vendors');
-      return res.data;
+      try {
+        const res = await api.get('/vendors');
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
+    initialData: [],
   });
 };
 
@@ -877,10 +1080,15 @@ export const useVendorQueue = (vendorId?: string) => {
   return useQuery({
     queryKey: ['vendorQueue', targetId],
     queryFn: async () => {
-      const res = await api.get(`/vendors/${targetId}/queue`);
-      return res.data;
+      try {
+        const res = await api.get(`/vendors/${targetId}/queue`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!targetId,
+    initialData: [],
   });
 };
 
@@ -890,7 +1098,7 @@ export const useApproveVendorQueueItem = (vendorId?: string) => {
   const targetId = vendorId || merchantId;
   return useMutation({
     mutationFn: async (queueId: string) => {
-      const res = await api.post(`/vendors/${targetId}/queue/${queueId}/approve`);
+      const res = await api.post(`/vendors/${encodeURIComponent(targetId || '')}/queue/${encodeURIComponent(queueId)}/approve`);
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vendorQueue', targetId] }),
@@ -1069,7 +1277,7 @@ export const useCoverMe = () => {
 export const useSetHandsOff = () => {
   return useMutation({
     mutationFn: async ({ chatId, merchantId, handsOff }: { chatId: string; merchantId: string; handsOff: boolean }) => {
-      const res = await api.post(`/chats/${chatId}/hands-off`, { merchantId, handsOff });
+      const res = await api.post(`/chats/${encodeURIComponent(chatId)}/hands-off`, { merchantId, handsOff });
       return res.data;
     },
   });
@@ -1145,11 +1353,16 @@ export const useVetoActions = (merchantId: string) => {
   return useQuery<VetoAuditItem[]>({
     queryKey: ['vetoActions', merchantId],
     queryFn: async () => {
-      if (!merchantId) return [];
-      const res = await api.get(`/merchants/${merchantId}/veto/actions`);
-      return res.data;
+      try {
+        if (!merchantId) return [];
+        const res = await api.get(`/merchants/${merchantId}/veto/actions`);
+        return Array.isArray(res.data) ? res.data : [];
+      } catch (e) {
+        return [];
+      }
     },
     enabled: !!merchantId,
+    initialData: [],
   });
 };
 
@@ -1186,47 +1399,160 @@ export const useExecuteVetoAction = () => {
   });
 };
 
-// 4. Soft Mode Quarantine & Resolution
-export const useQuarantineChats = (merchantId: string) => {
-  return useQuery({
-    queryKey: ['quarantineChats', merchantId],
-    queryFn: async () => {
-      if (!merchantId) return [];
-      const res = await api.get(`/merchants/${merchantId}/quarantine`);
-      return res.data;
-    },
-    enabled: !!merchantId,
-  });
-};
-
-export const useResolveChat = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      chatId,
-      merchantId,
-      resolution,
-    }: {
-      chatId: string;
-      merchantId: string;
-      resolution: 'business' | 'personal' | 'ignore';
-    }) => {
-      const res = await api.post(`/chats/${chatId}/resolution`, { merchantId, resolution });
-      return res.data;
-    },
-    onSuccess: (_, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['quarantineChats', vars.merchantId] });
-      queryClient.invalidateQueries({ queryKey: ['chats'] });
-    },
-  });
-};
-
 // 5. In-App Account Deletion (App Store 5.1.1(v) Compliant)
 export const useDeleteAccount = () => {
   return useMutation({
     mutationFn: async ({ merchantId, confirmation }: { merchantId: string; confirmation: string }) => {
       const res = await api.post(`/merchants/${merchantId}/delete-account`, { confirmation });
       return res.data;
+    },
+  });
+};
+
+// --- AUTONOMOUS VOICE CALLING & PROXY DIALING ---
+export interface VoiceConfigData {
+  enabled: boolean;
+  approvalMode: 'require_approval' | 'fully_autonomous';
+  callOnOrderConfirmation: boolean;
+  callOnPendingPayment: boolean;
+  callOnHighValue: boolean;
+  highValueThreshold: number;
+  callOnRiderDispatch: boolean;
+  voicePersona: 'warm_nigerian_english' | 'pidgin_blend' | 'formal_corporate';
+  customScriptTemplate?: string;
+}
+
+export interface QueuedVoiceCallData {
+  queueId: string;
+  merchantId: string;
+  merchantName: string;
+  toPhone: string;
+  purpose: string;
+  scriptPreview: string;
+  orderTotal?: number;
+  status: 'pending_approval' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
+export const useVoiceConfig = (merchantId: string) => {
+  return useQuery<{ ok: boolean; config: VoiceConfigData }>({
+    queryKey: ['voiceConfig', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/voice-config`);
+      return res.data;
+    },
+    enabled: Boolean(merchantId),
+  });
+};
+
+export const useUpdateVoiceConfig = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, data }: { merchantId: string; data: Partial<VoiceConfigData> }) => {
+      const res = await api.put(`/merchants/${merchantId}/voice-config`, data);
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['voiceConfig', vars.merchantId] });
+    },
+  });
+};
+
+export const useVoiceQueue = (merchantId: string) => {
+  return useQuery<{ ok: boolean; count: number; queue: QueuedVoiceCallData[] }>({
+    queryKey: ['voiceQueue', merchantId],
+    queryFn: async () => {
+      const res = await api.get(`/merchants/${merchantId}/voice-queue`);
+      return res.data;
+    },
+    enabled: Boolean(merchantId),
+    refetchInterval: 8000,
+  });
+};
+
+export const useApproveVoiceCall = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, queueId }: { merchantId: string; queueId: string }) => {
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId)}/voice-queue/${encodeURIComponent(queueId)}/approve`);
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['voiceQueue', vars.merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['voiceCalls', vars.merchantId] });
+    },
+  });
+};
+
+export const useRejectVoiceCall = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ merchantId, queueId }: { merchantId: string; queueId: string }) => {
+      const res = await api.post(`/merchants/${encodeURIComponent(merchantId)}/voice-queue/${encodeURIComponent(queueId)}/reject`);
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['voiceQueue', vars.merchantId] });
+    },
+  });
+};
+
+export const useVoiceCallPreview = () => {
+  return useMutation({
+    mutationFn: async ({
+      merchantId,
+      purpose,
+      orderTotal,
+      deliveryAddress,
+      voicePersona,
+    }: {
+      merchantId: string;
+      purpose: string;
+      orderTotal?: number;
+      deliveryAddress?: string;
+      voicePersona?: string;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/voice-preview`, {
+        purpose,
+        orderTotal,
+        deliveryAddress,
+        voicePersona,
+      });
+      return res.data;
+    },
+  });
+};
+
+export const useTriggerVoiceCall = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      merchantId,
+      toPhone,
+      purpose,
+      orderTotal,
+      deliveryAddress,
+      forceImmediate,
+    }: {
+      merchantId: string;
+      toPhone: string;
+      purpose: string;
+      orderTotal?: number;
+      deliveryAddress?: string;
+      forceImmediate?: boolean;
+    }) => {
+      const res = await api.post(`/merchants/${merchantId}/voice-call`, {
+        toPhone,
+        purpose,
+        orderTotal,
+        deliveryAddress,
+        forceImmediate,
+      });
+      return res.data;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['voiceQueue', vars.merchantId] });
+      queryClient.invalidateQueries({ queryKey: ['voiceCalls', vars.merchantId] });
     },
   });
 };

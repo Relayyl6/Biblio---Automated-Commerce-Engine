@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, Linking, Modal } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Bot, MoreVertical, Phone, UserCheck, ShieldAlert, CreditCard, Copy, X } from 'lucide-react-native';
+import { ArrowLeft, Bot, MoreVertical, Phone, UserCheck, ShieldAlert, CreditCard, Copy, X, RefreshCw, AlertCircle } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
-import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatDetails, useTakeoverChat, useReleaseTakeoverChat, useSendChatMessage } from '../../src/api/client';
 import { useAlert } from '../../src/store/alertStore';
 import { colors } from '../../theme';
@@ -13,16 +13,19 @@ import { DateSeparator, groupMessagesByDay } from '../../src/components/DateSepa
 import { ChatInputBar } from '../../src/components/ChatInputBar';
 import { TypingIndicator } from '../../src/components/TypingIndicator';
 import { ChatLoadSkeleton, InlineLoadingDots } from '../../src/components/PulsingSkeleton';
+import { EmptyState } from '../../src/components/EmptyState';
+import { decodeRouteParam, safeHaptics, normalizePhoneNumber } from '../../src/utils/sanitizers';
 
 export default function ChatDetailScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
-  const customerId = id as string;
+  const insets = useSafeAreaInsets();
+  const customerId = decodeRouteParam(id);
   const { colorScheme } = useColorScheme();
   const c = colorScheme === 'dark' ? colors.dark : colors.light;
   const alert = useAlert();
 
-  const { data: chatData, isLoading, refetch } = useChatDetails(customerId);
+  const { data: chatData, isLoading, isError, error, refetch } = useChatDetails(customerId);
   const takeoverMutation = useTakeoverChat();
   const releaseTakeoverMutation = useReleaseTakeoverChat();
   const sendMutation = useSendChatMessage();
@@ -32,9 +35,9 @@ export default function ChatDetailScreen() {
   const scrollRef = useRef<any>(null);
 
   const isHumanOverride = chatData?.isHumanOverride || false;
-  const messages: ChatMessage[] = chatData?.messages || [];
-  const customerName = chatData?.customerName || `Customer ${customerId}`;
-  const customerPhone = chatData?.customerPhone || (customerId.startsWith('+') || /^\d+$/.test(customerId) ? customerId : undefined);
+  const messages: ChatMessage[] = Array.isArray(chatData?.messages) ? chatData.messages : [];
+  const customerName = chatData?.customerName || (customerId ? `Customer ${customerId}` : 'Customer');
+  const customerPhone = chatData?.customerPhone || (customerId && (customerId.startsWith('+') || /^\d+$/.test(customerId)) ? customerId : undefined);
   const isAiComposing = chatData?.isAiComposing || false;
   const aiDraftMessage = chatData?.aiDraftMessage || '';
 
@@ -46,8 +49,9 @@ export default function ChatDetailScreen() {
   }, [messages.length, isAiComposing, aiDraftMessage]);
 
   const handleTakeover = async () => {
+    if (!customerId) return;
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      safeHaptics.impact();
       await takeoverMutation.mutateAsync(customerId);
       alert.info('Manual Override Active', 'Biblo AI is paused. You have taken over this chat for the next hour.');
       refetch();
@@ -57,8 +61,9 @@ export default function ChatDetailScreen() {
   };
 
   const handleReleaseTakeover = async () => {
+    if (!customerId) return;
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      safeHaptics.impact();
       await releaseTakeoverMutation.mutateAsync(customerId);
       alert.success('Biblo AI Resumed', 'Autopilot restored. Biblo AI is now actively handling this customer.');
       refetch();
@@ -72,23 +77,38 @@ export default function ChatDetailScreen() {
       alert.warning('No Phone Number', 'No valid phone number recorded for this customer.');
       return;
     }
-    const cleanPhone = customerPhone.replace(/[^\d+]/g, '');
-    Linking.openURL(`tel:${cleanPhone}`).catch(() => {
+    const cleanPhone = normalizePhoneNumber(customerPhone);
+    if (!cleanPhone) {
+      alert.warning('Invalid Phone Number', 'The phone number format could not be verified.');
+      return;
+    }
+    Linking.openURL(`tel:+${cleanPhone}`).catch(() => {
       alert.error('Dialer Error', 'Could not open native phone dialer.');
     });
   };
 
   const handleSend = async () => {
     const text = replyText.trim();
-    if (!text) return;
-    setReplyText('');
-    await sendMutation.mutateAsync({ customerId, text });
-    refetch();
+    if (!text || !customerId) return;
+    try {
+      await sendMutation.mutateAsync({ customerId, text });
+      setReplyText('');
+      refetch();
+    } catch (e: any) {
+      alert.error('Failed to Send', e?.message || 'Could not deliver message to customer.');
+    }
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: c.bg }} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-      <View style={{ backgroundColor: c.surface, borderBottomColor: c.border }} className="px-4 pt-14 pb-3 border-b flex-row items-center">
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: c.bg }} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+      <View
+        style={{
+          backgroundColor: c.surface,
+          borderBottomColor: c.border,
+          paddingTop: Math.max(insets.top, 16),
+        }}
+        className="px-4 pb-3 border-b flex-row items-center"
+      >
         <Pressable onPress={() => router.back()} hitSlop={10} className="mr-2 active:opacity-60 p-1">
           <ArrowLeft size={24} color={c.textPrimary} />
         </Pressable>
@@ -157,6 +177,22 @@ export default function ChatDetailScreen() {
         </View>
       )}
 
+      {/* Query error alert banner */}
+      {isError && (
+        <View style={{ backgroundColor: c.dangerSoft, borderColor: c.danger }} className="mx-4 mt-3 p-3 rounded-2xl border flex-row items-center justify-between">
+          <View className="flex-row items-center flex-1 mr-2">
+            <AlertCircle size={16} color={c.danger} />
+            <Text style={{ color: c.danger }} className="text-xs font-medium ml-2">
+              {(error as any)?.message || 'Failed to load conversation messages.'}
+            </Text>
+          </View>
+          <Pressable onPress={() => refetch()} className="px-2.5 py-1 rounded-lg bg-red-500/10 active:opacity-70 flex-row items-center">
+            <RefreshCw size={12} color={c.danger} />
+            <Text style={{ color: c.danger }} className="text-xs font-bold ml-1">Retry</Text>
+          </Pressable>
+        </View>
+      )}
+
       <ScrollView
         ref={scrollRef}
         className="flex-1 px-4 pt-4"
@@ -165,6 +201,14 @@ export default function ChatDetailScreen() {
       >
         {isLoading ? (
           <ChatLoadSkeleton />
+        ) : !customerId ? (
+          <EmptyState
+            icon={AlertCircle}
+            title="Conversation Not Found"
+            subtitle="The chat route did not provide a valid customer identifier."
+            actionLabel="Return to Chats"
+            onAction={() => router.back()}
+          />
         ) : (
           <>
             {grouped.map((group, gi) => (
@@ -264,7 +308,8 @@ export default function ChatDetailScreen() {
               <Pressable
                 onPress={() => {
                   setShowOptionsModal(false);
-                  setReplyText(`Please proceed to complete payment here: https://pay.biblo.ai/order/${customerId.slice(0, 8)}`);
+                  const safeSnippet = (customerId || 'order').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
+                  setReplyText(`Please proceed to complete payment here: https://pay.biblo.ai/order/${safeSnippet}`);
                 }}
                 style={{ backgroundColor: c.surfaceAlt }}
                 className="flex-row items-center p-3.5 rounded-2xl active:opacity-70"

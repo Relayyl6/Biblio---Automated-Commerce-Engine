@@ -102,12 +102,13 @@ export function parsePrice(
   if (typeof raw === "number") {
     value = raw;
   } else {
+    if (typeof raw === "string" && raw.trim().startsWith("-")) return null;
     // Strip currency symbols, codes, and thousands separators; keep one decimal.
     const cleaned = raw.replace(/[^0-9.]/g, "");
     if (cleaned === "" || cleaned === ".") return null;
     value = Number(cleaned);
   }
-  if (!Number.isFinite(value)) return null;
+  if (!Number.isFinite(value) || value <= 0) return null;
 
   const ngn = minorUnits ? value / 100 : value;
   return Math.round(ngn * 100) / 100; // guard fp dust

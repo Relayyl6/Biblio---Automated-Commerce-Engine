@@ -144,13 +144,22 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
       return "Missing required parameters: name, duration_minutes, and price are mandatory.";
     }
 
+    const duration = Number(duration_minutes);
+    const numPrice = Number(price);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return "Duration must be a positive number of minutes.";
+    }
+    if (!Number.isFinite(numPrice) || numPrice < 0) {
+      return "Price must be a non-negative number.";
+    }
+
     try {
       const res = await sql`
         INSERT INTO services (merchant_id, name, description, duration_minutes, price, active)
-        VALUES (${merchantId}::uuid, ${name}, ${description || null}, ${duration_minutes}, ${price}, true)
+        VALUES (${merchantId}::uuid, ${name}, ${description || null}, ${duration}, ${numPrice}, true)
         RETURNING id
       `;
-      return `Service '${name}' created successfully with ID: ${res[0].id}. Price: ₦${Number(price).toLocaleString()}, Duration: ${duration_minutes} mins.`;
+      return `Service '${name}' created successfully with ID: ${res[0].id}. Price: ₦${numPrice.toLocaleString()}, Duration: ${duration} mins.`;
     } catch (e: any) {
       logger.error("[add_service error]", e);
       return "Failed to add service: " + e.message;
@@ -162,11 +171,21 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
     if (!serviceId) return "Service ID is required.";
 
     try {
-      if (name !== undefined) await sql`UPDATE services SET name = ${name} WHERE id = ${serviceId}::uuid AND merchant_id = ${merchantId}::uuid`;
-      if (description !== undefined) await sql`UPDATE services SET description = ${description} WHERE id = ${serviceId}::uuid AND merchant_id = ${merchantId}::uuid`;
-      if (duration_minutes !== undefined) await sql`UPDATE services SET duration_minutes = ${duration_minutes} WHERE id = ${serviceId}::uuid AND merchant_id = ${merchantId}::uuid`;
-      if (price !== undefined) await sql`UPDATE services SET price = ${price} WHERE id = ${serviceId}::uuid AND merchant_id = ${merchantId}::uuid`;
-      if (active !== undefined) await sql`UPDATE services SET active = ${active} WHERE id = ${serviceId}::uuid AND merchant_id = ${merchantId}::uuid`;
+      if (name !== undefined) await sql`UPDATE services SET name = ${name} WHERE (id::text = ${serviceId} OR name ILIKE ${serviceId}) AND merchant_id = ${merchantId}::uuid`;
+      if (description !== undefined) await sql`UPDATE services SET description = ${description} WHERE (id::text = ${serviceId} OR name ILIKE ${serviceId}) AND merchant_id = ${merchantId}::uuid`;
+      if (duration_minutes !== undefined) {
+        const d = Number(duration_minutes);
+        if (Number.isFinite(d) && d > 0) {
+          await sql`UPDATE services SET duration_minutes = ${d} WHERE (id::text = ${serviceId} OR name ILIKE ${serviceId}) AND merchant_id = ${merchantId}::uuid`;
+        }
+      }
+      if (price !== undefined) {
+        const p = Number(price);
+        if (Number.isFinite(p) && p >= 0) {
+          await sql`UPDATE services SET price = ${p} WHERE (id::text = ${serviceId} OR name ILIKE ${serviceId}) AND merchant_id = ${merchantId}::uuid`;
+        }
+      }
+      if (active !== undefined) await sql`UPDATE services SET active = ${Boolean(active)} WHERE (id::text = ${serviceId} OR name ILIKE ${serviceId}) AND merchant_id = ${merchantId}::uuid`;
       return `Service ${serviceId} updated successfully.`;
     } catch(e: any) {
       logger.error("[update_service error]", e);
@@ -176,41 +195,67 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
 
   book_appointment: async (merchantId: string, args: any) => {
     if (!args.time || !args.serviceId) return "Time and Service ID are required.";
-    const aptId = 'APT-' + crypto.randomBytes(3).toString('hex').toUpperCase();
-    
+
+    const parsedTime = new Date(args.time);
+    if (isNaN(parsedTime.getTime())) {
+      return "Invalid appointment time format. Please provide a valid date/time string (e.g. '2026-08-26T10:00:00Z').";
+    }
+    const startTimeIso = parsedTime.toISOString();
+
     try {
+      const serviceRes = await sql<{ id: string; name: string; duration_minutes: number; price: number }[]>`
+        SELECT id, name, duration_minutes, price FROM services 
+        WHERE merchant_id = ${merchantId}::uuid 
+          AND (id::text = ${args.serviceId} OR name ILIKE ${args.serviceId})
+        LIMIT 1
+      `.catch(() => []);
+
+      if (serviceRes.length === 0) {
+        return `Service '${args.serviceId}' not found. Please verify available services with check_services.`;
+      }
+
+      const matchedService = serviceRes[0];
+      const serviceId = matchedService.id;
+      const serviceName = matchedService.name;
+      const durationMs = (matchedService.duration_minutes || 30) * 60000;
+      const endTimeIso = new Date(parsedTime.getTime() + durationMs).toISOString();
+
       const overlap = await sql`
         SELECT id FROM appointments 
-        WHERE merchant_id = ${merchantId}::uuid AND start_time = ${args.time}::timestamp AND status != 'cancelled'
+        WHERE merchant_id = ${merchantId}::uuid 
+          AND status != 'cancelled'
+          AND (start_time < ${endTimeIso}::timestamp AND end_time > ${startTimeIso}::timestamp)
       `.catch(() => []);
+
       if (overlap.length > 0) return "Time slot is already booked! Please suggest another time.";
       
-      let serviceName = "Service Appointment";
-      let merchantPhone = "";
-      
-      const serviceRes = await sql`SELECT name FROM services WHERE id = ${args.serviceId}::uuid`.catch(() => []);
-      if (serviceRes.length > 0) serviceName = serviceRes[0].name;
-      
-      const merchRes = await sql`SELECT personal_number FROM vendors WHERE merchant_id = ${merchantId} LIMIT 1`.catch(() => []);
-      if (merchRes.length > 0) merchantPhone = merchRes[0].personal_number;
-      
-      const end_time = new Date(new Date(args.time).getTime() + 3600000).toISOString();
+      const aptId = crypto.randomUUID();
       const title = `Booking for ${serviceName}`;
 
       await sql`
-        INSERT INTO appointments (merchant_id, service_id, title, start_time, end_time, customer_id, status)
-        VALUES (${merchantId}::uuid, ${args.serviceId}::uuid, ${title}, ${args.time}::timestamp, ${end_time}::timestamp, ${args.customerId || 'guest'}, 'confirmed')
+        INSERT INTO appointments (id, merchant_id, service_id, title, start_time, end_time, customer_id, status)
+        VALUES (${aptId}::uuid, ${merchantId}::uuid, ${serviceId}::uuid, ${title}, ${startTimeIso}::timestamp, ${endTimeIso}::timestamp, ${args.customerId || 'guest'}, 'confirmed')
       `;
       
+      let merchantPhone = "";
+      const mRes = await sql<{ contact_phone: string; support_phone: string; phone_number_id: string }[]>`
+        SELECT contact_phone, support_phone, phone_number_id FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+      `.catch(() => []);
+      if (mRes.length > 0) merchantPhone = mRes[0].contact_phone || mRes[0].support_phone || mRes[0].phone_number_id || "";
+      if (!merchantPhone) {
+        const merchRes = await sql<{ personal_number: string }[]>`SELECT personal_number FROM vendors WHERE merchant_id = ${merchantId} LIMIT 1`.catch(() => []);
+        if (merchRes.length > 0) merchantPhone = merchRes[0].personal_number || "";
+      }
+
       if (merchantPhone) {
         const { sendCustomerMessage } = await import("../../../comms-router/src/outbound.js");
         await sendCustomerMessage({
           toPhone: merchantPhone,
-          text: `📅 *New Booking Alert!*\nA customer just booked ${serviceName} for ${args.time}.`
+          text: `📅 *New Booking Alert!*\nA customer just booked ${serviceName} for ${startTimeIso}.`
         }, undefined, merchantId).catch(() => {});
       }
       
-      return `Appointment booked for ${args.time} (${serviceName})! Customer assigned.`;
+      return `Appointment booked for ${startTimeIso} (${serviceName})! Reference: ${aptId.slice(0, 8)}.`;
     } catch(e: any) {
       logger.error("Failed to book appointment", e);
       return `Failed to book appointment: ${e.message}`;
@@ -219,7 +264,14 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
 
   check_calendar_availability: async (merchantId: string, args: any) => {
     try {
-      const dateStr = args.date || new Date().toISOString().slice(0, 10);
+      let dateStr = String(args.date || '').trim();
+      const parsedDate = new Date(dateStr);
+      if (isNaN(parsedDate.getTime())) {
+        dateStr = new Date().toISOString().slice(0, 10);
+      } else {
+        dateStr = parsedDate.toISOString().slice(0, 10);
+      }
+
       const rows = await sql`
         SELECT a.id, a.start_time, a.end_time, a.status, s.name as service_name
         FROM appointments a
@@ -243,14 +295,16 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
 
   cancel_appointment: async (merchantId: string, args: any) => {
     try {
+      const aptId = String(args.appointmentId || '').trim();
+      if (!aptId) return "Appointment ID is required.";
       const rows = await sql`
         UPDATE appointments 
         SET status = 'cancelled' 
-        WHERE id = ${args.appointmentId}::uuid AND merchant_id = ${merchantId}::uuid
+        WHERE (id::text = ${aptId} OR id::text LIKE ${aptId + '%'}) AND merchant_id = ${merchantId}::uuid
         RETURNING id
       `.catch(() => []);
-      if (rows.length === 0) return `Appointment ${args.appointmentId} not found.`;
-      return `Appointment ${args.appointmentId} has been cancelled successfully.`;
+      if (rows.length === 0) return `Appointment ${aptId} not found.`;
+      return `Appointment ${aptId} has been cancelled successfully.`;
     } catch (e: any) {
       logger.error("[cancel_appointment error]", e);
       return "Failed to cancel appointment.";
@@ -259,16 +313,21 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
 
   reschedule_appointment: async (merchantId: string, args: any) => {
     try {
+      const aptId = String(args.appointmentId || '').trim();
+      if (!aptId) return "Appointment ID is required.";
       const newStart = new Date(args.newTime);
+      if (isNaN(newStart.getTime())) {
+        return "Invalid new appointment time format. Please provide a valid date/time string.";
+      }
       const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
       const rows = await sql`
         UPDATE appointments 
         SET start_time = ${newStart.toISOString()}, end_time = ${newEnd.toISOString()}, status = 'rescheduled'
-        WHERE id = ${args.appointmentId}::uuid AND merchant_id = ${merchantId}::uuid
+        WHERE (id::text = ${aptId} OR id::text LIKE ${aptId + '%'}) AND merchant_id = ${merchantId}::uuid
         RETURNING id
       `.catch(() => []);
-      if (rows.length === 0) return `Appointment ${args.appointmentId} not found.`;
-      return `Appointment ${args.appointmentId} rescheduled to ${args.newTime}.`;
+      if (rows.length === 0) return `Appointment ${aptId} not found.`;
+      return `Appointment ${aptId} rescheduled to ${newStart.toISOString()}.`;
     } catch (e: any) {
       logger.error("[reschedule_appointment error]", e);
       return "Failed to reschedule appointment.";

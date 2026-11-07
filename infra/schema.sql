@@ -444,6 +444,10 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   payload JSONB NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  processed_at TIMESTAMP WITH TIME ZONE
+  published_at TIMESTAMP WITH TIME ZONE,
+  retry_count INTEGER DEFAULT 0,
+  max_retries INTEGER DEFAULT 3,
+  last_error TEXT,
+  next_retry_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (status, next_retry_at, created_at);

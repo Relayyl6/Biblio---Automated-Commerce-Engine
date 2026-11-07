@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, Switch, ScrollView } from 'react-native';
+import { View, Text, Pressable, Switch, ScrollView, TextInput } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles, Crown, Star, Zap, ChevronRight } from 'lucide-react-native';
+import { Truck, MessageSquare, CreditCard, Building2, Check, Link2, Store, Lock, Sparkles, Crown, Star, Zap, ChevronRight, PhoneCall, PhoneOutgoing, Volume2, ShieldAlert, CheckCircle2, Clock, AlertTriangle, Play, ThumbsUp, X } from 'lucide-react-native';
 import { colors } from '../../theme';
 import { PanelField } from './PanelField';
 import { SegmentedControl } from './SegmentedControl';
 import { InlineLoadingDots } from './PulsingSkeleton';
+import { useAuthStore } from '../store/authStore';
 import {
   useStatusSettings,
   useUpdateStatusSettings,
@@ -20,6 +21,13 @@ import {
   useMerchantFeatures,
   useUpdateBankAccount,
   useVendorStatus,
+  useVoiceConfig,
+  useUpdateVoiceConfig,
+  useVoiceQueue,
+  useApproveVoiceCall,
+  useRejectVoiceCall,
+  useVoiceCallPreview,
+  useTriggerVoiceCall,
   type FeatureEntitlement,
   type MerchantTier,
 } from '../api/client';
@@ -539,12 +547,29 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
   }, [integrations]);
 
   const handleSave = async () => {
+    if (!storeName.trim()) {
+      alert.warning('Store Name Required', 'Please enter a name for your store.');
+      return;
+    }
+    if (!ownerFirstName.trim()) {
+      alert.warning('First Name Required', "Please enter the store owner's first name.");
+      return;
+    }
+    if (!ownerLastName.trim()) {
+      alert.warning('Last Name Required', "Please enter the store owner's last name.");
+      return;
+    }
+    if (supportsPickup && !address.trim()) {
+      alert.warning('Pickup Address Required', 'Please provide a warehouse or store pickup address when store pickup is enabled.');
+      return;
+    }
+
     try {
       await Promise.all([
         updateConfig.mutateAsync({
-          name: storeName.trim() || undefined,
-          ownerFirstName: ownerFirstName.trim() || undefined,
-          ownerLastName: ownerLastName.trim() || undefined,
+          name: storeName.trim(),
+          ownerFirstName: ownerFirstName.trim(),
+          ownerLastName: ownerLastName.trim(),
           deliveryInfo: address.trim() || undefined,
           businessPolicies: businessPolicies.trim() || undefined,
         }),
@@ -634,7 +659,7 @@ export function StoreProfilePanel({ onSave }: { onSave: () => void }) {
             Allow In-Person Store Pickup
           </Text>
           <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed">
-            Customers can choose to pick up at your shop in person (₦0 delivery fee, secret pickup code issued).
+            Customers can choose to pick up at your shop in person (free store pickup, secret pickup code issued).
           </Text>
         </View>
         <Switch
@@ -1198,6 +1223,459 @@ export function PlanPanel({ onSave }: { onSave: () => void }) {
           Tier gating is in beta. Feature restrictions are soft — full enforcement activates when Stripe billing is configured. Contact support for enterprise pricing.
         </Text>
       </View>
+    </ScrollView>
+  );
+}
+
+// ─── AUTONOMOUS VOICE CALLING & VENDOR APPROVAL PANEL ──────────────────────
+export function VoiceCallSettingsPanel({ onSave }: { onSave: () => void }) {
+  const c = useThemeColors();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const merchantId = useAuthStore((s) => s.merchantId) || '';
+  const alert = useAlert();
+
+  const { data: configData, isLoading } = useVoiceConfig(merchantId);
+  const updateConfig = useUpdateVoiceConfig();
+  const { data: queueData, refetch: refetchQueue } = useVoiceQueue(merchantId);
+  const approveCall = useApproveVoiceCall();
+  const rejectCall = useRejectVoiceCall();
+  const previewMutation = useVoiceCallPreview();
+  const triggerCall = useTriggerVoiceCall();
+
+  const [enabled, setEnabled] = useState(true);
+  const [approvalMode, setApprovalMode] = useState<'require_approval' | 'fully_autonomous'>('require_approval');
+  const [callOnOrderConfirmation, setCallOnOrderConfirmation] = useState(true);
+  const [callOnPendingPayment, setCallOnPendingPayment] = useState(true);
+  const [callOnHighValue, setCallOnHighValue] = useState(true);
+  const [highValueThreshold, setHighValueThreshold] = useState('35000');
+  const [callOnRiderDispatch, setCallOnRiderDispatch] = useState(true);
+  const [voicePersona, setVoicePersona] = useState<'warm_nigerian_english' | 'pidgin_blend' | 'formal_corporate'>('warm_nigerian_english');
+
+  const [previewPurpose, setPreviewPurpose] = useState<'order_confirmation' | 'payment_reminder' | 'delivery_coordination'>('order_confirmation');
+  const [previewScript, setPreviewScript] = useState<string>('');
+  const [simulating, setSimulating] = useState(false);
+
+  useEffect(() => {
+    if (configData?.config) {
+      setEnabled(configData.config.enabled);
+      setApprovalMode(configData.config.approvalMode);
+      setCallOnOrderConfirmation(configData.config.callOnOrderConfirmation);
+      setCallOnPendingPayment(configData.config.callOnPendingPayment);
+      setCallOnHighValue(configData.config.callOnHighValue);
+      setHighValueThreshold(String(configData.config.highValueThreshold || 35000));
+      setCallOnRiderDispatch(configData.config.callOnRiderDispatch);
+      setVoicePersona(configData.config.voicePersona);
+    }
+  }, [configData]);
+
+  useEffect(() => {
+    if (!merchantId) return;
+    previewMutation.mutateAsync({
+      merchantId,
+      purpose: previewPurpose,
+      orderTotal: 25000,
+      deliveryAddress: 'Victoria Island, Lagos',
+      voicePersona,
+    }).then((res) => {
+      if (res?.scriptPreview) setPreviewScript(res.scriptPreview);
+    }).catch(() => {});
+  }, [previewPurpose, voicePersona, merchantId]);
+
+  const handleSave = async () => {
+    try {
+      await updateConfig.mutateAsync({
+        merchantId,
+        data: {
+          enabled,
+          approvalMode,
+          callOnOrderConfirmation,
+          callOnPendingPayment,
+          callOnHighValue,
+          highValueThreshold: Number(highValueThreshold) || 35000,
+          callOnRiderDispatch,
+          voicePersona,
+        },
+      });
+      alert.success('Voice Settings Saved', 'Biblio voice calling rules and approval thresholds updated.');
+      onSave();
+    } catch (err: any) {
+      alert.error('Save Failed', err.message || 'Could not save voice settings.');
+    }
+  };
+
+  const handleSimulateCall = async () => {
+    setSimulating(true);
+    try {
+      const res = await triggerCall.mutateAsync({
+        merchantId,
+        toPhone: '08012345678',
+        purpose: previewPurpose,
+        orderTotal: 25000,
+        deliveryAddress: 'Victoria Island, Lagos',
+        forceImmediate: approvalMode === 'fully_autonomous',
+      });
+      if (res?.action === 'queued_for_approval') {
+        alert.info('Call Queued with Script Preview', 'A call draft has been placed in your approval queue. Review the exact speech below and tap "Approve & Call"!');
+        refetchQueue();
+      } else {
+        alert.success('Call Dialed (Simulator)', 'Outbound voice call placed. Customer hears speech prompt.');
+      }
+    } catch (e: any) {
+      alert.error('Call Error', e.message);
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleApproveQueueItem = async (queueId: string) => {
+    try {
+      await approveCall.mutateAsync({ merchantId, queueId });
+      alert.success('Call Approved & Dialed', 'Biblio has initiated the voice call and will speak the approved script.');
+    } catch (e: any) {
+      alert.error('Approval Error', e.message);
+    }
+  };
+
+  const handleRejectQueueItem = async (queueId: string) => {
+    try {
+      await rejectCall.mutateAsync({ merchantId, queueId });
+      alert.info('Call Cancelled', 'Queued voice call removed.');
+    } catch (e: any) {
+      alert.error('Rejection Error', e.message);
+    }
+  };
+
+  const pendingCalls = queueData?.queue || [];
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      {/* ── Master Toggle ── */}
+      <View
+        style={{ backgroundColor: c.surface, borderColor: c.border }}
+        className="p-4 rounded-2xl border mb-5 flex-row items-center justify-between"
+      >
+        <View className="flex-1 pr-3">
+          <View className="flex-row items-center mb-1">
+            <PhoneCall size={18} color={c.accent} style={{ marginRight: 8 }} />
+            <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
+              Enable Autonomous Voice Calling
+            </Text>
+          </View>
+          <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed">
+            Allow Biblio to place automated outbound phone calls on your behalf for orders, confirmations, and reminders.
+          </Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={setEnabled}
+          trackColor={{ false: c.border, true: c.accent }}
+          thumbColor={c.surface}
+        />
+      </View>
+
+      {/* ── Approval Mode (Core User Requirement) ── */}
+      <Text style={{ color: c.textTertiary }} className="text-xs font-bold uppercase tracking-wider mb-2 ml-1">
+        Autonomous Execution Mode
+      </Text>
+      <View className="flex-row gap-2.5 mb-5">
+        {/* Option A: Require Approval */}
+        <Pressable
+          onPress={() => setApprovalMode('require_approval')}
+          style={{
+            backgroundColor: approvalMode === 'require_approval' ? (isDark ? '#064E3B28' : '#ECFDF5') : c.surface,
+            borderColor: approvalMode === 'require_approval' ? '#10B981' : c.border,
+          }}
+          className="flex-1 p-3.5 rounded-2xl border active:opacity-80"
+        >
+          <View className="flex-row items-center justify-between mb-1.5">
+            <ShieldAlert size={18} color={approvalMode === 'require_approval' ? '#10B981' : c.textSecondary} />
+            <View className="bg-emerald-500/15 px-1.5 py-0.5 rounded">
+              <Text className="text-[9px] font-bold text-emerald-500">Recommended</Text>
+            </View>
+          </View>
+          <Text
+            style={{ color: approvalMode === 'require_approval' ? '#10B981' : c.textPrimary }}
+            className="font-bold text-xs mb-1"
+          >
+            Require My Approval
+          </Text>
+          <Text style={{ color: c.textTertiary }} className="text-[10px] leading-tight">
+            Biblio shows you the exact script it will speak. You tap &quot;Approve&quot; before dialing.
+          </Text>
+        </Pressable>
+
+        {/* Option B: Fully Autonomous */}
+        <Pressable
+          onPress={() => setApprovalMode('fully_autonomous')}
+          style={{
+            backgroundColor: approvalMode === 'fully_autonomous' ? (isDark ? '#1E3A8A28' : '#EFF6FF') : c.surface,
+            borderColor: approvalMode === 'fully_autonomous' ? '#3B82F6' : c.border,
+          }}
+          className="flex-1 p-3.5 rounded-2xl border active:opacity-80"
+        >
+          <View className="flex-row items-center justify-between mb-1.5">
+            <Zap size={18} color={approvalMode === 'fully_autonomous' ? '#3B82F6' : c.textSecondary} />
+            <View className="bg-blue-500/15 px-1.5 py-0.5 rounded">
+              <Text className="text-[9px] font-bold text-blue-500">Auto</Text>
+            </View>
+          </View>
+          <Text
+            style={{ color: approvalMode === 'fully_autonomous' ? '#3B82F6' : c.textPrimary }}
+            className="font-bold text-xs mb-1"
+          >
+            Fully Autonomous
+          </Text>
+          <Text style={{ color: c.textTertiary }} className="text-[10px] leading-tight">
+            Biblio dials automatically when triggers match without waiting for manual confirmation.
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ── Pending Call Approval Queue (When Require Approval is Active) ── */}
+      {pendingCalls.length > 0 && (
+        <View className="mb-6">
+          <View className="flex-row items-center justify-between mb-2 ml-1">
+            <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
+              Pending Call Approvals ({pendingCalls.length})
+            </Text>
+            <Clock size={14} color={c.accent} />
+          </View>
+
+          {pendingCalls.map((item) => (
+            <View
+              key={item.queueId}
+              style={{ backgroundColor: c.surface, borderColor: c.accent }}
+              className="p-4 rounded-2xl border mb-2.5 shadow-sm"
+            >
+              <View className="flex-row items-center justify-between mb-1.5">
+                <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
+                  Call to {item.toPhone}
+                </Text>
+                <View className="bg-amber-500/15 px-2 py-0.5 rounded-full">
+                  <Text className="text-[9px] font-bold text-amber-500 capitalize">
+                    {item.purpose.replace(/_/g, ' ')}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Exact Script Preview That AI Will Speak */}
+              <View
+                style={{ backgroundColor: isDark ? '#18241F' : '#F1FBF5', borderColor: c.border }}
+                className="p-3 rounded-xl border mb-3"
+              >
+                <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold mb-1">
+                  🗣️ Spoken Script Preview:
+                </Text>
+                <Text style={{ color: c.textPrimary }} className="text-xs leading-relaxed italic">
+                  &ldquo;{item.scriptPreview}&rdquo;
+                </Text>
+              </View>
+
+              <View className="flex-row gap-2">
+                <Pressable
+                  onPress={() => handleApproveQueueItem(item.queueId)}
+                  disabled={approveCall.isPending}
+                  className="flex-1 bg-emerald-600 py-2.5 rounded-xl items-center active:opacity-85"
+                >
+                  <Text className="text-white font-bold text-xs">Approve & Call Now</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleRejectQueueItem(item.queueId)}
+                  disabled={rejectCall.isPending}
+                  style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
+                  className="px-4 py-2.5 rounded-xl border items-center active:opacity-85"
+                >
+                  <Text style={{ color: c.danger }} className="font-bold text-xs">Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ── Spoken Voice Dialect & Persona ── */}
+      <Text style={{ color: c.textTertiary }} className="text-xs font-bold uppercase tracking-wider mb-2 ml-1">
+        Spoken Voice Dialect & Persona
+      </Text>
+      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="p-4 rounded-2xl border mb-5">
+        <View className="flex-row gap-2 mb-3">
+          {[
+            { id: 'warm_nigerian_english', label: 'Warm English' },
+            { id: 'pidgin_blend', label: 'Pidgin Blend' },
+            { id: 'formal_corporate', label: 'Formal' },
+          ].map((p) => {
+            const isSel = voicePersona === p.id;
+            return (
+              <Pressable
+                key={p.id}
+                onPress={() => setVoicePersona(p.id as any)}
+                style={{
+                  backgroundColor: isSel ? c.accentSoft : c.surfaceAlt,
+                  borderColor: isSel ? c.accent : c.border,
+                }}
+                className="flex-1 py-2 rounded-xl border items-center active:opacity-80"
+              >
+                <Text
+                  style={{ color: isSel ? c.accent : c.textSecondary, fontWeight: isSel ? '700' : '500' }}
+                  className="text-xs"
+                >
+                  {p.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Live Speech Preview Card */}
+        <View
+          style={{ backgroundColor: isDark ? '#1C2621' : '#F4FBF7', borderColor: c.border }}
+          className="p-3.5 rounded-xl border"
+        >
+          <View className="flex-row items-center justify-between mb-1.5">
+            <View className="flex-row items-center">
+              <Volume2 size={14} color="#10B981" style={{ marginRight: 6 }} />
+              <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
+                Live Speech Preview
+              </Text>
+            </View>
+            <View className="flex-row gap-1">
+              {[
+                { id: 'order_confirmation', label: 'Order' },
+                { id: 'payment_reminder', label: 'Payment' },
+                { id: 'delivery_coordination', label: 'Rider' },
+              ].map((s) => (
+                <Pressable
+                  key={s.id}
+                  onPress={() => setPreviewPurpose(s.id as any)}
+                  className={`px-2 py-0.5 rounded ${previewPurpose === s.id ? 'bg-emerald-600' : 'bg-black/10'}`}
+                >
+                  <Text className={`text-[9px] font-bold ${previewPurpose === s.id ? 'text-white' : 'text-neutral-400'}`}>
+                    {s.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed italic">
+            &ldquo;{previewScript || 'Loading spoken prompt preview...'}&rdquo;
+          </Text>
+
+          <Pressable
+            onPress={handleSimulateCall}
+            disabled={simulating}
+            style={{ backgroundColor: c.accent }}
+            className="mt-3 py-2 rounded-lg flex-row items-center justify-center active:opacity-85"
+          >
+            {simulating ? (
+              <InlineLoadingDots color="#FFFFFF" />
+            ) : (
+              <>
+                <Play size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text className="text-white text-xs font-bold">
+                  {approvalMode === 'require_approval' ? 'Test Call (Queue Draft)' : 'Test Call (Simulate Live Dial)'}
+                </Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      {/* ── Trigger Rules ── */}
+      <Text style={{ color: c.textTertiary }} className="text-xs font-bold uppercase tracking-wider mb-2 ml-1">
+        Automated Call Triggers
+      </Text>
+      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="rounded-2xl border mb-5 px-4">
+        <View className="flex-row items-center justify-between py-3.5 border-b" style={{ borderColor: c.border }}>
+          <View className="flex-1 pr-3">
+            <Text style={{ color: c.textPrimary }} className="text-sm font-semibold mb-0.5">
+              Order Confirmation Call
+            </Text>
+            <Text style={{ color: c.textTertiary }} className="text-xs">
+              Call customer immediately after quote to verify delivery address.
+            </Text>
+          </View>
+          <Switch
+            value={callOnOrderConfirmation}
+            onValueChange={setCallOnOrderConfirmation}
+            trackColor={{ false: c.border, true: c.accent }}
+            thumbColor={c.surface}
+          />
+        </View>
+
+        <View className="flex-row items-center justify-between py-3.5 border-b" style={{ borderColor: c.border }}>
+          <View className="flex-1 pr-3">
+            <Text style={{ color: c.textPrimary }} className="text-sm font-semibold mb-0.5">
+              Payment Pending Reminder
+            </Text>
+            <Text style={{ color: c.textTertiary }} className="text-xs">
+              Call customer if a bank transfer remains unpaid after 15 minutes.
+            </Text>
+          </View>
+          <Switch
+            value={callOnPendingPayment}
+            onValueChange={setCallOnPendingPayment}
+            trackColor={{ false: c.border, true: c.accent }}
+            thumbColor={c.surface}
+          />
+        </View>
+
+        <View className="flex-row items-center justify-between py-3.5 border-b" style={{ borderColor: c.border }}>
+          <View className="flex-1 pr-3">
+            <Text style={{ color: c.textPrimary }} className="text-sm font-semibold mb-0.5">
+              Rider Dispatch Alert
+            </Text>
+            <Text style={{ color: c.textTertiary }} className="text-xs">
+              Call customer when Kwik/Gokada dispatch rider is heading their way.
+            </Text>
+          </View>
+          <Switch
+            value={callOnRiderDispatch}
+            onValueChange={setCallOnRiderDispatch}
+            trackColor={{ false: c.border, true: c.accent }}
+            thumbColor={c.surface}
+          />
+        </View>
+
+        <View className="py-3.5">
+          <View className="flex-row items-center justify-between mb-2">
+            <View className="flex-1 pr-3">
+              <Text style={{ color: c.textPrimary }} className="text-sm font-semibold mb-0.5">
+                High-Value Order Call Trigger
+              </Text>
+              <Text style={{ color: c.textTertiary }} className="text-xs">
+                Always trigger a call for orders above this transaction amount.
+              </Text>
+            </View>
+            <Switch
+              value={callOnHighValue}
+              onValueChange={setCallOnHighValue}
+              trackColor={{ false: c.border, true: c.accent }}
+              thumbColor={c.surface}
+            />
+          </View>
+          {callOnHighValue && (
+            <View
+              style={{ backgroundColor: c.bg, borderColor: c.border }}
+              className="flex-row items-center border rounded-xl px-3 h-11 mt-1"
+            >
+              <Text style={{ color: c.accent }} className="font-bold text-sm mr-2">₦</Text>
+              <TextInput
+                value={highValueThreshold}
+                onChangeText={setHighValueThreshold}
+                placeholder="35000"
+                placeholderTextColor={c.textTertiary}
+                keyboardType="numeric"
+                style={{ color: c.textPrimary }}
+                className="flex-1 text-sm font-semibold"
+              />
+            </View>
+          )}
+        </View>
+      </View>
+
+      <PanelSaveButton onPress={handleSave} isLoading={updateConfig.isPending} label="Save Voice Settings" />
     </ScrollView>
   );
 }

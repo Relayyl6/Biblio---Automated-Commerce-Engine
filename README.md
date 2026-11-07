@@ -315,6 +315,34 @@ sequenceDiagram
 
 ---
 
+### 7. Complete Step-by-Step Vendor Experience (Tri-Channel Authentication & Session Verification)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Merchant as Vendor Phone
+    participant App as Biblio Mobile App
+    participant API as Merchant API (:3004)
+    participant Redis as Redis (:6380)
+    participant Baileys as Baileys WhatsApp Gateway (:3005)
+    participant WA as Merchant WhatsApp
+
+    Merchant->>App: Enters phone (e.g. 0812 345 6789)
+    Merchant->>App: Selects "WhatsApp Chat" & taps Send
+    App->>API: POST /auth/merchant/login { phone, channel: 'whatsapp' }
+    API->>Redis: SET otp:phone:08123456789 = "849201" (EX 300s)
+    API->>Baileys: sendCustomerMessage(toPhone, text)
+    Baileys->>WA: Dispatches chat message over WebSocket
+    WA-->>Merchant: WhatsApp notification buzzes with 849201
+    Merchant->>App: Types 849201 into 6-digit boxes
+    App->>API: POST /auth/merchant/verify { phone, code: "849201" }
+    API->>Redis: Validates against cached OTP & deletes key
+    API-->>App: HTTP 200 OK with Merchant JWT & Profile
+    App-->>Merchant: Logs into Dashboard
+```
+
+---
+
 ## Architectural Walkthrough by Feature
 
 ### 1. Regional Dialect & Cultural Persona (`Pidgin`, `English`, `Yoruba`, `Hausa`, `Igbo`)
@@ -453,7 +481,7 @@ The table below details all 9 architectural pipelines and confirms their live im
 
 | # | Flow / Claim | Codebase Location | Current Reality on Disk | Status | Production Implementation Details |
 |---|--------------|-------------------|-------------------------|:------:|-----------------------------------|
-| **1** | **Vendor WhatsApp Intake Dispatching** | [`messageClassifier.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/messageClassifier.ts#L7)<br/>[`inventoryParser.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L134) | Pipeline logic is fully written and **live-hooked** in `messageClassifier.ts`. Inbound media, voice notes, and Note-to-Self messages from vendor business/personal lines automatically route into `parseVendorSubmission` for Whisper transcription, Groq Vision parsing, CLIP embeddings, and database upserts. | ✅ **LIVE & HOOKED** | Extend vendor command vocabulary (e.g. multi-variant stock updates) as needed. |
+| **1** | **Vendor WhatsApp Intake Dispatching** | [`messageClassifier.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/messageClassifier.ts#L7)<br/>[`inventoryParser.ts`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L134) | Pipeline logic is fully written and **live-hooked** in `messageClassifier.ts`. Inbound merchant messages from business and personal lines automatically route directly to the autonomous Biblio WhatsApp Agent (for natural business queries, settings, inquiries, and Providus VAN management) or the inventory ingestion pipeline (for product photos and voice notes with Whisper and Groq Vision parsing). | ✅ **LIVE & HOOKED** | Extend vendor command vocabulary (e.g. multi-variant stock updates) as needed. |
 | **2** | **Persistent Media Storage (Cloudinary CDN)** | [`inventoryParser.ts:uploadImage`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L693) | Upgraded to production Cloudinary SDK v2. Images are streamed directly to Cloudinary (`ace/vendors/{vendorId}`) using `upload_stream` and return permanent public HTTPS CDN URLs (`secure_url`) stored in `products.image_url`. | ✅ **LIVE (Cloudinary)** | Optional: Configure custom CNAME CDN domain in Cloudinary dashboard. |
 | **3** | **Sales-Velocity & Margin Status Scheduler** | [`statusPoster.ts:postNextProduct`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/statusPoster.ts#L154) | 30-minute cron scheduler runs an algorithmic ranking CTE. It calculates gross margins `(price - floor)/price` and evaluates 14-day sales velocity (`orders` table lookup) to prioritize slow-moving, high-margin inventory for WhatsApp Status broadcasts. | ✅ **LIVE (Algorithmic)** | Tune promotion scoring weights based on merchant seasonality feedback. |
 | **4** | **Automated Direct-Buy Status Trigger** | [`inventoryParser.ts:buildStatusCaption`](file:///c:/Users/USER/Documents/Biblio/ace-whatsapp/core/baileys-gateway/src/inventoryParser.ts#L657) | Status post captions dynamically generate pre-filled `wa.me` click-to-chat deep-links (`https://wa.me/{phone}?text=...`) carrying the exact SKU, product name, and formatted price. Tapping the link instantly opens the chat with pre-filled buyer intent. | ✅ **LIVE (wa.me Deep-Link)** | Optional: Generate short-links with UTM analytics tracking. |
@@ -575,11 +603,11 @@ Any new Nigerian WhatsApp phone number can be provisioned in one seamless comman
   - Configures cultural dialect voice (Pidgin, Yoruba, Igbo, Hausa, English).
   - Immediately requests and displays the **8-digit WhatsApp pairing code**.
 
-### 2. Stateful "Note-to-Self" WhatsApp Business Mode
-Merchants can operate and test their storefront directly on the same phone via WhatsApp's *"Message yourself"* chat:
-- Send **`business`** to enter active business management mode.
-- All product images, voice notes, pricing descriptions, and catalog queries sent in this state are parsed by the AI Vision & Whisper models and added to the store catalog.
-- Send **`end-business`** to gracefully close the business management session.
+### 2. Autonomous WhatsApp Biblio Assistant & Live Inventory Ingestion
+Merchants operate directly through natural WhatsApp conversation with zero commands or state toggles:
+- **Zero Keywords Needed**: You never need to send `business` or `end-business`. The Biblio WhatsApp Agent is active 24/7.
+- **Natural Store Operations**: Asking questions ("What are my orders today?", "Show my Providus VAN settlement account", "What are my recent customer inquiries?", "Set floor price of sneakers to 15k") automatically routes directly to the Biblio Agent, which executes tools and replies in real time.
+- **Instant Product Ingestion**: Sending product photos, voice notes describing items and prices, or typing item prices directly into your WhatsApp chat immediately activates Whisper and Groq Vision to index and add products to your store catalog.
 
 ---
 
@@ -622,23 +650,74 @@ ANTHROPIC_API_KEY=your_anthropic_key_here
 PAYSTACK_SECRET_KEY=your_paystack_key_here
 ```
 
-### 3. Starting the Core Backend Services
+### 3. Starting the Backend Services
 
-You can launch each service in its own terminal window:
+#### Option A: Single-Command Unified Backend (Recommended)
+
+Start the entire core backend suite at once with a single command from the project root:
 
 ```bash
-# Terminal 1: Merchant API (Backend REST & Mobile Gateway on :3004)
-npm run merchant-api
-
-# Terminal 2: Baileys WhatsApp Gateway (Multi-session WhatsApp Manager on :3005)
-npm run baileys-gateway
-
-# Terminal 3: Comms Router & Outbound Queue Worker (Sliding Debounce)
-npm run comms-router
-
-# Terminal 4: Event Orchestrator (Retention, Logistics & Outbox Relays)
-npm run event-orchestrator
+npm run app
 ```
+
+**What `npm run app` does:**
+- Launches and supervises all 7 core backend microservices simultaneously in a single unified terminal session:
+  1. `[merchant-api]` Fastify REST & Realtime Stream Server (Port `3004`)
+  2. `[baileys-gateway]` WhatsApp Multi-Device Socket Manager (Port `3005`)
+  3. `[comms-router]` Sliding Debounce Queue Worker (4.5s Customer Turn Builder)
+  4. `[orchestrator]` State Machine Transitions & Automation Daemon
+  5. `[payment]` Payment Verification, Webhooks & Escrow Settlement (Port `3002`)
+  6. `[logistics]` Automated Courier Dispatch Rider Broker (Kwik/Fez/Gokada)
+  7. `[sms-webhook]` Vendor Communiqué 1-Digit SMS Decision Receiver (Port `3006`)
+- Provides color-coded prefix logging (`[merchant-api]`, `[baileys-gateway]`, `[comms-router]`, `[orchestrator]`, `[payment]`, `[logistics]`, `[sms-webhook]`) with clean line buffering.
+- Features graceful, unified teardown: Pressing **`Ctrl+C`** cleanly terminates the entire process tree on both Windows and POSIX without leaving orphaned background processes or locked ports.
+
+---
+
+#### Option B: Starting Microservices Individually
+
+If you prefer isolated terminal windows for individual debugging, you can run each service independently:
+
+##### 1. Core Runtime Services
+- **`npm run merchant-api`**
+  - **Starts**: `ace-whatsapp/core/merchant-api/src/index.ts` on port **`3004`**.
+  - **What it does**: Provides the primary REST and Server-Sent Events (SSE) / WebSocket endpoints for the merchant mobile app and web clients. Handles vendor authentication, merchant profile settings, dashboard metrics, inventory CRUD, Providus VAN settlement accounts, order actions, and the autonomous Biblio Assistant agent loop.
+- **`npm run baileys-gateway`**
+  - **Starts**: `ace-whatsapp/core/baileys-gateway/src/index.ts` on port **`3005`**.
+  - **What it does**: Manages persistent WhatsApp Web Multi-Device WebSocket connections using `@whiskeysockets/baileys`. Generates QR codes and 8-digit phone pairing codes, streams incoming customer chats into Redis, dispatches outbound AI replies to WhatsApp, and handles automated 30-minute status broadcasts.
+- **`npm run comms-router`**
+  - **Starts**: `ace-whatsapp/core/comms-router/src/debounce.ts`.
+  - **What it does**: Implements the sliding 4.5-second debounce buffer for customer messages. When a buyer sends multiple burst messages (e.g. *"Hi"*, *"How much for this?"*, *"Can you do 15k?"*), it coalesces them into a single `ConversationTurn` and invokes the Groq LLaMA 3.3 AI Negotiator agent loop.
+- **`npm run event-orchestrator`**
+  - **Starts**: `ace-whatsapp/core/event-orchestrator/src/index.ts`.
+  - **What it does**: Subscribes to Redis PubSub order events (`QUOTE_CREATED`, `PAYMENT_CONFIRMED`, `RIDER_ASSIGNED`). Executes pure reducer state transitions, drafts vendor action cards (Restock PO drafts, Winback offers, Customer discount approvals), and processes the transactional outbox queue.
+
+##### 2. Specialized Pipeline & Worker Services
+- **`npm run payment`**
+  - **Starts**: `ace-whatsapp/core/payment-verification/src/index.ts`.
+  - **What it does**: Listens for Monnify, Paystack, and Providus Dynamic Virtual Account (VAN) settlement webhooks. Automatically matches transfer references against pending quotes, verifies zero-deduction amounts, and transitions orders to `PAYMENT_CONFIRMED`.
+- **`npm run catalog-sync`**
+  - **Starts**: `ace-whatsapp/core/catalog-sync/src/index.ts`.
+  - **What it does**: Ingests vendor product catalogs from CSV/Excel or unstructured text. Uses `@xenova/transformers` to generate 384-dimensional vector embeddings and syncs them with pgvector in PostgreSQL for RAG semantic search.
+- **`npm run logistics`**
+  - **Starts**: `ace-whatsapp/core/logistics/src/index.ts`.
+  - **What it does**: Coordinates automated dispatch logistics across Nigerian courier platforms (Kwik, Fez, Gokada, Sendbox). Calculates delivery rates, books riders upon cleared escrow payment, and generates real-time customer tracking links.
+- **`npm run ingestion`**
+  - **Starts**: `ace-whatsapp/core/ingestion-service/src/index.ts` on port **`3000`**.
+  - **What it does**: Alternate webhook gateway for merchants utilizing official Meta WhatsApp Cloud API accounts instead of Baileys WebSockets. Verifies Meta HMAC-SHA256 signatures and normalizes incoming Graph API payloads into standard `InboundMessage` DTOs.
+- **`npm run sms-webhook`**
+  - **Starts**: `ace-whatsapp/core/comms-router/src/smsWebhook.ts`.
+  - **What it does**: Ingests 1-digit SMS approvals from merchants (e.g. `1` to approve discount, `2` to counter) via Africa's Talking / Twilio, allowing merchants to operate their store offline from basic feature phones.
+
+##### 3. Provisioning & Admin Portal
+- **`npm run pair <phone>`**
+  - **Starts**: `pair.ts`.
+  - **What it does**: One-step merchant onboarding CLI. Automatically provisions merchant records in PostgreSQL and requests an instant 8-digit WhatsApp pairing code (e.g. `npm run pair 2349064982841`).
+- **`npm run admin-portal`**
+  - **Starts**: Next.js development server in `ace-whatsapp/apps/admin-portal` on port **`3001`**.
+  - **What it does**: Visual web dashboard for internal operators. Features real-time WhatsApp session monitoring, QR code pairing, order pipeline tracking, tone guide configuration, and token ledger inspection.
+
+---
 
 ### 4. Starting the Mobile & Web Operator App
 
@@ -648,40 +727,48 @@ Launch the merchant mobile app:
 # Navigate to mobile app directory
 cd ace-merchant-app
 
-# Run in Web Browser (accessible at http://localhost:8081)
-npm run web
+# Run in Expo Go / Android Emulator / iOS Simulator (with 4GB memory allocation)
+npx expo start -c
 
-# Or run in Expo Go / Android Emulator / iOS Simulator:
-npm run start
+# Or run in Web Browser (accessible at http://localhost:8081)
+npm run web
 ```
 
 **Testing & Login Details:**
 - **Local Web URL**: [http://localhost:8081](http://localhost:8081)
-- **Local Network URL** (for physical smartphones on Wi-Fi): `http://10.91.190.253:8081`
+- **Local Network URL** (for physical smartphones on Wi-Fi): `http://192.168.100.75:8081`
 - **Merchant Login Testing**:
   - Enter any phone number (e.g. `08012345678`).
-  - When prompted for the OTP verification code, enter the developer test code: **`123456`**.
-  - New accounts will instantly prompt for merchant details and take you directly to the Bento Grid Dashboard.
+  - When prompted for OTP verification, enter the developer test code: **`123456`**.
+  - Automatically loads the Bento Grid Dashboard, Inbox card stack, Live Chats, and Biblio Assistant.
 
-### 5. Verifying Live Endpoints
-Run quick verification checks from your terminal:
-```bash
-# Check Merchant API health
-curl http://localhost:3004/health
-# Response: {"ok":true}
+---
 
-# Check Baileys Gateway health
-curl http://localhost:3005/health
-# Response: {"ok":true,"activeSessions":0,"sessions":[]}
+### 5. Testing, Verification & Infrastructure Tools
 
-# Check Live Test Suite
-npm test
-# Result: 129 passed (129)
+#### Quality & Code Integrity
+- **`npm test`**: Executes the complete Vitest test suite (129+ tests covering order state machines, negotiation arcs, LinUCB pricing bandits, and schema contracts).
+- **`npm run test:watch`**: Interactive Vitest runner for continuous TDD test execution.
+- **`npm run typecheck`**: Runs strict TypeScript compilation checks (`tsc --noEmit`) across all packages without emitting JavaScript.
 
-# Verify Strict TypeScript Compilation
-npm run typecheck
-# Result: 0 errors
-```
+#### Infrastructure Daemons
+- **Redis (WSL / Local)**:
+  ```bash
+  # Start high-performance Redis daemon in WSL on port 6380:
+  wsl redis-server --port 6380 --daemonize yes
+  ```
+- **PostgreSQL Database**:
+  - Hosted serverless PostgreSQL on Neon. Database connection string configured via `DATABASE_URL` in `.env`.
+- **Health Verification Probes**:
+  ```bash
+  # Check Merchant API health (Port 3004)
+  curl http://localhost:3004/health
+  # Expected: {"ok":true}
+
+  # Check Baileys Gateway health (Port 3005)
+  curl http://localhost:3005/health
+  # Expected: {"ok":true,"activeSessions":0,"sessions":[]}
+  ```
 
 ---
 

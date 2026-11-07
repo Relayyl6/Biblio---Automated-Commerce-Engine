@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   Modal,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -24,6 +25,10 @@ import {
   CheckCircle2,
   Shield,
   FileText,
+  Bell,
+  Smartphone,
+  Mail,
+  Lock,
 } from 'lucide-react-native';
 import Animated, {
   FadeInUp,
@@ -37,10 +42,12 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useColorScheme } from 'nativewind';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/store/authStore';
 import { api } from '../src/api/client';
 import { colors } from './../theme';
 import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
+import { normalizePhoneNumber, isValidPhoneNumber, safeHaptics } from '../src/utils/sanitizers';
 
 const OTP_LENGTH = 6;
 
@@ -68,6 +75,7 @@ type LoginStep = 'phone' | 'otp' | 'finish_profile';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
@@ -78,6 +86,17 @@ export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Unified SMS-First & Email Fallback Authentication State
+  const [activeChannel, setActiveChannel] = useState<'sms' | 'email'>('sms');
+  const [email, setEmail] = useState('');
+  const [showEmailFallback, setShowEmailFallback] = useState(false);
+  const [isEmailSending, setIsEmailSending] = useState(false);
+  const [pushBannerCode, setPushBannerCode] = useState<string | null>(null);
+  const [channelMessage, setChannelMessage] = useState<string>('');
+
+  const DISCLAIMER_TEXT =
+    'DISCLAIMER: Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.';
 
   // New Merchant Account Creation Fields (Image 1)
   const [firstName, setFirstName] = useState('');
@@ -119,24 +138,63 @@ export default function LoginScreen() {
     return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 11)}`;
   };
 
-  const isPhoneValid = phone.replace(/\D/g, '').length >= 10;
+  const isPhoneValid = isValidPhoneNumber(phone);
 
   const handleSendOTP = async () => {
     setError(null);
     if (!isPhoneValid) {
-      setError('Enter a valid phone number');
+      setError('Enter a valid phone number (e.g. 08012345678 or +234...)');
       return;
     }
     setIsLoading(true);
     try {
-      await api.post('/auth/merchant/login', { phone: phone.replace(/\D/g, '') });
+      const cleanPhone = normalizePhoneNumber(phone);
+      const res = await api.post('/auth/merchant/login', {
+        phone: cleanPhone,
+        channel: 'sms',
+      });
+      setActiveChannel('sms');
+      if (res.data?.pushOtp) {
+        setPushBannerCode(res.data.pushOtp);
+        safeHaptics.notification();
+      } else {
+        setPushBannerCode(null);
+      }
+      if (res.data?.message) {
+        setChannelMessage(res.data.message);
+      }
       setStep('otp');
       setResendCooldown(30);
       setTimeout(() => otpRefs.current[0]?.focus(), 350);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Could not send OTP. Please try again.');
+      setError(err.response?.data?.error || 'Could not send SMS code. Please try again.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSendEmailFallback = async () => {
+    setError(null);
+    if (!email.trim() || !email.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    setIsEmailSending(true);
+    try {
+      const cleanPhone = normalizePhoneNumber(phone);
+      const res = await api.post('/auth/merchant/email-otp', {
+        phone: cleanPhone,
+        email: email.trim().toLowerCase(),
+      });
+      setActiveChannel('email');
+      setShowEmailFallback(false);
+      setChannelMessage(res.data?.message || `Passcode dispatched to ${email.trim()}`);
+      safeHaptics.notification();
+      setResendCooldown(30);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Could not send code to email.');
+    } finally {
+      setIsEmailSending(false);
     }
   };
 
@@ -144,7 +202,11 @@ export default function LoginScreen() {
     if (resendCooldown > 0) return;
     setOtpDigits(Array(OTP_LENGTH).fill(''));
     otpRefs.current[0]?.focus();
-    await handleSendOTP();
+    if (activeChannel === 'email' && email.trim()) {
+      await handleSendEmailFallback();
+    } else {
+      await handleSendOTP();
+    }
   };
 
   const handleVerifyOTP = async () => {
@@ -152,10 +214,12 @@ export default function LoginScreen() {
     if (code.length !== OTP_LENGTH) return;
     setIsLoading(true);
     try {
-      const res = await api.post('/auth/merchant/verify', {
-        phone: phone.replace(/\D/g, ''),
-        code,
-      });
+      const cleanPhone = normalizePhoneNumber(phone);
+      const payload: Record<string, string> = { code };
+      if (cleanPhone) payload.phone = cleanPhone;
+      if (email.trim()) payload.email = email.trim().toLowerCase();
+
+      const res = await api.post('/auth/merchant/verify', payload);
 
       if (res.data && res.data.merchantId) {
         if (res.data.isNewUser) {
@@ -261,7 +325,10 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {/* ── Top Bar with Unauthenticated Help & Support Access ── */}
-      <View className="px-6 pt-14 pb-2 flex-row items-center justify-between z-10">
+      <View
+        style={{ paddingTop: Math.max(insets.top, 16) }}
+        className="px-6 pb-2 flex-row items-center justify-between z-10"
+      >
         {step !== 'phone' ? (
           <Pressable
             onPress={() => {
@@ -376,13 +443,59 @@ export default function LoginScreen() {
                   </Animated.Text>
                 )}
 
+                {/* ─── Unified SMS-First Verification Channel Badge ─── */}
+                <View
+                  style={{
+                    backgroundColor: isDark ? '#064E3B20' : '#ECFDF5',
+                    borderColor: '#10B981',
+                  }}
+                  className="border rounded-2xl p-3.5 mt-4 mb-2 flex-row items-center justify-between"
+                >
+                  <View className="flex-row items-center flex-1 mr-2">
+                    <View className="w-9 h-9 rounded-xl bg-emerald-500/20 items-center justify-center mr-3">
+                      <Smartphone size={18} color="#10B981" />
+                    </View>
+                    <View className="flex-1">
+                      <View className="flex-row items-center">
+                        <Text style={{ color: '#10B981' }} className="text-xs font-bold">
+                          Direct SMS Verification
+                        </Text>
+                        <View className="ml-2 bg-emerald-500/15 px-1.5 py-0.2 rounded">
+                          <Text className="text-[9px] font-bold text-emerald-500">Clerk & Twilio</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: c.textTertiary }} className="text-[10px] mt-0.5 leading-tight">
+                        One-time passcode dispatched directly to your mobile carrier
+                      </Text>
+                    </View>
+                  </View>
+                  <ShieldCheck size={16} color="#10B981" />
+                </View>
+
+                {/* Mandatory Anti-Fraud Security Disclaimer */}
+                <View
+                  style={{
+                    backgroundColor: isDark ? '#2D1F08' : '#FFFBEB',
+                    borderColor: isDark ? '#78350F' : '#FDE68A',
+                  }}
+                  className="p-3.5 rounded-2xl border my-2 flex-row items-start"
+                >
+                  <Lock size={15} color="#D97706" style={{ marginTop: 2, marginRight: 8 }} />
+                  <Text
+                    style={{ color: isDark ? '#FDE68A' : '#92400E' }}
+                    className="text-[11px] leading-4 flex-1 font-medium"
+                  >
+                    <Text className="font-bold">DISCLAIMER:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
+                  </Text>
+                </View>
+
                 <Pressable
                   onPress={handleSendOTP}
                   disabled={isLoading || !isPhoneValid}
                   style={{
                     backgroundColor: isLoading || !isPhoneValid ? c.border : c.accent,
                   }}
-                  className="h-14 rounded-2xl items-center justify-center mt-6 flex-row active:opacity-80 shadow-sm"
+                  className="h-14 rounded-2xl items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
                 >
                   {isLoading ? (
                     <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
@@ -391,7 +504,7 @@ export default function LoginScreen() {
                       style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
                       className="text-base font-bold"
                     >
-                      Send Verification Code
+                      Send SMS Passcode
                     </Text>
                   )}
                 </Pressable>
@@ -400,7 +513,7 @@ export default function LoginScreen() {
                   style={{ color: c.textTertiary }}
                   className="text-[11px] text-center mt-4 leading-4"
                 >
-                  We'll send a 6-digit SMS verification code to this device
+                  Standard carrier SMS rates apply • NDPA 2023 Compliant
                 </Text>
               </Animated.View>
             )}
@@ -408,6 +521,42 @@ export default function LoginScreen() {
             {/* STEP 2: OTP Verification */}
             {step === 'otp' && (
               <Animated.View entering={FadeIn.duration(200)} key="otp-step">
+                {/* Instant Device Security Alert Banner */}
+                {pushBannerCode && (
+                  <Animated.View
+                    entering={FadeInDown.duration(300).springify()}
+                    style={{
+                      backgroundColor: isDark ? '#1C2E24' : '#E8F5E9',
+                      borderColor: '#10B981',
+                    }}
+                    className="border rounded-2xl p-3.5 mb-4 flex-row items-center justify-between shadow-sm"
+                  >
+                    <View className="flex-row items-center flex-1 mr-3">
+                      <View className="w-9 h-9 rounded-xl bg-emerald-500/20 items-center justify-center mr-3">
+                        <Bell size={18} color="#10B981" />
+                      </View>
+                      <View className="flex-1">
+                        <Text style={{ color: c.textPrimary }} className="text-xs font-bold">
+                          Biblio Device Alert
+                        </Text>
+                        <Text style={{ color: c.textSecondary }} className="text-[11px] mt-0.5">
+                          Code: <Text className="font-bold text-emerald-600">{pushBannerCode}</Text>
+                        </Text>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => {
+                        safeHaptics.notification();
+                        const digits = pushBannerCode.split('');
+                        setOtpDigits(digits);
+                      }}
+                      className="bg-emerald-600 px-3 py-1.5 rounded-xl active:opacity-80"
+                    >
+                      <Text className="text-white text-xs font-bold">Autofill</Text>
+                    </Pressable>
+                  </Animated.View>
+                )}
+
                 <View
                   style={{ backgroundColor: c.accentSoft }}
                   className="w-12 h-12 rounded-xl items-center justify-center mb-3"
@@ -417,11 +566,17 @@ export default function LoginScreen() {
                 <Text style={{ color: c.textPrimary }} className="text-xl font-bold mb-1">
                   Enter 6-Digit Code
                 </Text>
-                <Text style={{ color: c.textSecondary }} className="text-xs mb-5 leading-5">
-                  Sent via SMS to{' '}
-                  <Text style={{ color: c.textPrimary }} className="font-bold">
-                    {formatPhoneDisplay(phone)}
-                  </Text>
+                <Text style={{ color: c.textSecondary }} className="text-xs mb-4 leading-5">
+                  {channelMessage ? (
+                    channelMessage
+                  ) : (
+                    <>
+                      Dispatched via {activeChannel.toUpperCase()} to{' '}
+                      <Text style={{ color: c.textPrimary }} className="font-bold">
+                        {activeChannel === 'sms' ? formatPhoneDisplay(phone) : email}
+                      </Text>
+                    </>
+                  )}
                 </Text>
 
                 <View className="flex-row justify-between mb-2">
@@ -447,18 +602,35 @@ export default function LoginScreen() {
                   ))}
                 </View>
 
+                {/* Mandatory Security Disclaimer */}
+                <View
+                  style={{
+                    backgroundColor: isDark ? '#2D1F08' : '#FFFBEB',
+                    borderColor: isDark ? '#78350F' : '#FDE68A',
+                  }}
+                  className="p-3 rounded-2xl border my-2 flex-row items-start"
+                >
+                  <Lock size={14} color="#D97706" style={{ marginTop: 2, marginRight: 8 }} />
+                  <Text
+                    style={{ color: isDark ? '#FDE68A' : '#92400E' }}
+                    className="text-[10px] leading-4 flex-1 font-medium"
+                  >
+                    <Text className="font-bold">SECURITY NOTICE:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
+                  </Text>
+                </View>
+
                 {error && (
                   <Animated.Text
                     entering={FadeIn.duration(150)}
                     style={{ color: c.danger }}
-                    className="text-xs mt-2 ml-1"
+                    className="text-xs mt-1 ml-1"
                   >
                     {error}
                   </Animated.Text>
                 )}
 
                 {isLoading && (
-                  <View className="flex-row items-center justify-center mt-5">
+                  <View className="flex-row items-center justify-center mt-4">
                     <InlineLoadingDots color={c.accent} />
                     <Text style={{ color: c.textSecondary }} className="text-xs ml-2 font-medium">
                       Verifying with carrier network...
@@ -466,10 +638,75 @@ export default function LoginScreen() {
                   </View>
                 )}
 
-                <View className="flex-row items-center justify-center mt-6">
-                  <Text style={{ color: c.textTertiary }} className="text-xs">
-                    Didn't get the code?{' '}
-                  </Text>
+                {/* Email Fallback Intake Component */}
+                <View className="mt-4 pt-3 border-t" style={{ borderColor: c.border }}>
+                  {!showEmailFallback ? (
+                    <Pressable
+                      onPress={() => setShowEmailFallback(true)}
+                      className="flex-row items-center justify-center py-1 active:opacity-70"
+                    >
+                      <Mail size={14} color={c.accent} style={{ marginRight: 6 }} />
+                      <Text style={{ color: c.accent }} className="text-xs font-semibold">
+                        Didn't receive SMS? Send code to your email instead
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <View className="mt-1">
+                      <Text style={{ color: c.textSecondary }} className="text-xs font-bold mb-1.5">
+                        Type your email address:
+                      </Text>
+                      <View className="flex-row items-center">
+                        <View
+                          style={{ backgroundColor: c.bg, borderColor: c.border }}
+                          className="flex-1 flex-row items-center border rounded-xl px-3 h-11 mr-2"
+                        >
+                          <Mail size={15} color={c.textTertiary} />
+                          <TextInput
+                            style={{ color: c.textPrimary }}
+                            className="flex-1 text-xs ml-2 font-medium"
+                            placeholder="you@store.com"
+                            placeholderTextColor={c.textTertiary}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            value={email}
+                            onChangeText={(t) => setEmail(t)}
+                          />
+                        </View>
+                        <Pressable
+                          onPress={handleSendEmailFallback}
+                          disabled={isEmailSending || !email.trim()}
+                          style={{
+                            backgroundColor: isEmailSending || !email.trim() ? c.border : c.accent,
+                          }}
+                          className="h-11 px-3.5 rounded-xl items-center justify-center active:opacity-80"
+                        >
+                          {isEmailSending ? (
+                            <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
+                          ) : (
+                            <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="text-xs font-bold">
+                              Send Code
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                <View className="flex-row items-center justify-between mt-5 px-1">
+                  <Pressable
+                    onPress={() => {
+                      setStep('phone');
+                      setOtpDigits(Array(OTP_LENGTH).fill(''));
+                      setError(null);
+                    }}
+                  >
+                    <Text style={{ color: c.accent }} className="text-xs font-semibold">
+                      ← Change phone number
+                    </Text>
+                  </Pressable>
+
                   <Pressable onPress={handleResend} disabled={resendCooldown > 0}>
                     <Text
                       style={{ color: resendCooldown > 0 ? c.textTertiary : c.accent }}
@@ -675,7 +912,10 @@ export default function LoginScreen() {
                 >
                   By tapping Confirm, you'll create a Biblio Merchant Account and agree to our{' '}
                   <Text
-                    onPress={() => router.push('/support')}
+                    onPress={() => {
+                      const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+                      Linking.openURL(`${baseUrl}/legal/terms`).catch(() => router.push('/support'));
+                    }}
                     style={{ color: '#3B82F6' }}
                     className="font-medium underline"
                   >
@@ -683,7 +923,10 @@ export default function LoginScreen() {
                   </Text>{' '}
                   and{' '}
                   <Text
-                    onPress={() => router.push('/support')}
+                    onPress={() => {
+                      const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+                      Linking.openURL(`${baseUrl}/legal/privacy`).catch(() => router.push('/support'));
+                    }}
                     style={{ color: '#3B82F6' }}
                     className="font-medium underline"
                   >

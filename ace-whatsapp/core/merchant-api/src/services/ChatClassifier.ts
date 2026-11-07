@@ -11,6 +11,8 @@ export interface ClassificationResult {
   canAutoReply: boolean;
 }
 
+const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
 export class ChatClassifier {
   private static COMMERCIAL_KEYWORDS = [
     'price', 'how much', 'cost', 'available', 'order', 'stock', 'pay', 'account',
@@ -32,6 +34,16 @@ export class ChatClassifier {
     messageText: string,
     senderPhone?: string
   ): Promise<ClassificationResult> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
+    if (!chatId || typeof chatId !== 'string' || !chatId.trim()) {
+      throw new Error(`Invalid chatId format: chatId is required`);
+    }
+
+    const safeMessageText = typeof messageText === 'string' ? messageText : String(messageText || '');
+
     // 1. Check existing classification record / vendor override
     const existing = await sql<any[]>`
       SELECT classification, confidence, reasons, vendor_override
@@ -64,7 +76,7 @@ export class ChatClassifier {
     }
 
     // 2. Perform heuristic & intent scoring
-    const textLower = (messageText || '').toLowerCase();
+    const textLower = safeMessageText.toLowerCase();
     const commercialHits = this.COMMERCIAL_KEYWORDS.filter(kw => textLower.includes(kw));
     const personalHits = this.PERSONAL_KEYWORDS.filter(kw => textLower.includes(kw));
 
@@ -101,7 +113,7 @@ export class ChatClassifier {
         updated_at = NOW()
     `;
 
-    // 4. If uncertain, add message to short-TTL quarantine (24h)
+    // 4. If uncertain, add message to short-TTL quarantine (24h) in both storage tables
     if (classification === 'uncertain') {
       await sql`
         INSERT INTO chat_quarantine (merchant_id, chat_id, message_id, content, sender_phone, status, expires_at)
@@ -113,6 +125,23 @@ export class ChatClassifier {
           ${senderPhone || null},
           'quarantined',
           NOW() + INTERVAL '24 hours'
+        )
+      `;
+
+      await sql`
+        INSERT INTO quarantine_chats (
+          id, merchant_id, contact_raw_phone, trigger_message, confidence_score, intent_detected, status, expires_at, created_at, updated_at
+        ) VALUES (
+          gen_random_uuid(),
+          ${merchantId}::uuid,
+          ${senderPhone || chatId},
+          ${messageText},
+          ${confidence},
+          ${classification},
+          'quarantined',
+          NOW() + INTERVAL '24 hours',
+          NOW(),
+          NOW()
         )
       `;
     }
@@ -138,6 +167,18 @@ export class ChatClassifier {
     chatId: string,
     resolution: 'business' | 'personal' | 'ignore'
   ): Promise<void> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
+    if (!chatId || typeof chatId !== 'string' || !chatId.trim()) {
+      throw new Error(`Invalid chatId format: chatId is required`);
+    }
+
+    if (!resolution || !['business', 'personal', 'ignore'].includes(resolution)) {
+      throw new Error(`Invalid resolution: must be 'business', 'personal', or 'ignore'`);
+    }
+
     const classification: ChatClass = resolution === 'business' ? 'business' : 'personal';
 
     await sql`
@@ -158,18 +199,28 @@ export class ChatClassifier {
         updated_at = NOW()
     `;
 
-    // If marked personal or ignore, flush any quarantined messages immediately per privacy policy
+    // Synchronize both quarantine tables
     if (resolution === 'personal' || resolution === 'ignore') {
       await sql`
         DELETE FROM chat_quarantine
         WHERE merchant_id = ${merchantId}::uuid AND chat_id = ${chatId}
       `;
+      await sql`
+        UPDATE quarantine_chats
+        SET status = 'confirmed_personal', trigger_message = '[PURGED_PERSONAL]', updated_at = NOW()
+        WHERE merchant_id = ${merchantId}::uuid AND contact_raw_phone = ${chatId}
+      `;
     } else {
-      // Mark quarantined as approved
+      // Mark quarantined as approved/promoted
       await sql`
         UPDATE chat_quarantine
         SET status = 'approved'
         WHERE merchant_id = ${merchantId}::uuid AND chat_id = ${chatId}
+      `;
+      await sql`
+        UPDATE quarantine_chats
+        SET status = 'promoted_business', updated_at = NOW()
+        WHERE merchant_id = ${merchantId}::uuid AND contact_raw_phone = ${chatId}
       `;
     }
   }
@@ -178,6 +229,10 @@ export class ChatClassifier {
    * List pending quarantined chats awaiting vendor prompt
    */
   static async getQuarantinedChats(merchantId: string): Promise<any[]> {
+    if (!merchantId || !isUuid(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
+
     return sql`
       SELECT q.id, q.chat_id, q.content, q.sender_phone, q.expires_at, q.created_at,
              c.confidence, c.reasons

@@ -81,20 +81,14 @@ async function tryBaileysHttpSend(msg: OutboundMessage, merchantId: string): Pro
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw new Error(`Gateway /send returned ${res.status}: ${body.error ?? "unknown error"}`);
+      logger.warn(`[outbound] Gateway /send returned ${res.status}: ${body.error ?? "unknown error"} — falling back to Graph API`);
+      return false;
     }
     return true;
   } catch (err: any) {
-    // If the gateway is down entirely, fall through to Graph API rather than silently dropping
-    if (
-      err.code === "ECONNREFUSED" || 
-      (err.cause && err.cause.code === "ECONNREFUSED") ||
-      (err.cause && err.cause instanceof AggregateError && err.cause.errors.some((e: any) => e.code === "ECONNREFUSED"))
-    ) {
-      logger.warn("[outbound] Baileys gateway unreachable — falling back to Graph API");
-      return false;
-    }
-    throw err;
+    // If the gateway is unreachable or down, fall through to Graph API rather than failing
+    logger.warn("[outbound] Baileys gateway unreachable — falling back to Graph API", { err: err?.message });
+    return false;
   }
 }
 

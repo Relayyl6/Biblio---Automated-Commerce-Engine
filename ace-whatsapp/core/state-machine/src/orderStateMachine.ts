@@ -6,8 +6,10 @@ function mapStateToOrderStatus(status: string): string {
       return 'pending';
     case 'payment_verified':
       return 'confirmed';
+    case 'ready_for_pickup':
     case 'rider_assigned':
       return 'processing';
+    case 'out_for_delivery':
     case 'in_transit':
       return 'shipped';
     case 'delivered':
@@ -201,13 +203,16 @@ export function transition(
       if (event.type === "DELIVERY_CONFIRMED") {
         return { status: "delivered", orderId: state.orderId };
       }
+      if (event.type === "DELIVERY_FAILED") {
+        return { status: "cancelled", orderId: state.orderId, reason: event.reason || "delivery_failed" };
+      }
       if (event.type === "ORDER_CANCELLED") {
         return { status: "cancelled", orderId: state.orderId, reason: event.reason };
       }
       throw new TransitionError(
         state.status,
         event.type,
-        "out_for_delivery can only resolve to delivered",
+        "out_for_delivery can only resolve to delivered, delivery_failed, or cancelled",
       );
     }
 
@@ -252,6 +257,25 @@ export async function transitionAndEmit(
             updated_at = NOW() 
         WHERE id = ${orderId}::uuid
       `;
+
+      // Record immutable audit log
+      try {
+        await sql`
+          INSERT INTO order_audit_logs (
+            id, order_id, tenant_id, previous_status, new_status, changed_at, metadata
+          ) VALUES (
+            gen_random_uuid(),
+            ${orderId}::uuid,
+            ${merchantId}::uuid,
+            ${currentState.status},
+            ${(result as any).status},
+            NOW(),
+            ${sql.json({ eventType: event.type, eventPayload: event } as any)}
+          )
+        `;
+      } catch (auditErr) {
+        console.error(`[orderStateMachine] Failed to record order_audit_log:`, auditErr);
+      }
     } catch (err) {
       throw new Error(`Failed to update order state in DB: ${err}`);
     }

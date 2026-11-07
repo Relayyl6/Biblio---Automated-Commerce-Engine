@@ -4,8 +4,14 @@ import { Home, Inbox, MoreHorizontal, Search, ArrowLeft, MessageCircle, User, Se
 import { View, Text, Pressable, Keyboard } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import * as Haptics from 'expo-haptics';
+import { safeHaptics } from '../../src/utils/sanitizers';
+
+export type BottomTabBarProps = {
+  state: any;
+  descriptors?: any;
+  navigation: any;
+  insets?: any;
+};
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -19,8 +25,8 @@ import { colors } from '../../theme';
 import { useInbox } from '../../src/api/client';
 
 function useInboxBadgeCount() {
-  const { data: cards = [] } = useInbox();
-  return cards.length;
+  const { data: cards } = useInbox();
+  return Array.isArray(cards) ? cards.length : 0;
 }
 
 function TabIcon({
@@ -130,7 +136,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               const Icon = icons[route.name] ?? Home;
 
               const onPress = () => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                safeHaptics.impact();
                 if (route.name === 'more') {
                   setShowMore(true);
                   return;
@@ -164,22 +170,22 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
           </Animated.View>
         ) : (
           <Animated.View entering={FadeInRight.springify()} exiting={FadeOutRight} style={{ flexDirection: 'row', flex: 1, justifyContent: 'space-around' }}>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowMore(false); }} hitSlop={10}>
+            <Pressable onPress={() => { safeHaptics.impact(); setShowMore(false); }} hitSlop={10}>
               <TabIcon Icon={ArrowLeft} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
             <Pressable
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                safeHaptics.impact();
                 router.navigate('/(tabs)/more' as any);
               }}
               hitSlop={10}
             >
               <TabIcon Icon={User} isFocused={state.index === 3} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.navigate('/(tabs)/tokens' as any); }} hitSlop={10}>
+            <Pressable onPress={() => { safeHaptics.impact(); router.navigate('/(tabs)/tokens' as any); }} hitSlop={10}>
               <TabIcon Icon={Coins} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
-            <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/settings' as any); }} hitSlop={10}>
+            <Pressable onPress={() => { safeHaptics.impact(); router.push('/settings' as any); }} hitSlop={10}>
               <TabIcon Icon={SettingsIcon} isFocused={false} accent={c.accent} inactive={c.textTertiary} activeBg={c.accentSoft} />
             </Pressable>
           </Animated.View>
@@ -188,7 +194,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
       <Pressable
         onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          safeHaptics.impact();
           router.push('/search' as any);
         }}
         accessibilityRole="button"

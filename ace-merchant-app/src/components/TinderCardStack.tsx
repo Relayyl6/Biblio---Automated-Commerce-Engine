@@ -8,9 +8,10 @@ import Animated, {
   withTiming,
   interpolate,
   runOnJS,
+  Extrapolation,
 } from 'react-native-reanimated';
 import { Check, X, Clock, Sparkles, MessageCircle, ShieldCheck, Tag, Zap, ChevronRight } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import { safeHaptics } from '../utils/sanitizers';
 import { useColorScheme } from 'nativewind';
 import { colors, shadows } from '../../theme';
 
@@ -38,13 +39,18 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
+  const triggerHaptic = () => {
+    safeHaptics.impact();
+  };
+
   const handleActionComplete = (action: 'approve' | 'reject') => {
     translateX.value = 0;
     translateY.value = 0;
+    if (!topCard || !topCard.id) return;
     if (action === 'approve') {
-      onApprove(topCard.id);
+      if (typeof onApprove === 'function') onApprove(topCard.id);
     } else {
-      onReject(topCard.id);
+      if (typeof onReject === 'function') onReject(topCard.id);
     }
   };
 
@@ -55,12 +61,12 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
     })
     .onEnd(() => {
       if (translateX.value > SWIPE_THRESHOLD) {
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+        runOnJS(triggerHaptic)();
         translateX.value = withTiming(SCREEN_WIDTH * 1.4, { duration: 220 }, () => {
           runOnJS(handleActionComplete)('approve');
         });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+        runOnJS(triggerHaptic)();
         translateX.value = withTiming(-SCREEN_WIDTH * 1.4, { duration: 220 }, () => {
           runOnJS(handleActionComplete)('reject');
         });
@@ -90,19 +96,19 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
       Math.abs(translateX.value),
       [0, SWIPE_THRESHOLD],
       [0.93, 1],
-      'clamp'
+      Extrapolation.CLAMP
     );
     const translateYNext = interpolate(
       Math.abs(translateX.value),
       [0, SWIPE_THRESHOLD],
       [18, 0],
-      'clamp'
+      Extrapolation.CLAMP
     );
     const opacity = interpolate(
       Math.abs(translateX.value),
       [0, SWIPE_THRESHOLD],
       [0.65, 1],
-      'clamp'
+      Extrapolation.CLAMP
     );
     return {
       transform: [{ scale }, { translateY: translateYNext }],
@@ -111,24 +117,24 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
   });
 
   const approveStampStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(translateX.value, [20, SWIPE_THRESHOLD * 0.7], [0, 1], 'clamp');
+    const opacity = interpolate(translateX.value, [20, SWIPE_THRESHOLD * 0.7], [0, 1], Extrapolation.CLAMP);
     return { opacity };
   });
 
   const rejectStampStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(translateX.value, [-SWIPE_THRESHOLD * 0.7, -20], [1, 0], 'clamp');
+    const opacity = interpolate(translateX.value, [-SWIPE_THRESHOLD * 0.7, -20], [1, 0], Extrapolation.CLAMP);
     return { opacity };
   });
 
   const triggerSwipeRight = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    triggerHaptic();
     translateX.value = withTiming(SCREEN_WIDTH * 1.4, { duration: 240 }, () => {
       runOnJS(handleActionComplete)('approve');
     });
   };
 
   const triggerSwipeLeft = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    triggerHaptic();
     translateX.value = withTiming(-SCREEN_WIDTH * 1.4, { duration: 240 }, () => {
       runOnJS(handleActionComplete)('reject');
     });
@@ -161,7 +167,7 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
                   className="px-3.5 py-1 rounded-full flex-row items-center"
                 >
                   <Text style={{ color: c.accent }} className="text-[11px] font-bold uppercase tracking-wider">
-                    {(nextCard.type || 'Draft').replace('_', ' ')}
+                    {String(nextCard?.type || 'Draft').replace(/_/g, ' ')}
                   </Text>
                 </View>
                 <Text style={{ color: c.textTertiary }} className="text-xs font-semibold">
@@ -239,7 +245,7 @@ export function TinderCardStack({ cards, onApprove, onReject, onSnooze }: Tinder
                   >
                     <Tag size={13} color={c.accent} style={{ marginRight: 6 }} />
                     <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
-                      {(topCard.type || 'Draft').replace('_', ' ')}
+                      {String(topCard?.type || 'Draft').replace(/_/g, ' ')}
                     </Text>
                   </View>
 

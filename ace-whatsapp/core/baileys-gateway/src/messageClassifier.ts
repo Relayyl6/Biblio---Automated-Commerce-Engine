@@ -1,15 +1,16 @@
+import crypto from "crypto";
 import { logger } from "@ace/shared/logger.js";
 import { jidNormalizedUser, type WAMessage, type WASocket } from "@whiskeysockets/baileys";
 import { redis, sql } from "@ace/shared/clients";
 import { enqueueInboundMessage } from "../../comms-router/src/debounce.js";
 import type { InboundMessage } from "@ace/shared/types";
 import type { VendorConfig } from "./sessionManager.js";
-import { parseVendorSubmission, flushVendorBuffer } from "./inventoryParser.js";
-import { resolveMessageContent } from "./mediaProcessor.js";
+import { parseVendorSubmission, flushVendorBuffer, isVendorBuffering } from "./inventoryParser.js";
+import { resolveMessageContent, unwrapWAMessage } from "./mediaProcessor.js";
 import { isSourceCommand, handleSourceCommand } from "./sourceCommandHandler.js";
 
 function extractRawText(msg: WAMessage): string {
-  const m = msg.message;
+  const m = unwrapWAMessage(msg.message);
   if (!m) return "";
   return (
     m.conversation ||
@@ -17,22 +18,18 @@ function extractRawText(msg: WAMessage): string {
     m.imageMessage?.caption ||
     m.videoMessage?.caption ||
     m.documentMessage?.caption ||
+    m.buttonsResponseMessage?.selectedDisplayText ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.templateButtonReplyMessage?.selectedDisplayText ||
+    m.templateButtonReplyMessage?.selectedId ||
+    m.listResponseMessage?.title ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    m.interactiveResponseMessage?.body?.text ||
+    m.interactiveResponseMessage?.nativeFlowResponseMessage?.name ||
+    (m.locationMessage ? (m.locationMessage.name || m.locationMessage.address || "Location Pin") : "") ||
+    (m.contactMessage ? (m.contactMessage.displayName || "Contact Card") : "") ||
     ""
   ).trim();
-}
-
-function stripBusinessPrefix(msg: WAMessage): void {
-  const m = msg.message;
-  if (!m) return;
-  const clean = (t?: string | null) => {
-    if (!t) return t;
-    return t.replace(/^business(?:\s+status)?[:\s]*/i, "").trim();
-  };
-  if (m.conversation) m.conversation = clean(m.conversation) || "";
-  if (m.extendedTextMessage?.text) m.extendedTextMessage.text = clean(m.extendedTextMessage.text) || "";
-  if (m.imageMessage?.caption) m.imageMessage.caption = clean(m.imageMessage.caption) || "";
-  if (m.videoMessage?.caption) m.videoMessage.caption = clean(m.videoMessage.caption) || "";
-  if (m.documentMessage?.caption) m.documentMessage.caption = clean(m.documentMessage.caption) || "";
 }
 
 // ─── Classify and route ───────────────────────────────────────────────────────
@@ -44,29 +41,29 @@ export async function classifyAndRoute(
 ): Promise<void> {
   const rawText = extractRawText(msg);
   const isFromMe = !!msg.key.fromMe;
-  const isEndBusiness = /^(end-business|end\s+business|exit-business|exit\s+business)$/i.test(rawText);
-  const isStartBusinessStatusOnly = /^(business\s+status)$/i.test(rawText);
-  const isStartBusinessOnly = /^(business|start-business|start\s+business)$/i.test(rawText);
-  const hasBusinessPrefix = /^business[:\s]+/i.test(rawText);
   const selfJid = msg.key.remoteJid || (vendor.business_line_number ? `${vendor.business_line_number}@s.whatsapp.net` : null);
 
   const vendorPersonalPhone = normalisePhone(vendor.personal_number || "");
   const vendorBusinessPhone = normalisePhone(vendor.business_line_number || "");
 
-  const hasImage = !!msg.message?.imageMessage;
-  const hasAudio = !!msg.message?.audioMessage;
+  const inner = unwrapWAMessage(msg.message);
+  const hasImage = !!inner?.imageMessage;
+  const hasAudio = !!inner?.audioMessage;
   const isStatusCommand = /^status\s+(on|off)$/i.test(rawText.trim());
   const isInventoryPostInstruction = /\bpost(?:\s+(?:this|it))?\s+(?:now|in\s+\d+|to\s+[+\d])/i.test(rawText);
-  const isInventorySubmission = hasImage || hasAudio || isStatusCommand || isInventoryPostInstruction;
+  // Check if vendor already has an active inventory debounce window collecting photos/audio
+  const isBuffering = isVendorBuffering(vendor.id);
+  const isInventorySubmission = hasImage || hasAudio || isStatusCommand || isInventoryPostInstruction || isBuffering;
 
   if (isFromMe) {
     const receiverJid = msg.key.remoteJid;
     const receiverPhone = receiverJid ? jidToPhone(receiverJid) : "";
-    const isSelfNote = receiverPhone === vendorBusinessPhone || receiverJid === selfJid;
+    const isSelfNote = isPhoneMatch(receiverPhone, vendorBusinessPhone) || receiverJid === selfJid;
 
-    if (isSelfNote && isInventorySubmission) {
-      logger.info("[MessageClassifier] Routing Note-to-Self to parseVendorSubmission", { vendorId: vendor.id });
-      await parseVendorSubmission(msg, vendor, sock);
+    if (isSelfNote) {
+      // Merchant's Note-to-Self ("Message yourself") is explicitly excluded from the agent loop.
+      // The merchant's personal notes remain private. The merchant interacts with the autonomous
+      // Biblio Agent directly through the Biblio WhatsApp Agent contact.
       return;
     }
 
@@ -113,8 +110,8 @@ export async function classifyAndRoute(
 
   const senderPhone = jidToPhone(senderJid);
 
-  // If sender matches personal number (or business line itself)
-  const isFromVendor = (senderPhone === vendorPersonalPhone || senderPhone === vendorBusinessPhone) && !isFromMe;
+  // If sender matches personal number or business line
+  const isFromVendor = (isPhoneMatch(senderPhone, vendorPersonalPhone) || isPhoneMatch(senderPhone, vendorBusinessPhone)) && !isFromMe;
 
   if (isFromVendor) {
     if (isInventorySubmission) {
@@ -198,10 +195,12 @@ async function routeToNegotiator(
   // cost-classification logic. In Baileys mode all messages are free, but
   // keeping this key means the classifyWindow() function still works correctly.
   const windowKey = `conv:${fromPhone}:window`;
+  const merchantWindowKey = `conv:${vendor.merchant_id}:${fromPhone}:window`;
   const windowExpiresAt = timestamp + 24 * 60 * 60 * 1000;
-  await redis
-    .set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25)
-    .catch(err => logger.error("[MessageClassifier] Non-critical audit log failed", err));
+  await Promise.all([
+    redis.set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25),
+    redis.set(merchantWindowKey, String(windowExpiresAt), "EX", 60 * 60 * 25),
+  ]).catch(err => logger.error("[MessageClassifier] Non-critical audit log failed", err));
 
   
   // Log customer message to Expo Hub DB
@@ -266,10 +265,16 @@ function resolveSenderJid(msg: WAMessage): string | null {
 
 /**
  * Strip the JID suffix (@s.whatsapp.net, @g.us, etc.) to get bare phone number.
+ * Preserves @lid if the identifier is an anonymous privacy LID.
  * "2348012345678:1@s.whatsapp.net" → "2348012345678"
+ * "123456789@lid" → "123456789@lid"
  */
 function jidToPhone(jid: string): string {
-  return jidNormalizedUser(jid).split("@")[0];
+  const normalized = jidNormalizedUser(jid);
+  if (normalized.endsWith("@lid")) {
+    return normalized;
+  }
+  return normalized.split("@")[0];
 }
 
 /**
@@ -278,4 +283,21 @@ function jidToPhone(jid: string): string {
  */
 function normalisePhone(phone: string): string {
   return phone.replace(/^\+/, "").replace(/[\s\-()]/g, "");
+}
+
+/**
+ * Robust phone match that handles national prefixes (0801..., 234801..., +234...)
+ * and anonymous privacy LIDs.
+ */
+function isPhoneMatch(phoneA: string, phoneB: string): boolean {
+  if (!phoneA || !phoneB) return false;
+  if (phoneA.endsWith("@lid") || phoneB.endsWith("@lid")) {
+    return phoneA === phoneB;
+  }
+  const a = phoneA.replace(/\D/g, "");
+  const b = phoneB.replace(/\D/g, "");
+  if (a === b) return true;
+  const aTail = a.startsWith("234") ? a.slice(3) : a.startsWith("0") ? a.slice(1) : a;
+  const bTail = b.startsWith("234") ? b.slice(3) : b.startsWith("0") ? b.slice(1) : b;
+  return aTail.length >= 7 && aTail === bTail;
 }

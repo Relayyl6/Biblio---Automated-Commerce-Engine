@@ -18,8 +18,10 @@ export function DateSeparator({ label }: { label: string }) {
 }
 
 export function groupMessagesByDay<T extends { time: string; dateKey?: string }>(messages: T[]) {
+  if (!Array.isArray(messages)) return [];
   const groups: { label: string; items: T[] }[] = [];
   for (const msg of messages) {
+    if (!msg) continue;
     const key = msg.dateKey ?? 'conversation';
     const last = groups[groups.length - 1];
     if (last && last.label === labelForDateKey(key)) {

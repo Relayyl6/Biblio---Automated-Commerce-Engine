@@ -20,21 +20,21 @@ export const routerTools = [
     type: "function" as const,
     function: {
       name: "route_to_crm",
-      description: "Route to the CRM Manager for tasks like customer profiles, tags, blocking, or CRM sync (HubSpot/Salesforce).",
+      description: "Route to the CRM Manager for tasks like customer inquiries, WhatsApp messages and chat history, customer profiles, tags, blocking, or CRM sync (HubSpot/Salesforce).",
     }
   },
   {
     type: "function" as const,
     function: {
       name: "route_to_negotiation",
-      description: "Route to the Sales & Negotiation Manager for tasks like active escalations, floor prices, discount codes, and quotes.",
+      description: "Route to the Sales & Negotiation Manager for tasks like customer inquiries, active escalations, floor prices, discount codes, and quotes.",
     }
   },
   {
     type: "function" as const,
     function: {
       name: "route_to_finance",
-      description: "Route to the Finance Manager for revenue, escrow, payouts, invoicing, refunds, and tax/accounting sync.",
+      description: "Route to the Finance Manager for Providus VAN settlement accounts, destination bank accounts, revenue, escrow, payouts, invoicing, and refunds.",
     }
   },
   {
@@ -114,9 +114,9 @@ export const subAgentToolsets: Record<string, any[]> = {
 export const subAgentPrompts: Record<string, string> = {
   route_to_inventory: "You are the ACE Inventory Manager Sub-Agent. Your job is to manage the vendor's catalog, stock, and pricing.",
   route_to_orders: "You are the ACE Order Manager Sub-Agent. Your job is to handle fulfillment, logistics, shipping, and cancellations.",
-  route_to_crm: "You are the ACE CRM Sub-Agent. Your job is to manage customer relationships, tags, segmentation, and CRM synchronization.",
-  route_to_negotiation: "You are the ACE Sales & Negotiation Sub-Agent. Your job is to step into active customer negotiations, set floor prices, and handle quotes.",
-  route_to_finance: "You are the ACE Finance Sub-Agent. Your job is to handle revenue analytics, payouts, invoices, refunds, and accounting integrations.",
+  route_to_crm: "You are the ACE CRM Sub-Agent. Your job is to manage customer inquiries, WhatsApp messages and chat history, customer relationships, tags, segmentation, and CRM synchronization. You have direct access to store message logs.",
+  route_to_negotiation: "You are the ACE Sales & Negotiation Sub-Agent. Your job is to review customer inquiries, step into active customer negotiations, set floor prices, and handle quotes. You have direct access to customer message history.",
+  route_to_finance: "You are the ACE Finance Sub-Agent. Your job is to handle Providus VAN settlement accounts, destination bank linking, revenue analytics, payouts, invoices, refunds, and accounting integrations.",
   route_to_marketing: "You are the ACE Marketing Sub-Agent. Your job is to blast items to WhatsApp status, write copy, and manage flash sales.",
   route_to_analytics: "You are the ACE Data Intelligence Sub-Agent. Your job is to forecast sales, analyze peak hours, and provide strategic business insights.",
   route_to_settings: "You are the ACE Store Configurator Sub-Agent. Your job is to update store policies, hours, staff permissions, and general configurations.",

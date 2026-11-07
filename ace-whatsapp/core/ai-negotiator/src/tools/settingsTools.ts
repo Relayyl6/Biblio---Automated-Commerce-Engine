@@ -257,19 +257,106 @@ export const settingsTools = [
         "required": ["model"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_business_profile",
+      "description": "Fetch the merchant's current complete business profile: store name, legal registration status (CAC RC number), warehouse address, operating hours, policies, support contact, and settlement bank details.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
   }
 ];
 
 export const settingsHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
-  update_store_hours: async (merchantId: string, args: { schedule: string }) => {
-    const parsedSchedule = typeof args.schedule === 'string' ? JSON.parse(args.schedule) : args.schedule;
-    const result = await sql`
-      UPDATE merchants 
-      SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{storeHours}', ${JSON.stringify(parsedSchedule)}::jsonb) 
-      WHERE id = ${merchantId} 
-      RETURNING settings
-    `;
-    return { success: true, updatedSettings: result[0].settings, message: "Store hours updated." };
+  get_business_profile: async (merchantId: string, _args: any) => {
+    try {
+      const rows = await sql<{
+        name: string;
+        owner_first_name: string;
+        owner_last_name: string;
+        is_registered: boolean;
+        rc_number: string;
+        business_type: string;
+        tax_id: string;
+        support_email: string;
+        support_phone: string;
+        website_url: string;
+        physical_address: any;
+        operating_hours: any;
+        return_policy: string;
+        delivery_notes: string;
+        delivery_info: string;
+        business_policies: string;
+        bank_details: any;
+        bank_account_number: string;
+        payout_frequency: string;
+        fee_padding_model: string;
+        platform_fee_percent: number;
+      }[]>`
+        SELECT name, owner_first_name, owner_last_name, is_registered, rc_number, business_type, tax_id,
+               support_email, support_phone, website_url, physical_address, operating_hours, return_policy,
+               delivery_notes, delivery_info, business_policies, bank_details, bank_account_number,
+               payout_frequency, fee_padding_model, platform_fee_percent
+        FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+      `;
+      if (rows.length === 0) return "Merchant profile not found.";
+      const m = rows[0];
+
+      let addrObj: any = {};
+      if (typeof m.physical_address === "string") {
+        try { addrObj = JSON.parse(m.physical_address); } catch { addrObj = { address: m.physical_address }; }
+      } else if (m.physical_address && typeof m.physical_address === "object") {
+        addrObj = m.physical_address;
+      }
+
+      let bankObj: any = {};
+      if (typeof m.bank_details === "string") {
+        try { bankObj = JSON.parse(m.bank_details); } catch { bankObj = {}; }
+      } else if (m.bank_details && typeof m.bank_details === "object") {
+        bankObj = m.bank_details;
+      }
+      const bankName = bankObj.bankName || bankObj.bank_name || "";
+      const accountNumber = bankObj.accountNumber || bankObj.account_number || m.bank_account_number || "";
+      const accountName = bankObj.accountName || bankObj.account_name || "";
+
+      const regText = m.rc_number 
+        ? `Verified CAC (${m.rc_number} - ${m.business_type || 'Registered Entity'})` 
+        : (m.is_registered ? 'Registered Business' : 'Sole Proprietorship');
+
+      return `Store Profile for ${m.name || 'Your Store'}:
+• Owner: ${m.owner_first_name || 'Merchant'}${m.owner_last_name ? ` ${m.owner_last_name}` : ''}
+• Legal Status: ${regText}${m.tax_id ? ` (TIN: ${m.tax_id})` : ''}
+• Warehouse / Address: ${addrObj.street || addrObj.address || m.delivery_info || 'Not configured'}
+• Operating Hours: ${m.operating_hours ? (typeof m.operating_hours === 'object' ? JSON.stringify(m.operating_hours) : m.operating_hours) : 'Mon-Sat 8:00 AM - 6:00 PM WAT'}
+• Return Policy: ${m.return_policy || m.business_policies || 'Standard store return policy'}
+• Delivery Info: ${m.delivery_notes || m.delivery_info || 'Standard local dispatch'}
+• Support Contact: ${m.support_phone || 'Direct WhatsApp'} ${m.support_email ? `(${m.support_email})` : ''}
+• Destination Payout Bank: ${bankName ? `${bankName} (${accountNumber}${accountName ? ` - ${accountName}` : ''})` : 'Not configured yet'}
+• Payout Schedule: ${m.payout_frequency || 'instant'}
+• Fee Model: ${m.fee_padding_model || 'customer_padded'} (${m.platform_fee_percent || 3}% platform fee padded to buyer)`;
+    } catch (e: any) {
+      await logger.error("[get_business_profile error]", e);
+      return "Failed to load store profile.";
+    }
+  },
+  update_store_hours: async (merchantId: string, args: { schedule: string | object }) => {
+    try {
+      const parsedSchedule = typeof args.schedule === 'string' ? JSON.parse(args.schedule) : args.schedule;
+      const result = await sql`
+        UPDATE merchants 
+        SET operating_hours = ${JSON.stringify(parsedSchedule)}::jsonb, updated_at = NOW() 
+        WHERE id = ${merchantId}::uuid 
+        RETURNING operating_hours
+      `;
+      return `Store operating hours successfully updated: ${JSON.stringify(parsedSchedule)}`;
+    } catch (e: any) {
+      await logger.error("[update_store_hours error]", e);
+      return "Failed to update store hours: " + e.message;
+    }
   },
   update_welcome_message: async (merchantId: string, args: any) => {
     try {
@@ -364,14 +451,29 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     await logger.log(`[ToolHandler:set_vendor_profile] Updating robust business profile for merchant ${merchantId}`, { args });
 
     // Fetch existing bank details and address to merge
-    const currentRows = await sql<{ bank_details: any; physical_address: any; owner_first_name: string; name: string }[]>`
-      SELECT bank_details, physical_address, owner_first_name, name FROM merchants WHERE id = ${merchantId} LIMIT 1
+    const currentRows = await sql<{ bank_details: any; bank_account_number: string; physical_address: any; owner_first_name: string; name: string }[]>`
+      SELECT bank_details, bank_account_number, physical_address, owner_first_name, name FROM merchants WHERE id = ${merchantId} LIMIT 1
     `;
-    const currentBank = currentRows[0]?.bank_details || {};
+    let currentBank: any = {};
+    const rawBank = currentRows[0]?.bank_details;
+    if (typeof rawBank === "string") {
+      try { currentBank = JSON.parse(rawBank); } catch { currentBank = {}; }
+    } else if (rawBank && typeof rawBank === "object") {
+      currentBank = rawBank;
+    }
+    const existingBankName = currentBank.bankName || currentBank.bank_name || "";
+    const existingAccountNumber = currentBank.accountNumber || currentBank.account_number || currentRows[0]?.bank_account_number || "";
+    const existingAccountName = currentBank.accountName || currentBank.account_name || "";
+
+    const finalBankName = bankName ? String(bankName).trim() : existingBankName;
+    const finalAccountNumber = accountNumber ? String(accountNumber).trim() : existingAccountNumber;
+    const finalAccountName = accountName ? String(accountName).trim() : existingAccountName;
+
     const updatedBank = {
-      bankName: bankName || currentBank.bankName || "Unspecified Bank",
-      accountNumber: accountNumber || currentBank.accountNumber || "",
-      accountName: accountName || currentBank.accountName || ""
+      bankName: finalBankName,
+      accountNumber: finalAccountNumber,
+      accountName: finalAccountName,
+      configuredAt: currentBank.configuredAt || currentBank.configured_at || new Date().toISOString()
     };
 
     const currentAddr = currentRows[0]?.physical_address || {};
@@ -384,13 +486,12 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
         owner_first_name     = COALESCE(${ownerFirstName || null}, owner_first_name),
         name                 = COALESCE(${businessName || null}, name),
         bank_details         = ${JSON.stringify(updatedBank)}::jsonb,
+        bank_account_number  = COALESCE(${updatedBank.accountNumber || null}, bank_account_number),
         physical_address     = ${JSON.stringify(updatedAddr)}::jsonb,
         is_registered        = COALESCE(${registeredBool}, is_registered),
         rc_number            = COALESCE(${rcNumber || null}, rc_number),
         business_type        = COALESCE(${businessType || null}, business_type),
         tax_id               = COALESCE(${taxId || null}, tax_id),
-        category             = COALESCE(${category || null}, category),
-        bio                  = COALESCE(${storeDescription || null}, bio),
         support_email        = COALESCE(${supportEmail || null}, support_email),
         support_phone        = COALESCE(${supportPhone || null}, support_phone),
         website_url          = COALESCE(${websiteUrl || null}, website_url),
@@ -420,10 +521,10 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     const effectiveBiz = businessName || currentRows[0]?.name || "Store";
     const regLabel = rcNumber ? `Verified (${rcNumber} - ${businessType || 'Registered'})` : registeredBool ? "Registered" : "Sole Proprietor";
     const feeModelDesc = (feePaddingModel || "customer_padded") === "customer_padded"
-      ? "Zero-Deduction Model (customer pays VAN 2% + Biblio fee; vendor receives 100% of price)"
+      ? "Zero-Deduction Model (customer pays VAN 2% + Biblio fee; you receive 100% of price)"
       : "Standard Absorption Model (fees deducted from payout)";
 
-    return `🏛️ Business Profile successfully updated for ${effectiveName} at ${effectiveBiz}!\n• Legal Status: ${regLabel}\n• Payout Bank: ${updatedBank.bankName} (${updatedBank.accountNumber || "N/A"})\n• Schedule: ${payoutFrequency || "instant"}\n• Fee Structure: ${feeModelDesc}${supportPhone ? `\n• Support Line: ${supportPhone}` : ""}${returnPolicy ? `\n• Return Policy: ${returnPolicy}` : ""}`;
+    return `Settlement and business profile updated for ${effectiveBiz}.\nLegal status: ${regLabel}\nPayout destination: ${updatedBank.bankName} (${updatedBank.accountNumber || "Not set"})\nAccount name: ${updatedBank.accountName || "Not set"}\nPayout frequency: ${payoutFrequency || "instant"}\nFee model: ${feeModelDesc}${supportPhone ? `\nSupport line: ${supportPhone}` : ""}`;
   },
   configure_fee_padding: async (merchantId: string, args: { model: string; platformFeePercent?: number }) => {
     const { model, platformFeePercent } = args;

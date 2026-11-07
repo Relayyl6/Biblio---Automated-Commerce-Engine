@@ -103,7 +103,7 @@ export default function SearchScreen() {
         {isLoading && hasQuery ? (
           <SearchSkeleton count={5} />
         ) : hasQuery ? (
-          results && results.length > 0 ? (
+          results && Array.isArray(results) && results.length > 0 ? (
             <Animated.View entering={FadeInDown.springify()}>
               {results.map((item: any, idx: number) => {
                 const Icon = item.type === 'customer'
@@ -121,7 +121,7 @@ export default function SearchScreen() {
                       if (item.type === 'product') {
                         router.push('/crm');
                       } else if (item.type === 'customer' || item.type === 'chat') {
-                        router.push(item.id ? `/chat/${item.id}` : '/chats');
+                        router.push(item.id ? (`/chat/${encodeURIComponent(item.id)}` as any) : '/(tabs)/chats');
                       } else if (item.type === 'order') {
                         router.push('/finance');
                       }

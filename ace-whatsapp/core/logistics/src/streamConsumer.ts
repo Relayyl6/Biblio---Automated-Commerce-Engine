@@ -12,13 +12,26 @@ const CONSUMER_GROUP = "logistics_dispatch_group";
 const CONSUMER_NAME = `logistics_consumer_${Math.random().toString(36).substr(2, 5)}`;
 
 export async function startLogisticsStreamConsumer() {
-  try {
-    await redis.xgroup("CREATE", STREAM_NAME, CONSUMER_GROUP, "$", "MKSTREAM");
-    logger.info({ group: CONSUMER_GROUP }, "Consumer group created.");
-  } catch (err: any) {
-    if (!err.message.includes("BUSYGROUP")) {
-      logger.error({ err }, "Error creating group");
-      throw err;
+  if (redis.status !== "ready") {
+    await new Promise<void>((resolve) => {
+      if (redis.status === "ready") return resolve();
+      redis.once("ready", () => resolve());
+    });
+  }
+
+  let groupReady = false;
+  while (!groupReady) {
+    try {
+      await redis.xgroup("CREATE", STREAM_NAME, CONSUMER_GROUP, "$", "MKSTREAM");
+      logger.info({ group: CONSUMER_GROUP }, "Consumer group created.");
+      groupReady = true;
+    } catch (err: any) {
+      if (err.message && err.message.includes("BUSYGROUP")) {
+        groupReady = true;
+      } else {
+        logger.error({ err }, "Error creating group, retrying in 2s...");
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
   }
 

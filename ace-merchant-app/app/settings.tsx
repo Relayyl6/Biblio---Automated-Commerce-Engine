@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown, Coins, ShieldAlert, Trash2, Sun, Moon } from 'lucide-react-native';
+import { Bot, ShieldCheck, Truck, MessageSquare, Building2, Database, Package, Key, Bell, HelpCircle, LogOut, History, Crown, Coins, ShieldAlert, Trash2, Sun, Moon, FileText, PhoneCall } from 'lucide-react-native';
 import { useThemeStore } from '../src/store/themeStore';
 import { colors } from '../theme';
 import { useAuthStore } from '../src/store/authStore';
@@ -19,9 +19,10 @@ import {
   DeveloperApiKeysPanel,
   StatusAutomationPanel,
   PlanPanel,
+  VoiceCallSettingsPanel,
 } from '../src/components/SettingsPanels';
 
-type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | 'status' | 'plan' | null;
+type PanelKey = 'dispatch' | 'tone' | 'ledger' | 'profile' | 'developer' | 'status' | 'plan' | 'voice_calls' | null;
 
 const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: string }> = {
   dispatch: { title: 'Dispatch API Keys', subtitle: 'Gokada, Kwik and MAX logistics credentials.' },
@@ -31,6 +32,7 @@ const PANEL_META: Record<Exclude<PanelKey, null>, { title: string; subtitle: str
   developer: { title: 'Developer API Keys', subtitle: 'Override platform defaults with your own provider keys.' },
   status: { title: 'WhatsApp Status Engine', subtitle: 'Smart ranking strategy, auto-broadcast cycles & instant pushes.' },
   plan: { title: 'Subscription & Features', subtitle: 'Your active plan and unlocked platform capabilities.' },
+  voice_calls: { title: 'Autonomous Voice Calling', subtitle: 'Call triggers, vendor pre-approval & speech previews.' },
 };
 
 export default function SettingsScreen() {
@@ -197,6 +199,12 @@ export default function SettingsScreen() {
             subtitle="Adjust the AI's Pidgin ratio and politeness markers."
             icon={MessageSquare}
             onPress={() => setActivePanel('tone')}
+          />
+          <NavigationRow
+            title="Autonomous Voice Calling"
+            subtitle="Configure call triggers, vendor approval thresholds, and speech scripts."
+            icon={PhoneCall}
+            onPress={() => setActivePanel('voice_calls')}
             isLast
           />
         </Section>
@@ -239,6 +247,24 @@ export default function SettingsScreen() {
             subtitle="Allow anonymized chat data to improve the ACE intelligence network."
             value={dataConsent}
             onValueChange={setDataConsent}
+          />
+          <NavigationRow
+            title="Privacy Policy"
+            subtitle="NDPA 2023 statutory compliance & data rights"
+            icon={ShieldCheck}
+            onPress={() => {
+              const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+              Linking.openURL(`${base}/legal/privacy`);
+            }}
+          />
+          <NavigationRow
+            title="Terms of Service"
+            subtitle="Commercial terms, 6-layer veto & acceptable use"
+            icon={FileText}
+            onPress={() => {
+              const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+              Linking.openURL(`${base}/legal/terms`);
+            }}
             isLast
           />
         </Section>
@@ -311,6 +337,7 @@ export default function SettingsScreen() {
         {activePanel === 'developer' && <DeveloperApiKeysPanel onSave={closePanel} />}
         {activePanel === 'status' && <StatusAutomationPanel onSave={closePanel} />}
         {activePanel === 'plan' && <PlanPanel onSave={closePanel} />}
+        {activePanel === 'voice_calls' && <VoiceCallSettingsPanel onSave={closePanel} />}
       </SidePanel>
     </View>
   );

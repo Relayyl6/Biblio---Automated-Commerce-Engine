@@ -10,20 +10,27 @@ import { useAuthStore } from '../store/authStore';
  */
 export function useAuthGate() {
   const merchantId = useAuthStore(state => state.merchantId);
+  const hasHydrated = useAuthStore(state => state._hasHydrated);
   const segments = useSegments();
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
+    // Wait until zustand persist rehydration from AsyncStorage finishes
+    if (!hasHydrated) return;
+
     // Both login/signup and help/support are available unauthenticated
     const isPublicRoute = segments[0] === 'login' || segments[0] === 'support';
     if (!merchantId && !isPublicRoute) {
       router.replace('/login');
-    } else if (merchantId && segments[0] === 'login') {
+      return;
+    }
+    if (merchantId && segments[0] === 'login') {
       router.replace('/');
+      return;
     }
     setIsReady(true);
-  }, [merchantId, segments]);
+  }, [hasHydrated, merchantId, segments]);
 
   return { isReady };
 }

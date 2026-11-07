@@ -13,15 +13,19 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  define: {
+    __DEV__: true,
+  },
   resolve: {
     alias: {
       "@ace/shared": fileURLToPath(new URL("./shared/src", import.meta.url)),
+      "react-native": "react-native-web",
     },
   },
   test: {
     // Only the colocated *.test.ts files under the backend tree. The apps have
     // their own toolchains and are excluded from the backend tsconfig too.
-    include: ["ace-whatsapp/**/*.test.ts", "shared/**/*.test.ts"],
+    include: ["ace-whatsapp/**/*.test.ts", "shared/**/*.test.ts", "ace-merchant-app/**/*.test.ts"],
     environment: "node",
     env: {
       DATABASE_URL: process.env.DATABASE_URL || "postgresql://mock:mock@localhost:5432/mock",

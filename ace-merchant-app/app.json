@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ace-merchant-app",
+    "name": "Biblio Merchant",
     "slug": "ace-merchant-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,11 @@
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#090A0C",
     "ios": {
+      "bundleIdentifier": "com.yemuel.biblio",
       "supportsTablet": true
     },
     "android": {
+      "package": "com.yemuel.biblio",
       "adaptiveIcon": {
         "backgroundColor": "#090A0C",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -26,7 +28,19 @@
     },
     "scheme": "acemerchant",
     "plugins": [
-      "expo-router"
-    ]
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "23fb92b5-126c-440a-9905-50a78e359efd"
+      }
+    },
+    "owner": "yemuel"
   }
 }

@@ -14,6 +14,8 @@ app.register(fastifyRawBody, {
   runFirst: true
 });
 
+app.get("/health", async () => ({ ok: true, service: "sms-webhook" }));
+
 app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) => {
   try {
     const signature = request.headers["africastalking-signature"] as string;
@@ -47,17 +49,29 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
     }
 
     const params = new URLSearchParams(request.rawBody as string);
-    const fromPhone = params.get("from")?.replace(/^\+/, "");
+    const rawFrom = params.get("from")?.trim() || "";
+    const fromPhone = rawFrom.replace(/^\+/, "");
     const text = params.get("text")?.trim();
 
     if (!fromPhone || !text) {
       return reply.code(400).send({ error: "Invalid payload" });
     }
 
+    const digitsOnly = fromPhone.replace(/\D/g, "");
+    const variants = new Set([rawFrom, fromPhone, digitsOnly, `+${digitsOnly}`]);
+    if (digitsOnly.startsWith("234") && digitsOnly.length === 13) {
+      variants.add(`0${digitsOnly.slice(3)}`);
+      variants.add(digitsOnly.slice(3));
+    } else if (digitsOnly.startsWith("0") && digitsOnly.length === 11) {
+      variants.add(`234${digitsOnly.slice(1)}`);
+      variants.add(`+234${digitsOnly.slice(1)}`);
+    }
+    const phoneList = Array.from(variants);
+
     // 1. Check if the sender is a Vendor
     const vendorRows = await sql<{ merchant_id: string }[]>`
       SELECT merchant_id FROM vendors
-      WHERE personal_number = ${fromPhone} OR business_line_number = ${fromPhone}
+      WHERE personal_number = ANY(${phoneList}) OR business_line_number = ANY(${phoneList})
       LIMIT 1
     `.catch(() => []);
     
@@ -74,7 +88,7 @@ app.post("/sms/webhook", { config: { rawBody: true } }, async (request, reply) =
     // 2. Check if the sender is a Customer (Phase 2 Offline Escalation)
     const customerRows = await sql<{ merchant_id: string }[]>`
       SELECT merchant_id FROM customer_merchant_links 
-      WHERE customer_id = ${fromPhone} OR customer_id = ${'+' + fromPhone}
+      WHERE customer_id = ANY(${phoneList})
       ORDER BY created_at DESC
       LIMIT 1
     `.catch(() => []);

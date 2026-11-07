@@ -34,6 +34,7 @@ import {
 } from '../src/api/client';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
+import { sanitizeCurrencyInput, sanitizeIntegerInput } from '../src/utils/sanitizers';
 
 interface ProductForm {
   sku: string;
@@ -119,11 +120,19 @@ export default function CRMScreen() {
       alert.warning('Required Field', 'Please enter a product name.');
       return;
     }
-    const numPrice = Number(form.price);
-    if (isNaN(numPrice) || numPrice <= 0) {
+    const numPrice = sanitizeCurrencyInput(form.price, 0);
+    if (numPrice <= 0) {
       alert.warning('Invalid Price', 'Please enter a valid retail price in Naira.');
       return;
     }
+
+    const cleanFloor = form.floor ? sanitizeCurrencyInput(form.floor, 0) : Math.round(numPrice * 0.85);
+    if (cleanFloor > numPrice) {
+      alert.warning('Invalid Floor Price', 'Floor price cannot exceed the retail price.');
+      return;
+    }
+
+    const numStock = sanitizeIntegerInput(form.stock, 0);
 
     try {
       if (editingSku) {
@@ -131,7 +140,7 @@ export default function CRMScreen() {
           sku: editingSku,
           name: form.name.trim(),
           price: numPrice,
-          stock: Number(form.stock) || 0,
+          stock: numStock,
           category: form.category.trim() || 'General',
         });
       } else {
@@ -139,8 +148,8 @@ export default function CRMScreen() {
           sku: form.sku || `SKU-${Date.now().toString().slice(-6)}`,
           name: form.name.trim(),
           price: numPrice,
-          floor: form.floor ? Number(form.floor) : numPrice * 0.85,
-          stock: Number(form.stock) || 0,
+          floor: cleanFloor,
+          stock: numStock,
           category: form.category.trim() || 'General',
           description: form.description.trim() || undefined,
         });
@@ -194,11 +203,12 @@ export default function CRMScreen() {
 
   if (isLoading) return <LoadingScreen />;
 
-  const safeInventory = inventory || [];
+  const safeInventory = Array.isArray(inventory) ? inventory : [];
+  const q = searchQuery.toLowerCase();
   const filteredInventory = safeInventory.filter((item: any) =>
-    item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.category?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.sku?.toLowerCase().includes(searchQuery.toLowerCase())
+    String(item?.name || '').toLowerCase().includes(q) ||
+    String(item?.category || '').toLowerCase().includes(q) ||
+    String(item?.sku || '').toLowerCase().includes(q)
   );
 
   return (
@@ -425,11 +435,11 @@ export default function CRMScreen() {
 
           <Pressable
             onPress={handleSave}
-            disabled={addMutation.isPending}
+            disabled={addMutation.isPending || updateMutation.isPending}
             style={{ backgroundColor: c.accent }}
             className="py-3.5 rounded-2xl items-center justify-center active:opacity-80 mt-3 mb-6"
           >
-            {addMutation.isPending ? (
+            {addMutation.isPending || updateMutation.isPending ? (
               <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
             ) : (
               <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="font-bold text-sm">
@@ -474,7 +484,7 @@ export default function CRMScreen() {
                 <Pressable
                   onPress={() => {
                     setPanelVisible(false);
-                    router.push('/more');
+                    router.push('/(tabs)/more');
                   }}
                   style={{ backgroundColor: c.surfaceAlt }}
                   className="px-3 py-2 rounded-xl flex-row items-center justify-center active:opacity-80"

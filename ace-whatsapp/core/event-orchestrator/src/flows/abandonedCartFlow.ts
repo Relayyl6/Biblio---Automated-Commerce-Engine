@@ -2,10 +2,12 @@ import { logger } from "@ace/shared/logger.js";
 import { redis, sql } from "@ace/shared/clients.js";
 import { Queue } from "bullmq";
 
+const defaultConnection = {
+  connection: { host: redis.options.host || "127.0.0.1", port: redis.options.port || 6381, maxRetriesPerRequest: null }
+};
+const outboundQueue = new Queue("outbound-messages", defaultConnection);
+
 export async function handleCartRecovery(orderId: string, merchantId: string, customerId: string) {
-  const outboundQueue = new Queue("outbound-messages", {
-    connection: { ...redis.options, maxRetriesPerRequest: null }
-  });
 
   // #5 Idempotency: never fire twice for the same order
   const dedupe = `idempotency:cart:${orderId}`;
@@ -49,8 +51,8 @@ export async function handleCartRecovery(orderId: string, merchantId: string, cu
     const smsMessage = `Hi ${customerName}! It's Biblio. Your cart for ₦${totalAmount.toLocaleString()} containing ${itemNames[0] || 'items'} is still reserved. Reply YES here via SMS to confirm or ask questions.`;
     
     await sql`
-      INSERT INTO outbox_events (event_type, payload) 
-      VALUES ('escalation_sms', ${JSON.stringify({ toPhone: customerPhone, message: smsMessage })}::jsonb)
+      INSERT INTO outbox_events (id, event_type, payload) 
+      VALUES (gen_random_uuid(), 'escalation_sms', ${sql.json({ toPhone: customerPhone, message: smsMessage })})
     `;
     return;
   }

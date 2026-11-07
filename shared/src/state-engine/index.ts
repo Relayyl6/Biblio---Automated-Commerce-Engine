@@ -13,8 +13,10 @@ function mapStateToOrderStatus(status: string): string {
       return 'pending';
     case 'payment_verified':
       return 'confirmed';
+    case 'ready_for_pickup':
     case 'rider_assigned':
       return 'processing';
+    case 'out_for_delivery':
     case 'in_transit':
       return 'shipped';
     case 'delivered':
@@ -66,6 +68,25 @@ export async function applyOrderEvent(
           items = excluded.items, 
           updated_at = now()
     `;
+
+    // Record immutable audit log
+    try {
+      await sql`
+        INSERT INTO order_audit_logs (
+          id, order_id, tenant_id, previous_status, new_status, changed_at, metadata
+        ) VALUES (
+          gen_random_uuid(),
+          ${nextState.orderId}::uuid,
+          ${merchantId}::uuid,
+          ${currentState.status},
+          ${nextState.status},
+          NOW(),
+          ${jsonb({ eventType: event.type, eventPayload: event })}
+        )
+      `;
+    } catch (auditErr) {
+      console.error(`[state-engine] Failed to record order_audit_log:`, auditErr);
+    }
   }
 
   // LAYER 3 - Data Intelligence Hooks

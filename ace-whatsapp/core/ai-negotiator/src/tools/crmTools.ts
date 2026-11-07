@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { resolveCustomerTier } from "../pricingService.js";
 
 export const crmTools = [
   {
@@ -17,6 +18,19 @@ export const crmTools = [
       "name": "generate_winback_offer",
       "description": "Drafts a culturally nuanced, highly specific message based on past purchases to win back a customer.",
       "parameters": { "type": "object", "properties": { "customerId": { "type": "string" } }, "required": ["customerId"] }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_recent_customer_inquiries",
+      "description": "Fetch the most recent customer inquiries, messages, and chats received on WhatsApp or other channels.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "number", "description": "Number of recent messages to fetch (default 10)" }
+        }
+      }
     }
   },
   {
@@ -42,9 +56,25 @@ export const crmTools = [
         "type": "object",
         "properties": {
           "customerId": { "type": "string" },
-          "tag": { "type": "string" }
+          "tag": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["customerId", "tag"]
+        "required": ["customerId"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "upgrade_customer_tier",
+      "description": "Upgrade or assign a customer loyalty tier ('new', 'returning', 'loyal', 'vip').",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string", "description": "Customer phone number or identifier" },
+          "tier": { "type": "string", "enum": ["new", "returning", "loyal", "vip"], "description": "Customer loyalty tier" }
+        },
+        "required": ["customerId", "tier"]
       }
     }
   },
@@ -274,31 +304,47 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
 
   get_customer_profile: async (merchantId: string, args: any) => {
     try {
-      const customerId = args.customerId;
+      const rawCustomerId = String(args.customerId || "").trim();
+      if (!rawCustomerId) return "Customer ID is required to fetch profile.";
+
+      // Contact resolution: normalize phone number variations (+234, 080, @s.whatsapp.net)
+      const cleanPhone = rawCustomerId.replace(/@s\.whatsapp\.net$/i, "").replace(/[^0-9]/g, "");
+      const normalizedPhone = cleanPhone.startsWith("0") && cleanPhone.length === 11
+        ? "234" + cleanPhone.slice(1)
+        : cleanPhone;
+
       const [txRows, linkRows, msgRows] = await Promise.all([
         sql`
           SELECT COUNT(id) as total_orders, COALESCE(SUM(amount), 0) as ltv, MAX(created_at) as last_order_date
-          FROM transactions WHERE merchant_id = ${merchantId}::uuid AND customer_id = ${customerId} AND status = 'confirmed'
+          FROM transactions 
+          WHERE merchant_id = ${merchantId}::uuid 
+            AND (customer_id = ${rawCustomerId} OR customer_id = ${normalizedPhone} OR customer_id = ${cleanPhone}) 
+            AND status = 'confirmed'
         `.catch(() => [{ total_orders: 0, ltv: 0, last_order_date: null }]),
         sql`
-          SELECT verified_profile FROM customers c
-          JOIN customer_merchant_links l ON l.customer_id = ${customerId}
-          WHERE c.global_buyer_id = l.merchant_id OR c.phone_hash IS NOT NULL LIMIT 1
+          SELECT c.verified_profile, c.tier FROM customers c
+          WHERE (c.phone_hash = ${rawCustomerId} OR c.phone_hash = ${normalizedPhone} OR c.phone_hash = ${cleanPhone} OR c.global_buyer_id::text = ${rawCustomerId})
+          LIMIT 1
         `.catch(() => []),
         sql`
-          SELECT text_content, created_at FROM conversation_messages
-          WHERE merchant_id = ${merchantId}::uuid AND (from_phone = ${customerId} OR to_phone = ${customerId})
+          SELECT content, created_at FROM conversation_messages
+          WHERE merchant_id = ${merchantId}::uuid 
+            AND (customer_id = ${rawCustomerId} OR customer_id = ${normalizedPhone} OR customer_id = ${cleanPhone})
           ORDER BY created_at DESC LIMIT 3
         `.catch(() => [])
       ]);
 
-      const name = linkRows[0]?.verified_profile?.name || "Customer";
+      const name = linkRows[0]?.verified_profile?.name || linkRows[0]?.verified_profile?.firstName || "Customer";
       const ltv = Number(txRows[0]?.ltv || 0);
       const orderCount = Number(txRows[0]?.total_orders || 0);
       const lastDate = txRows[0]?.last_order_date ? new Date(txRows[0].last_order_date).toLocaleDateString() : 'Never';
-      const recentMsgs = msgRows.map((m: any) => `• "${m.text_content}"`).join('\n') || 'None recorded';
+      const recentMsgs = msgRows.map((m: any) => `• "${m.content || ''}"`).join('\n') || 'None recorded';
 
-      return `Customer Profile for ${name} (${customerId}):\n- Lifetime Value: ₦${ltv.toLocaleString()}\n- Total Completed Orders: ${orderCount}\n- Last Purchase: ${lastDate}\n- Recent Chats:\n${recentMsgs}`;
+      // Customer tier upgrade / resolution
+      const storedTier = linkRows[0]?.tier;
+      const resolvedTier = storedTier || resolveCustomerTier({ orderCount, lifetimeValue: ltv });
+
+      return `Customer Profile for ${name} (${rawCustomerId}):\n- Customer Tier: ${resolvedTier.toUpperCase()}\n- Lifetime Value: ₦${ltv.toLocaleString()}\n- Total Completed Orders: ${orderCount}\n- Last Purchase: ${lastDate}\n- Recent Chats:\n${recentMsgs}`;
     } catch (e: any) {
       logger.error("[get_customer_profile error]", e);
       return `Failed to retrieve profile for ${args.customerId}`;
@@ -306,14 +352,68 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
   },
 
   tag_customer: async (merchantId: string, args: any) => {
-    const { customerId, tag } = args;
+    const { customerId } = args;
+    if (!customerId) return "Customer ID is required.";
+    
+    // Support single tag (string), tags array, and handle empty arrays gracefully
+    const rawTags = args.tags !== undefined ? args.tags : args.tag;
+    let tagsToAdd: string[] = [];
+    if (Array.isArray(rawTags)) {
+      tagsToAdd = rawTags.map(t => String(t || '').trim()).filter(Boolean);
+    } else if (typeof rawTags === 'string') {
+      const trimmed = rawTags.trim();
+      if (trimmed) tagsToAdd = [trimmed];
+    }
+
+    if (tagsToAdd.length === 0) {
+      return "Tag cannot be empty. Please provide at least one valid tag.";
+    }
+
     const key = `customer_tags:${merchantId}:${customerId}`;
-    await redis.sadd(key, tag);
-    return `Tag '${tag}' added to customer ${customerId}.`;
+    for (const t of tagsToAdd) {
+      await redis.sadd(key, t);
+    }
+    return `Tag(s) [${tagsToAdd.join(", ")}] added to customer ${customerId}.`;
+  },
+
+  upgrade_customer_tier: async (merchantId: string, args: { customerId: string; tier: string }) => {
+    const customerId = String(args.customerId || '').trim();
+    if (!customerId) return "Customer ID is required to upgrade customer tier.";
+    const tier = String(args.tier || '').trim().toLowerCase();
+    const validTiers = ["new", "returning", "loyal", "vip"];
+    if (!validTiers.includes(tier)) {
+      return `Invalid tier '${args.tier}'. Valid tiers are: ${validTiers.join(", ")}.`;
+    }
+
+    const cleanPhone = customerId.replace(/@s\.whatsapp\.net$/i, "").replace(/[^0-9]/g, "");
+    const normalizedPhone = cleanPhone.startsWith("0") && cleanPhone.length === 11 ? "234" + cleanPhone.slice(1) : cleanPhone;
+
+    // Update customer tier in customers table
+    try {
+      const updated = await sql`
+        UPDATE customers 
+        SET tier = ${tier}, updated_at = NOW()
+        WHERE (phone_hash = ${customerId} OR phone_hash = ${normalizedPhone} OR global_buyer_id::text = ${customerId})
+        RETURNING global_buyer_id
+      `;
+
+      if (updated.length === 0) {
+        await sql`
+          INSERT INTO customers (global_buyer_id, phone_hash, tier, created_at, updated_at)
+          VALUES (gen_random_uuid(), ${normalizedPhone || customerId}, ${tier}, NOW(), NOW())
+        `;
+      }
+
+      return `Customer ${customerId} successfully upgraded to '${tier.toUpperCase()}' tier.`;
+    } catch (e: any) {
+      logger.error("[upgrade_customer_tier error]", e);
+      return `Failed to upgrade customer tier: ${e.message}`;
+    }
   },
 
   block_customer: async (merchantId: string, args: any) => {
     const { customerId } = args;
+    if (!customerId) return "Customer ID is required to block customer.";
     await redis.sadd(`blocked_customers:${merchantId}`, customerId);
     await sql`
       INSERT INTO chat_overrides (merchant_id, chat_jid, override_mode, updated_at)
@@ -325,6 +425,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
 
   unblock_customer: async (merchantId: string, args: any) => {
     const { customerId } = args;
+    if (!customerId) return "Customer ID is required to unblock customer.";
     await redis.srem(`blocked_customers:${merchantId}`, customerId);
     await sql`
       DELETE FROM chat_overrides WHERE merchant_id = ${merchantId}::uuid AND chat_jid = ${customerId}
@@ -371,7 +472,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
           WHERE t.merchant_id = ${merchantId}::uuid AND t.customer_id = l.customer_id AND t.status = 'confirmed'
         ), 0) as lifetime_value
       FROM customer_merchant_links l
-      LEFT JOIN customers c ON c.phone_hash IS NOT NULL AND (c.global_buyer_id = l.merchant_id OR c.phone_hash = l.customer_id)
+      LEFT JOIN customers c ON (c.phone_hash = l.customer_id OR c.global_buyer_id::text = l.customer_id)
       WHERE l.merchant_id = ${merchantId}::uuid
       LIMIT 100
     `.catch(() => []);
@@ -404,7 +505,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
         COALESCE(c.verified_profile->>'name', l.customer_id) as name,
         c.verified_profile->>'email' as email
       FROM customer_merchant_links l
-      LEFT JOIN customers c ON c.phone_hash IS NOT NULL AND (c.global_buyer_id = l.merchant_id OR c.phone_hash = l.customer_id)
+      LEFT JOIN customers c ON (c.phone_hash = l.customer_id OR c.global_buyer_id::text = l.customer_id)
       WHERE l.merchant_id = ${merchantId}::uuid
       LIMIT 100
     `.catch(() => []);
@@ -445,6 +546,7 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
 
   add_customer_note: async (merchantId: string, args: any) => {
     const { customerId, note } = args;
+    if (!customerId || !note) return "Customer ID and note content are required.";
     const noteEntry = JSON.stringify({ note, createdAt: new Date().toISOString() });
     await redis.rpush(`customer_notes:${merchantId}:${customerId}`, noteEntry);
     return `Note added for customer ${customerId}: "${note}"`;
@@ -476,14 +578,15 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
   offer_loyalty_discount: async (merchantId: string, args: any) => {
     try {
       const { customerId, discountPercentage } = args;
-      const pct = Number(discountPercentage) || 10;
+      if (!customerId) return "Customer ID is required to offer loyalty discount.";
+      const pct = Math.max(1, Math.min(90, Math.round(Number(discountPercentage) || 10)));
       const draftId = `win_${Date.now()}`;
       const msg = `Hello! As a special thank you for your ongoing loyalty, here's an exclusive ${pct}% discount on your next order with us. Just reply to claim!`;
       await sql`
         INSERT INTO winback_drafts (id, merchant_id, customer_id, proposed_discount_percent, message_draft, status, created_at)
         VALUES (${draftId}, ${merchantId}::uuid, ${customerId}, ${pct}, ${msg}, 'pending_approval', NOW())
       `.catch(() => {});
-      return `Loyalty discount draft created (ID: w_${draftId}) for customer ${customerId} (${pct}% off). You can approve it from Inbox or say 'Approve w_${draftId}'.`;
+      return `Loyalty discount draft created (ID: ${draftId}) for customer ${customerId} (${pct}% off). You can approve it from Inbox or say 'Approve ${draftId}'.`;
     } catch (e: any) {
       logger.error("[offer_loyalty_discount error]", e);
       return "Failed to create loyalty discount.";
@@ -558,6 +661,41 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
     } catch (e: any) {
       logger.error("[send_customer_email error]", e);
       return `Failed to send customer email: ${e.message}`;
+    }
+  },
+
+  get_recent_customer_inquiries: async (merchantId: string, args: any) => {
+    try {
+      const limit = args?.limit || 10;
+      const rows = await sql<{
+        customer_id: string;
+        source: string;
+        content: string;
+        author_type: string;
+        created_at: string;
+      }[]>`
+        SELECT customer_id, source, content, author_type, created_at
+        FROM conversation_messages
+        WHERE merchant_id = ${merchantId}::uuid
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `.catch(() => []);
+
+      if (rows.length === 0) {
+        return "No customer inquiries or WhatsApp messages found yet in your store history. When customers message your WhatsApp number, their questions and orders will appear here automatically.";
+      }
+
+      const formatted = rows.map((r, i) => {
+        const time = new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const sender = r.author_type === 'vendor' ? 'Store' : r.customer_id;
+        const preview = (r.content || '').replace(/\n/g, ' ').slice(0, 100);
+        return `${i + 1}. [${r.source || 'WhatsApp'}] ${sender} (${time}): "${preview}"`;
+      }).join("\n");
+
+      return `Recent Customer Inquiries (${rows.length}):\n${formatted}`;
+    } catch (e: any) {
+      logger.error("[get_recent_customer_inquiries error]", e);
+      return "Unable to fetch customer inquiries at the moment.";
     }
   }
 };

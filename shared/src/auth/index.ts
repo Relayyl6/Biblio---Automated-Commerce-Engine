@@ -12,6 +12,7 @@ export interface JwtPayload {
   role: 'merchant' | 'admin';
   iat?: number;
   exp?: number;
+  iss?: string;
 }
 
 export class SharedAuthEngine {
@@ -34,11 +35,55 @@ export class SharedAuthEngine {
   }
 
   public async verifyToken(token: string): Promise<JwtPayload> {
+    // 1. Attempt standard local JWT verification
     try {
       const decoded = jwt.verify(token, this.secret) as JwtPayload;
       return decoded;
     } catch (e: any) {
-      throw new Error(`Invalid token: ${e.message}`);
+      if (e.name === 'TokenExpiredError') {
+        const expiredErr: any = new Error('Token has expired');
+        expiredErr.name = 'TokenExpiredError';
+        expiredErr.code = 'TOKEN_EXPIRED';
+        throw expiredErr;
+      }
+
+      // 2. If signature mismatch, check if it's a Clerk JWT or session token
+      const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+      if (clerkSecretKey) {
+        try {
+          const decoded = jwt.decode(token, { complete: true }) as any;
+          const isClerk = decoded?.payload?.iss?.includes('clerk') || decoded?.payload?.sub?.startsWith('user_');
+          if (isClerk) {
+            // Verify with Clerk Tokens API
+            const clerkRes = await fetch('https://api.clerk.com/v1/tokens/verify', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${clerkSecretKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ token }),
+            });
+
+            if (clerkRes.ok) {
+              const clerkData = await clerkRes.json() as any;
+              return {
+                sub: clerkData.claims?.sub || decoded.payload.sub,
+                role: 'merchant',
+                iat: decoded.payload.iat,
+                exp: decoded.payload.exp,
+                iss: decoded.payload.iss,
+              };
+            }
+          }
+        } catch (_) {
+          // Fall through to general invalid token error
+        }
+      }
+
+      const invalidErr: any = new Error(`Invalid token: ${e.message}`);
+      invalidErr.name = 'JsonWebTokenError';
+      invalidErr.code = 'INVALID_TOKEN';
+      throw invalidErr;
     }
   }
 
@@ -47,17 +92,27 @@ export class SharedAuthEngine {
    */
   public getFastifyHook() {
     return async (request: any, reply: any) => {
-      // Exclude health and auth-related endpoints from JWT enforcement
-      const path = request.routerPath || request.url;
-      if (path === '/health' || path.includes('/auth/')) {
+      // Exclude health, legal, and auth-related endpoints from JWT enforcement using sanitized path
+      const rawPath = request.routeOptions?.url || request.raw?.url || request.url || '';
+      const path = rawPath.split('?')[0];
+
+      const isPublicRoute =
+        path === '/health' ||
+        path.startsWith('/auth/') ||
+        path.startsWith('/legal/') ||
+        path.startsWith('/oauth/') ||
+        path === '/voice/callback' ||
+        path === '/pair';
+
+      if (isPublicRoute) {
         return;
       }
 
       const authHeader = request.headers.authorization;
       const adminKeyHeader = request.headers['x-admin-key'];
 
-      // Allow admin bypass if admin key matches
-      if (process.env.ADMIN_API_KEY && adminKeyHeader === process.env.ADMIN_API_KEY) {
+      // Allow admin bypass if admin key is configured AND matches header
+      if (process.env.ADMIN_API_KEY && process.env.ADMIN_API_KEY.trim() !== '' && adminKeyHeader === process.env.ADMIN_API_KEY) {
         request.merchantId = request.params?.id || request.params?.merchantId || request.body?.merchantId || 'admin';
         request.role = 'admin';
         return;
@@ -67,33 +122,42 @@ export class SharedAuthEngine {
       const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        // In local development or testing mode, gracefully fallback rather than breaking the app UI
+        // In local development or testing mode, gracefully fallback only when NO auth header was provided
         if (process.env.NODE_ENV !== 'production') {
           const candidate = request.params?.id || request.params?.merchantId || request.query?.merchantId || request.headers['x-merchant-id'];
           request.merchantId = candidate && isUuid(candidate) ? candidate : DEFAULT_DEV_MERCHANT_ID;
           request.role = 'merchant';
           return;
         }
-        return reply.code(401).send({ error: 'Missing or invalid authorization header' });
+        return reply.code(401).send({ error: 'Missing or invalid authorization header', code: 'UNAUTHORIZED' });
       }
 
-      const token = authHeader.replace('Bearer ', '');
+      const token = authHeader.replace('Bearer ', '').trim();
       try {
         const payload = await this.verifyToken(token);
         // Inject merchant context into request
         request.merchantId = payload.sub;
         request.role = payload.role;
       } catch (err: any) {
-        // In dev mode, if token has expired or is invalid, don't break dev experience
-        if (process.env.NODE_ENV !== 'production') {
-          const candidate = request.params?.id || request.params?.merchantId || request.query?.merchantId || request.headers['x-merchant-id'];
-          request.merchantId = candidate && isUuid(candidate) ? candidate : DEFAULT_DEV_MERCHANT_ID;
-          request.role = 'merchant';
-          return;
+        if (err.name === 'TokenExpiredError' || err.code === 'TOKEN_EXPIRED') {
+          return reply.code(401).send({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
         }
-        return reply.code(401).send({ error: err.message });
+        return reply.code(401).send({ error: err.message || 'Invalid token', code: 'INVALID_TOKEN' });
       }
     };
+  }
+
+  /**
+   * Enforce tenant isolation: verify that the authenticated caller has access to the target merchant.
+   */
+  public assertMerchantAccess(request: any, targetMerchantId: string): void {
+    if (request.role === 'admin') return;
+    if (request.merchantId && targetMerchantId && request.merchantId !== targetMerchantId) {
+      const err: any = new Error("Forbidden: unauthorized access to another merchant's resource");
+      err.statusCode = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
   }
 }
 

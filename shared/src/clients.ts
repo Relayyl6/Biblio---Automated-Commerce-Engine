@@ -1,28 +1,9 @@
 import { logger } from "@ace/shared/logger.js";
-// shared/src/clients.ts
-//
-// Two infrastructure decisions worth explaining:
-//
-// 1) We use `postgres` (the "postgres.js" library) over the older `pg`
-//    driver. It's written in TS, has a much nicer tagged-template query
-//    API (sql`select * from orders where id = ${id}` — parameterized
-//    automatically, no manual `$1` placeholders), and has a smaller,
-//    faster connection setup that plays well with serverless/edge
-//    environments — relevant since you're on Neon, which is built for
-//    exactly this connection pattern (PgBouncer-style pooling).
-//
-// 2) Redis here is doing THREE distinct jobs, and it's worth naming them
-//    so you don't accidentally conflate them later:
-//      - Debounce keys (comms-router): short-lived, ~45s TTL
-//      - Idempotency keys (ingestion-service): dedup WhatsApp message IDs,
-//        ~24h TTL
-//      - Distributed locks (state-machine): prevent two concurrent
-//        webhook deliveries from double-processing the same order
-//
-//    All three live in the same Redis instance for an MVP, but they have
-//    very different TTL/eviction needs — keep their key prefixes distinct
-//    (`debounce:`, `idempotency:`, `lock:`) so you can split them onto
-//    separate Redis instances later without touching call sites.
+import dns from "node:dns";
+
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 import postgres from "postgres";
 import { Redis } from "ioredis";
@@ -34,10 +15,12 @@ if (!connectionString) {
 
 export const sql = postgres(connectionString, {
   // Neon's pooled connection string already handles pooling at the proxy
-  // level, so keep this client-side pool small.
+  // level, so keep this client-side pool small and disable prepared statements
+  // for PgBouncer transaction mode compatibility.
   max: 10,
-  idle_timeout: 30,
-  connect_timeout: 30, // Survive Neon cold-start (~5-15s wake-up delay)
+  idle_timeout: 20,
+  connect_timeout: 15,
+  prepare: false, // Required for PgBouncer / Neon transaction pooler
 });
 
 /**
@@ -51,19 +34,14 @@ export function jsonb(value: unknown): ReturnType<typeof sql.json> {
   return sql.json(value as Parameters<typeof sql.json>[0]);
 }
 
-import dns from "node:dns";
-if (typeof dns.setDefaultResultOrder === "function") {
-  dns.setDefaultResultOrder("ipv4first");
-}
-
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6381";
 export const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: 2,
-  connectTimeout: 5000,
+  maxRetriesPerRequest: null,
+  connectTimeout: 10000,
   lazyConnect: false,
   retryStrategy(times) {
-    // Capped exponential backoff: 1s up to 10s
-    return Math.min(times * 1000, 10000);
+    // Capped exponential backoff: 500ms up to 5s
+    return Math.min(times * 500, 5000);
   },
 });
 

@@ -99,11 +99,14 @@ export async function handleSourceReply(msg: InboundMessage, source: SourceRow):
         arc = advanceArc(arc, { type: "SOURCE_REPLIED", customerPrice, sourceName: source.name });
         await redis.setex(arcKey, 60 * 60 * 24, JSON.stringify(arc));
         
-        const orderRows = await sql<{state: any}[]>`
-          SELECT state FROM orders 
-          WHERE (user_id = ${quote.customer_id}::uuid OR tenant_id = ${msg.toPhoneNumberId!}::uuid)
-          ORDER BY updated_at DESC LIMIT 1
-        `.catch(() => []);
+        const isMerchantUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(msg.toPhoneNumberId!);
+        const orderRows = isMerchantUuid
+          ? await sql<{state: any}[]>`
+              SELECT state FROM orders 
+              WHERE customer_id = ${quote.customer_id} AND merchant_id = ${msg.toPhoneNumberId!}::uuid
+              ORDER BY updated_at DESC LIMIT 1
+            `.catch(() => [])
+          : [];
         const orderState = orderRows[0]?.state ?? { status: "no_order" };
         
         // Trigger agent loop

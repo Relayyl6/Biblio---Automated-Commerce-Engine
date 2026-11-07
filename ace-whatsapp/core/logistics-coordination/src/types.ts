@@ -21,7 +21,7 @@ export interface OrderPayload {
 
 export interface DispatchResult {
   success: boolean;
-  provider: 'kwik' | 'sendbox';
+  provider: 'kwik' | 'sendbox' | 'fez';
   trackingNumber?: string;
   trackingUrl?: string;
   estimatedDelivery?: string;
@@ -30,7 +30,7 @@ export interface DispatchResult {
 }
 
 export interface TrackingUpdate {
-  provider: 'kwik' | 'sendbox';
+  provider: 'kwik' | 'sendbox' | 'fez';
   trackingNumber: string;
   status: 'pending' | 'in_transit' | 'delivered' | 'failed' | 'returned';
   timestamp: string;

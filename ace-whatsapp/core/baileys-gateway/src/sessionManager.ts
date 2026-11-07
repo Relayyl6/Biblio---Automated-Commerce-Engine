@@ -3,30 +3,37 @@
 // WHAT THIS FILE DOES:
 // Manages one persistent Baileys WebSocket session per vendor. Each vendor
 // runs their OWN dedicated WhatsApp number (the "business line"). This module
-// spins up the socket, persists auth state to Redis (NOT the filesystem —
-// that would lose sessions on every process restart), handles reconnects with
-// exponential backoff, and routes every inbound message to the classifier.
+// spins up the socket, persists auth state to Redis (L1) and PostgreSQL (L2 durable),
+// handles reconnects with exponential backoff and disconnect code specialization,
+// manages message deduplication and retry-counter storms, and routes every
+// inbound message to the classifier.
 //
-// CRITICAL: The auth state uses BufferJSON.replacer/reviver to serialise
-// Signal protocol Buffers correctly. Missing this causes a "bad session" error
-// on reconnect even though creds were saved. Every Redis set/get for auth
-// MUST go through BufferJSON.
+// DISCONNECT CODE SPECIFICATION:
+// - 401 (loggedOut): Session invalidated on phone. Clean creds, mark logged_out, do not reconnect.
+// - 403 (forbidden): Account banned or unauthorized. Mark logged_out/banned, do not thrash reconnects.
+// - 408 (timedOut): Transient network timeout. Exponential backoff reconnect.
+// - 411 (multideviceMismatch): Multi-device state mismatch. Invalidate in-memory cache and re-sync.
+// - 428 (connectionClosed): Precondition required / normal socket close. Exponential backoff reconnect.
+// - 440 (connectionReplaced): Session opened elsewhere. Paced 30s delay; halts after 3 consecutive conflicts.
+// - 500 (badSession): Corrupt auth session. Purge creds, mark logged_out, do not reconnect.
+// - 515 (restartRequired): Pairing / handshake step. Reconnect quickly (250ms) to finalize.
 //
-// v7.0.0 NOTES:
-// - useMultiFileAuthState is for dev ONLY — replaced here with Redis store
-// - New auth keys required: lid-mapping, device-list, tctoken — our generic
-//   key store handles them automatically (type is just a string key)
-// - markOnlineOnConnect = false reduces Meta's automated detection signal
+// CRYPTOGRAPHIC STORAGE INTEGRITY:
+// - All creds/keys mutations pass through a per-vendor serializeVendorWrite queue (FIFO lock).
+// - Redis and PostgreSQL key deserialization guarantees no null/undefined Signal keys.
+// - getMessage() returns undefined on cache miss (never empty conversation), preventing retry loops.
+// - msgRetryCounterCache prevents retry storms on failed message delivery.
 
 import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
   BufferJSON,
-  Browsers,
   initAuthCreds,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   type WASocket,
   type AuthenticationCreds,
+  type CacheStore,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import P from "pino";
@@ -35,23 +42,105 @@ import { classifyAndRoute } from "./messageClassifier.js";
 
 const logger = P({ level: "info" });
 
+// ─── In-memory CacheStore for Baileys Retry Counters ────────────────────────
+class MemoryCacheStore implements CacheStore {
+  private map = new Map<string, { value: any; expiresAt: number }>();
+  private cleanupInterval: NodeJS.Timeout | null = null;
+
+  constructor() {
+    // Periodically clean up expired retry counter records every 5 minutes to prevent memory leaks
+    this.cleanupInterval = setInterval(() => this.purgeExpired(), 300_000);
+    if (this.cleanupInterval.unref) this.cleanupInterval.unref();
+  }
+
+  private purgeExpired(): void {
+    const now = Date.now();
+    for (const [key, item] of this.map.entries()) {
+      if (now > item.expiresAt) {
+        this.map.delete(key);
+      }
+    }
+  }
+
+  get<T>(key: string): T | undefined {
+    const item = this.map.get(key);
+    if (!item) return undefined;
+    if (Date.now() > item.expiresAt) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return item.value as T;
+  }
+
+  set<T>(key: string, value: T): void {
+    // 5-minute TTL for retry counter records
+    this.map.set(key, { value, expiresAt: Date.now() + 300_000 });
+  }
+
+  del(key: string): void {
+    this.map.delete(key);
+  }
+
+  flushAll(): void {
+    this.map.clear();
+  }
+}
+
+const globalRetryCounterCache = new MemoryCacheStore();
+
 // ─── In-process session registry ─────────────────────────────────────────────
-// One entry per active vendor session. We don't need distributed state here
-// because all messages for a vendor flow to the same process that holds the socket.
 const sessions = new Map<string, WASocket>();
 const merchantToVendor = new Map<string, string>();
 const reconnectAttempts = new Map<string, number>();
+const reconnectTimers = new Map<string, NodeJS.Timeout>();
+const consecutiveConflictCount = new Map<string, number>();
+
 // Track vendors that need a post-515 reconnect to finalise pairing
 const pendingPairingRestart = new Set<string>();
-// In-memory creds mirror — needed so creds.update partial patches are merged
-// before we write to Redis. Without this, the partial patch OVERWRITES the full
-// creds object in Redis and the post-515 reconnect sees creds as unregistered.
+// Track active pairing window (120s TTL) so multi-step handshakes survive restarts
+const pairingActiveUntil = new Map<string, number>();
+// Track the latest human-actionable connection error
+const lastSessionError = new Map<string, string>();
+// In-memory creds mirror
 const credsCache = new Map<string, AuthenticationCreds>();
 
+// Per-vendor FIFO write serializer to prevent race conditions on simultaneous session updates.
+// Automatically pruned on completion to prevent Promise closure memory leaks.
+const writeQueues = new Map<string, Promise<unknown>>();
+
+function serializeVendorWrite<T>(vendorId: string, task: () => Promise<T>): Promise<T> {
+  const current = writeQueues.get(vendorId) ?? Promise.resolve();
+  const next = current.then(task, task).finally(() => {
+    if (writeQueues.get(vendorId) === next) {
+      writeQueues.delete(vendorId);
+    }
+  });
+  writeQueues.set(vendorId, next);
+  return next as Promise<T>;
+}
+
+function clearReconnectTimer(vendorId: string): void {
+  const existing = reconnectTimers.get(vendorId);
+  if (existing) {
+    clearTimeout(existing);
+    reconnectTimers.delete(vendorId);
+  }
+}
+
+function scheduleReconnect(vendorId: string, delayMs: number, isPairing = false): void {
+  clearReconnectTimer(vendorId);
+  const timer = setTimeout(async () => {
+    reconnectTimers.delete(vendorId);
+    try {
+      await createSession(vendorId, isPairing);
+    } catch (err) {
+      logger.error({ err, vendorId }, "[SessionManager] Scheduled reconnection failed");
+    }
+  }, delayMs);
+  reconnectTimers.set(vendorId, timer);
+}
+
 // ─── Dual-Tier Redis + PostgreSQL Durable Auth State ─────────────────────────
-// Persists auth creds and Signal cryptographic keys to both Redis (L1 fast cache)
-// and PostgreSQL Neon DB (L2 durable storage). The vendor's WhatsApp session
-// survives server restarts, Redis flushes, and mobile app closures seamlessly.
 
 async function loadCredsFromRedis(vendorId: string): Promise<AuthenticationCreds | undefined> {
   // 1. Try Redis fast cache first
@@ -59,7 +148,10 @@ async function loadCredsFromRedis(vendorId: string): Promise<AuthenticationCreds
     const raw = await redis.get(`baileys:creds:${vendorId}`);
     if (raw) {
       try {
-        return JSON.parse(raw, BufferJSON.reviver) as AuthenticationCreds;
+        const parsed = JSON.parse(raw, BufferJSON.reviver) as AuthenticationCreds;
+        if (parsed && parsed.noiseKey) {
+          return parsed;
+        }
       } catch {
         // Corrupted in Redis, fall through to PostgreSQL
       }
@@ -75,14 +167,16 @@ async function loadCredsFromRedis(vendorId: string): Promise<AuthenticationCreds
     `;
     if (rows[0]?.auth_creds) {
       const parsed = JSON.parse(rows[0].auth_creds, BufferJSON.reviver) as AuthenticationCreds;
-      // Re-hydrate Redis cache
-      await redis.setex(
-        `baileys:creds:${vendorId}`,
-        60 * 60 * 24 * 30,
-        rows[0].auth_creds
-      ).catch(() => {});
-      logger.info({ vendorId }, "[SessionManager] Successfully re-hydrated WhatsApp creds from PostgreSQL");
-      return parsed;
+      if (parsed && parsed.noiseKey) {
+        // Re-hydrate Redis cache
+        await redis.setex(
+          `baileys:creds:${vendorId}`,
+          60 * 60 * 24 * 30,
+          rows[0].auth_creds
+        ).catch(() => {});
+        logger.info({ vendorId }, "[SessionManager] Successfully re-hydrated WhatsApp creds from PostgreSQL");
+        return parsed;
+      }
     }
   } catch (err) {
     logger.warn({ err, vendorId }, "[SessionManager] Failed to load WhatsApp creds from PostgreSQL");
@@ -92,21 +186,23 @@ async function loadCredsFromRedis(vendorId: string): Promise<AuthenticationCreds
 }
 
 async function saveCredsToRedis(vendorId: string, creds: AuthenticationCreds): Promise<void> {
-  const serialized = JSON.stringify(creds, BufferJSON.replacer);
+  return serializeVendorWrite(vendorId, async () => {
+    const serialized = JSON.stringify(creds, BufferJSON.replacer);
 
-  // 1. Write to Redis (30-day TTL)
-  await redis.setex(
-    `baileys:creds:${vendorId}`,
-    60 * 60 * 24 * 30,
-    serialized
-  ).catch(err => logger.warn({ err, vendorId }, "[SessionManager] Redis creds write failed"));
+    // 1. Write to Redis (30-day TTL)
+    await redis.setex(
+      `baileys:creds:${vendorId}`,
+      60 * 60 * 24 * 30,
+      serialized
+    ).catch(err => logger.warn({ err, vendorId }, "[SessionManager] Redis creds write failed"));
 
-  // 2. Write to PostgreSQL durable storage
-  await sql`
-    UPDATE vendors
-    SET auth_creds = ${serialized}, updated_at = now()
-    WHERE id = ${vendorId}::uuid
-  `.catch(err => logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL creds write failed"));
+    // 2. Write to PostgreSQL durable storage
+    await sql`
+      UPDATE vendors
+      SET auth_creds = ${serialized}, updated_at = now()
+      WHERE id = ${vendorId}::uuid
+    `.catch(err => logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL creds write failed"));
+  });
 }
 
 function buildKeyStore(vendorId: string) {
@@ -126,7 +222,12 @@ function buildKeyStore(vendorId: string) {
           const raw = responses?.[i]?.[1] as string | null;
           if (raw) {
             try {
-              results[ids[i]] = JSON.parse(raw, BufferJSON.reviver);
+              const parsed = JSON.parse(raw, BufferJSON.reviver);
+              if (parsed !== null && parsed !== undefined) {
+                results[ids[i]] = parsed;
+              } else {
+                missingIds.push(ids[i]);
+              }
             } catch {
               missingIds.push(ids[i]);
             }
@@ -148,13 +249,15 @@ function buildKeyStore(vendorId: string) {
           for (const row of dbRows) {
             try {
               const val = JSON.parse(row.key_data, BufferJSON.reviver);
-              results[row.key_id] = val;
-              // Re-hydrate Redis cache
-              redis.setex(
-                `baileys:keys:${vendorId}:${type}:${row.key_id}`,
-                60 * 60 * 24 * 30,
-                row.key_data
-              ).catch(() => {});
+              if (val !== null && val !== undefined) {
+                results[row.key_id] = val;
+                // Re-hydrate Redis cache
+                redis.setex(
+                  `baileys:keys:${vendorId}:${type}:${row.key_id}`,
+                  60 * 60 * 24 * 30,
+                  row.key_data
+                ).catch(() => {});
+              }
             } catch {}
           }
         } catch (err) {
@@ -166,54 +269,54 @@ function buildKeyStore(vendorId: string) {
     },
 
     async set(data: Record<string, Record<string, unknown>>): Promise<void> {
-      // 1. Write to Redis
-      try {
-        const pipe = redis.pipeline();
-        for (const [type, entries] of Object.entries(data)) {
-          for (const [id, value] of Object.entries(entries)) {
-            const key = `baileys:keys:${vendorId}:${type}:${id}`;
-            if (value == null) {
-              pipe.del(key);
-            } else {
-              pipe.setex(key, 60 * 60 * 24 * 30, JSON.stringify(value, BufferJSON.replacer));
+      return serializeVendorWrite(vendorId, async () => {
+        // 1. Write to Redis
+        try {
+          const pipe = redis.pipeline();
+          for (const [type, entries] of Object.entries(data)) {
+            for (const [id, value] of Object.entries(entries)) {
+              const key = `baileys:keys:${vendorId}:${type}:${id}`;
+              if (value == null) {
+                pipe.del(key);
+              } else {
+                pipe.setex(key, 60 * 60 * 24 * 30, JSON.stringify(value, BufferJSON.replacer));
+              }
             }
           }
+          await pipe.exec();
+        } catch (err) {
+          logger.warn({ err, vendorId }, "[SessionManager] Redis key pipeline failed");
         }
-        await pipe.exec();
-      } catch (err) {
-        logger.warn({ err, vendorId }, "[SessionManager] Redis key pipeline failed");
-      }
 
-      // 2. Persist to PostgreSQL durable storage
-      try {
-        for (const [type, entries] of Object.entries(data)) {
-          for (const [id, value] of Object.entries(entries)) {
-            if (value == null) {
-              await sql`
-                DELETE FROM vendor_baileys_keys
-                WHERE vendor_id = ${vendorId}::uuid AND key_type = ${type} AND key_id = ${id}
-              `.catch(() => {});
-            } else {
-              const serialized = JSON.stringify(value, BufferJSON.replacer);
-              await sql`
-                INSERT INTO vendor_baileys_keys (vendor_id, key_type, key_id, key_data, updated_at)
-                VALUES (${vendorId}::uuid, ${type}, ${id}, ${serialized}, now())
-                ON CONFLICT (vendor_id, key_type, key_id)
-                DO UPDATE SET key_data = ${serialized}, updated_at = now()
-              `.catch(() => {});
+        // 2. Persist to PostgreSQL durable storage in batches
+        try {
+          for (const [type, entries] of Object.entries(data)) {
+            for (const [id, value] of Object.entries(entries)) {
+              if (value == null) {
+                await sql`
+                  DELETE FROM vendor_baileys_keys
+                  WHERE vendor_id = ${vendorId}::uuid AND key_type = ${type} AND key_id = ${id}
+                `.catch(() => {});
+              } else {
+                const serialized = JSON.stringify(value, BufferJSON.replacer);
+                await sql`
+                  INSERT INTO vendor_baileys_keys (vendor_id, key_type, key_id, key_data, updated_at)
+                  VALUES (${vendorId}::uuid, ${type}, ${id}, ${serialized}, now())
+                  ON CONFLICT (vendor_id, key_type, key_id)
+                  DO UPDATE SET key_data = ${serialized}, updated_at = now()
+                `.catch(() => {});
+              }
             }
           }
+        } catch (err) {
+          logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL key write failed");
         }
-      } catch (err) {
-        logger.warn({ err, vendorId }, "[SessionManager] PostgreSQL key write failed");
-      }
+      });
     },
   };
 }
 
 // ─── Retry helper ────────────────────────────────────────────────────────────
-// Retries an async operation with exponential backoff. Designed to survive
-// a cold Neon DB wake-up (which can take 2-3 seconds) without dropping messages.
 async function withRetry<T>(
   fn: () => Promise<T>,
   label: string,
@@ -227,7 +330,7 @@ async function withRetry<T>(
     } catch (err) {
       lastErr = err;
       if (attempt === maxAttempts) break;
-      const delay = baseDelayMs * attempt; // 2s, 4s, 6s
+      const delay = baseDelayMs * attempt;
       logger.warn({ label, attempt, delay, err }, `Retrying after failure (attempt ${attempt}/${maxAttempts})`);
       await new Promise((r) => setTimeout(r, delay));
     }
@@ -241,7 +344,7 @@ export interface VendorConfig {
   id: string;
   merchant_id: string;
   business_line_number: string;
-  personal_number: string;        // The vendor's OWN WhatsApp — product submissions come from here
+  personal_number: string;
   auto_status_enabled: boolean;
   posting_frequency_hours: number;
   approve_before_post: boolean;
@@ -249,25 +352,22 @@ export interface VendorConfig {
 
 export async function loadVendorConfig(vendorId: string): Promise<VendorConfig> {
   const rows = await sql<VendorConfig[]>`
-    SELECT id, merchant_id, business_line_number, personal_number,
-           auto_status_enabled, posting_frequency_hours,
-           approve_before_post
-    FROM vendors
-    WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid
+    SELECT v.id, v.merchant_id, v.business_line_number,
+           COALESCE(v.personal_number, m.contact_phone) as personal_number,
+           v.auto_status_enabled, v.posting_frequency_hours,
+           v.approve_before_post
+    FROM vendors v
+    LEFT JOIN merchants m ON m.id = v.merchant_id
+    WHERE v.id = ${vendorId}::uuid OR v.merchant_id = ${vendorId}::uuid
     LIMIT 1
   `;
   if (!rows[0]) throw new Error(`Vendor ${vendorId} not found`);
   return rows[0];
 }
 
-/**
- * Auto-provisions a merchant and vendor record if one does not already exist
- * for the given phone number. Enables zero-configuration pairing for new merchants.
- */
 export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?: string): Promise<VendorConfig> {
   const cleanPhone = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
 
-  // 1. Try finding existing vendor by business_line_number, personal_number, or merchant_id
   const existing = await sql<VendorConfig[]>`
     SELECT id, merchant_id, business_line_number, personal_number,
            auto_status_enabled, posting_frequency_hours,
@@ -282,7 +382,6 @@ export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?:
     return existing[0];
   }
 
-  // 2. Check if a merchant exists with this phone or merchantId
   let targetMerchantId = merchantId;
   if (!targetMerchantId) {
     const existingMerchant = await sql<{ id: string }[]>`
@@ -307,7 +406,6 @@ export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?:
     `;
     targetMerchantId = merchantRows[0].id;
 
-    // Seed default pricing rules for this new merchant
     await sql`
       INSERT INTO merchant_pricing_rules (
         merchant_id, max_discount_pct, bundle_discount_pct, loyalty_discount_pct,
@@ -320,7 +418,6 @@ export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?:
     `;
   }
 
-  // 3. Create vendor record
   const vendorRows = await sql<VendorConfig[]>`
     INSERT INTO vendors (
       merchant_id, business_line_number, personal_number,
@@ -340,73 +437,97 @@ export async function getOrCreateVendorByPhone(phoneNumber: string, merchantId?:
 
 // ─── Session Lifecycle ────────────────────────────────────────────────────────
 
+// Cached Baileys version (refreshed every 24h) to avoid hitting GitHub/npm on every socket restart
+let cachedBaileysVersion: { version: [number, number, number]; isLatest: boolean; fetchedAt: number } | null = null;
+
+async function getCachedBaileysVersion(): Promise<{ version: [number, number, number]; isLatest: boolean }> {
+  const now = Date.now();
+  if (cachedBaileysVersion && now - cachedBaileysVersion.fetchedAt < 24 * 60 * 60 * 1000) {
+    return { version: cachedBaileysVersion.version, isLatest: cachedBaileysVersion.isLatest };
+  }
+  try {
+    const result = await fetchLatestBaileysVersion();
+    cachedBaileysVersion = { ...result, fetchedAt: now };
+    logger.info({ version: result.version, isLatest: result.isLatest }, "[SessionManager] Fetched latest Baileys version");
+    return result;
+  } catch (err) {
+    logger.warn({ err }, "[SessionManager] fetchLatestBaileysVersion failed — using fallback/cached version");
+    if (cachedBaileysVersion) {
+      return { version: cachedBaileysVersion.version, isLatest: cachedBaileysVersion.isLatest };
+    }
+    // Hardcoded fallback stable WhatsApp Web version if registry unreachable
+    return { version: [2, 3000, 1015901307], isLatest: false };
+  }
+}
+
 export async function createSession(vendorId: string, isPairing = false): Promise<WASocket | null> {
   if (sessions.has(vendorId)) {
     return sessions.get(vendorId)!;
   }
 
-  let existingCreds = await loadCredsFromRedis(vendorId);
-  // If the creds are an empty object (due to a previous bug) or missing, re-init
+  clearReconnectTimer(vendorId);
+
+  const isPairingWindow = (pairingActiveUntil.get(vendorId) ?? 0) > Date.now();
+  const effectiveIsPairing = isPairing || isPairingWindow || pendingPairingRestart.has(vendorId);
+
+  let existingCreds = credsCache.get(vendorId);
+  if (!existingCreds) {
+    existingCreds = await loadCredsFromRedis(vendorId);
+  }
   if (existingCreds && !existingCreds.noiseKey) {
     existingCreds = undefined;
   }
   const creds = existingCreds || initAuthCreds();
-  // Seed the in-memory cache so the first creds.update partial patch has a base to merge into
   credsCache.set(vendorId, creds);
-  
-  if (!creds.registered && !isPairing) {
+
+  if (!creds.registered && !effectiveIsPairing) {
     logger.info({ vendorId }, "Unregistered vendor, skipping boot to prevent zombie socket.");
     return null;
   }
 
   const keyStore = buildKeyStore(vendorId);
 
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  logger.info({ version, isLatest }, "Fetched latest Baileys version");
+  const { version } = await getCachedBaileysVersion();
 
   const sock = makeWASocket({
     version,
     auth: {
       creds,
-      // makeCacheableSignalKeyStore wraps our DB-backed store with an LRU
-      // in-memory cache to reduce Redis round-trips for hot keys
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       keys: makeCacheableSignalKeyStore(keyStore as any, logger),
     },
-    logger: P({ level: 'silent' }) as any,
-    printQRInTerminal: false, // Always headless — we use pairing codes
-    browser: ['Ubuntu', 'Chrome', '22.04.4'], // Standard browser signature to prevent 400 bad-request
+    logger: P({ level: "silent" }) as any,
+    printQRInTerminal: false,
+    browser: ["Ubuntu", "Chrome", "22.04.4"],
     connectTimeoutMs: 60_000,
     keepAliveIntervalMs: 25_000,
-    markOnlineOnConnect: true,  // Must be true for pairing flow to complete on mobile
+    markOnlineOnConnect: true,
+    msgRetryCounterCache: globalRetryCounterCache,
+    maxMsgRetryCount: 5,
+    retryRequestDelayMs: 500,
     getMessage: async (key) => {
-      // Baileys needs this to decrypt polls and retry failed sends.
-      // We cache recent inbound message content in Redis keyed by message ID.
-      const raw = await redis.get(`msg_cache:${key.id}`);
-      if (!raw) return { conversation: "" };
+      // Baileys needs this to decrypt retries and polls.
+      // Must return undefined on cache miss (never empty object) to avoid retry loops.
+      if (!key?.id) return undefined;
       try {
+        const raw = await redis.get(`msg_cache:${key.id}`);
+        if (!raw) return undefined;
         return JSON.parse(raw, BufferJSON.reviver);
       } catch {
-        return { conversation: "" };
+        return undefined;
       }
     },
   });
 
   const vendor = await loadVendorConfig(vendorId).catch(() => null);
 
-  // Track immediately by both vendorId and merchant_id for multi-vendor routing
+  // Key strictly by vendorId in the sessions registry
   sessions.set(vendorId, sock);
   if (vendor?.merchant_id) {
-    sessions.set(vendor.merchant_id, sock);
+    merchantToVendor.set(vendor.merchant_id, vendorId);
   }
 
-  // ── CRITICAL: always save creds on every update ───────────────────────────
-  // Failing to persist creds means the session is lost on the next restart
-  // and the vendor has to re-pair. This is the single most important handler.
+  // ── Always persist creds updates ───────────────────────────────────────────
   sock.ev.on("creds.update", async (update) => {
-    // creds.update fires with a PARTIAL object — only the changed fields.
-    // We must merge it into the full in-memory creds before persisting,
-    // otherwise we overwrite the full creds with an incomplete patch.
     const full = credsCache.get(vendorId) ?? creds;
     const merged = { ...full, ...update } as AuthenticationCreds;
     credsCache.set(vendorId, merged);
@@ -418,130 +539,320 @@ export async function createSession(vendorId: string, isPairing = false): Promis
     const { connection, lastDisconnect } = update;
 
     if (connection === "close") {
-      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-      const isBadSession = statusCode === DisconnectReason.badSession;
-      const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+      const boomError = lastDisconnect?.error as Boom | undefined;
+      const statusCode =
+        boomError?.output?.statusCode ??
+        (lastDisconnect?.error as any)?.statusCode ??
+        (lastDisconnect?.error as any)?.code;
 
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401;
+      const isForbidden = statusCode === (DisconnectReason as any).forbidden || statusCode === 403;
+      const isBadSession = statusCode === DisconnectReason.badSession || statusCode === 500;
+      const isRestartRequired = statusCode === DisconnectReason.restartRequired || statusCode === 515;
+      const isConnectionReplaced = statusCode === DisconnectReason.connectionReplaced || statusCode === 440;
+      const isMultideviceMismatch = statusCode === DisconnectReason.multideviceMismatch || statusCode === 411;
+
+      let failureMessage = "";
+      if (isLoggedOut) {
+        failureMessage = "WhatsApp session logged out or unlinked from phone (401).";
+      } else if (isForbidden) {
+        failureMessage = "WhatsApp account banned or forbidden by Meta (403).";
+      } else if (isBadSession) {
+        failureMessage = "Corrupt or invalid session detected (500). Please generate a fresh pairing code.";
+      } else if (isConnectionReplaced) {
+        failureMessage = "WhatsApp connection replaced (440) — session opened elsewhere.";
+      } else if (isMultideviceMismatch) {
+        failureMessage = "WhatsApp multi-device mismatch (411). Re-syncing session...";
+      } else if (statusCode === 405) {
+        failureMessage = "WhatsApp pairing rejected (405). The pairing code may have expired.";
+      } else if (statusCode === 408) {
+        failureMessage = "WhatsApp connection timed out (408). Retrying...";
+      } else if (statusCode === 428) {
+        failureMessage = "WhatsApp connection closed by server (428). Reconnecting...";
+      } else if (lastDisconnect?.error) {
+        failureMessage = (lastDisconnect.error as Error).message || `Connection closed with code ${statusCode}`;
+      }
+
+      logger.warn({ vendorId, statusCode, failureMessage }, "[SessionManager] Connection closed");
+
+      if (failureMessage) {
+        lastSessionError.set(vendorId, failureMessage);
+        await redis.setex(`baileys:last_error:${vendorId}`, 3600, failureMessage).catch(() => {});
+        await sql`
+          UPDATE vendors
+          SET last_error = ${failureMessage}, updated_at = now()
+          WHERE id = ${vendorId}::uuid
+        `.catch(() => {});
+      }
+
+      // Clean up socket instance and registry.
+      // Remove all listeners first so end() does not trigger recursive close events.
+      clearReconnectTimer(vendorId);
       sessions.delete(vendorId);
       if (vendor?.merchant_id) {
-        sessions.delete(vendor.merchant_id);
+        merchantToVendor.delete(vendor.merchant_id);
+      }
+      try {
+        sock.ev.removeAllListeners("connection.update");
+        sock.ev.removeAllListeners("creds.update");
+        sock.ev.removeAllListeners("messages.upsert");
+        sock.ev.removeAllListeners("presence.update");
+        sock.end(undefined);
+      } catch {}
+
+      // 1. FATAL STATES: 401 (logged out), 403 (banned/forbidden), 500 (bad session)
+      if (isLoggedOut || isForbidden || isBadSession) {
+        pairingActiveUntil.delete(vendorId);
+        pendingPairingRestart.delete(vendorId);
+        credsCache.delete(vendorId);
+        reconnectAttempts.delete(vendorId);
+        consecutiveConflictCount.delete(vendorId);
+
+        await redis.del(`baileys:creds:${vendorId}`).catch(() => {});
+        const keys = await redis.keys(`baileys:keys:${vendorId}:*`).catch(() => []);
+        if (keys.length > 0) await redis.del(...keys).catch(() => {});
+
+        await sql`
+          DELETE FROM vendor_baileys_keys WHERE vendor_id = ${vendorId}::uuid
+        `.catch(() => {});
+
+        await sql`
+          UPDATE vendors
+          SET session_status = 'logged_out', auth_creds = NULL, updated_at = now()
+          WHERE id = ${vendorId}::uuid
+        `.catch(() => {});
+
+        await alertVendorReprovision(vendorId).catch(err =>
+          logger.warn({ err, vendorId }, "[SessionManager] alertVendorReprovision failed")
+        );
+        return;
       }
 
-      // Update DB so the merchant dashboard reflects the true state
+      // 2. 440 CONFLICT (connectionReplaced): Anti-Thrashing Guard
+      if (isConnectionReplaced) {
+        const conflicts = (consecutiveConflictCount.get(vendorId) ?? 0) + 1;
+        consecutiveConflictCount.set(vendorId, conflicts);
+
+        await sql`
+          UPDATE vendors
+          SET session_status = 'conflict', updated_at = now()
+          WHERE id = ${vendorId}::uuid
+        `.catch(() => {});
+
+        if (conflicts > 3) {
+          const conflictMsg = "Halting auto-reconnect: 3 consecutive 440 conflicts detected. Session opened elsewhere.";
+          logger.error({ vendorId, conflicts }, `[SessionManager] ${conflictMsg}`);
+          lastSessionError.set(vendorId, conflictMsg);
+          await redis.setex(`baileys:last_error:${vendorId}`, 3600, conflictMsg).catch(() => {});
+          await sql`
+            UPDATE vendors
+            SET session_status = 'conflict', last_error = ${conflictMsg}, updated_at = now()
+            WHERE id = ${vendorId}::uuid
+          `.catch(() => {});
+          return;
+        }
+
+        // Backoff heavily (30s * conflict count) to allow external session to stabilize
+        const delayMs = 30_000 * conflicts;
+        logger.info({ vendorId, conflicts, delayMs }, "[SessionManager] Pacing 440 reconnect delay");
+        scheduleReconnect(vendorId, delayMs);
+        return;
+      }
+
+      // 3. 411 MULTIDEVICE MISMATCH: Invalidate local cache and re-sync
+      if (isMultideviceMismatch) {
+        credsCache.delete(vendorId);
+      }
+
+      // Update DB to reflect reconnecting state
       await sql`
         UPDATE vendors
-        SET session_status = ${isLoggedOut ? "logged_out" : "reconnecting"},
-            updated_at = now()
-        WHERE id = ${vendorId}
-      `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical DB update failed, continuing"));
+        SET session_status = 'reconnecting', updated_at = now()
+        WHERE id = ${vendorId}::uuid
+      `.catch(() => {});
 
-      if (isLoggedOut || isBadSession) {
-        // Vendor needs to re-provision. Clear old creds so the next pairing starts fresh.
-        await redis.del(`baileys:creds:${vendorId}`);
-        reconnectAttempts.delete(vendorId);
-        await alertVendorReprovision(vendorId).catch(err => logger.warn({ err, vendorId }, "[SessionManager] alertVendorReprovision failed"));
+      // 4. 515 (restartRequired) or Active Pairing Window: Reconnect immediately
+      const isPairingActive = (pairingActiveUntil.get(vendorId) ?? 0) > Date.now();
+      if (isRestartRequired || isPairingActive) {
+        if (!isPairingActive) {
+          pendingPairingRestart.delete(vendorId);
+        }
+        logger.info({ vendorId, isRestartRequired, isPairingActive }, "Restart required or pairing active — reconnecting immediately");
+        scheduleReconnect(vendorId, 250, true);
         return;
       }
 
-      if (isRestartRequired) {
-        // 515 is WhatsApp's way of saying "pairing done, reconnect to finalise".
-        // We MUST reconnect regardless of creds.registered state, because the
-        // creds aren't marked registered until the reconnect completes.
-        const isPostPairing = pendingPairingRestart.has(vendorId);
-        pendingPairingRestart.delete(vendorId);
-        logger.info({ vendorId, isPostPairing }, "Restart required — reconnecting immediately");
-        setTimeout(() => createSession(vendorId, isPostPairing), 0);
-        return;
-      }
-
-      // Transient disconnect — exponential backoff reconnect
+      // 5. TRANSIENT DISCONNECT (408, 428, network drop): Exponential Backoff
       const attempts = reconnectAttempts.get(vendorId) ?? 0;
-      const delayMs = Math.min(1000 * 2 ** attempts, 30_000); // max 30s
+      // Cap backoff at 60 seconds
+      const delayMs = Math.min(1000 * 2 ** attempts, 60_000);
       reconnectAttempts.set(vendorId, attempts + 1);
 
+      if (attempts >= 10) {
+        await sql`
+          UPDATE vendors
+          SET session_status = 'disconnected', last_error = 'Connection failed repeatedly. Reconnecting gently...', updated_at = now()
+          WHERE id = ${vendorId}::uuid
+        `.catch(() => {});
+      }
+
       logger.info({ vendorId, attempt: attempts + 1, delayMs }, "Reconnecting Baileys session");
-      setTimeout(() => createSession(vendorId), delayMs);
+      scheduleReconnect(vendorId, delayMs);
     }
 
     if (connection === "open") {
+      clearReconnectTimer(vendorId);
+      consecutiveConflictCount.delete(vendorId);
+      pairingActiveUntil.delete(vendorId);
+      pendingPairingRestart.delete(vendorId);
+      lastSessionError.delete(vendorId);
+      await redis.del(`baileys:last_error:${vendorId}`).catch(() => {});
       reconnectAttempts.set(vendorId, 0);
+
       sessions.set(vendorId, sock);
-      // Also register under merchant_id so outbound routing works by merchantId
       const vendorCfg = await loadVendorConfig(vendorId).catch(() => null);
       if (vendorCfg?.merchant_id) {
-        sessions.set(vendorCfg.merchant_id, sock);
-        logger.info({ vendorId, merchantId: vendorCfg.merchant_id }, "Session registered under merchantId for outbound routing");
+        merchantToVendor.set(vendorCfg.merchant_id, vendorId);
+        logger.info({ vendorId, merchantId: vendorCfg.merchant_id }, "Mapped merchantId to vendor session");
       }
-      
-      // Check previous status to send welcome message once
-      const prevStatusRows = await sql<{ session_status: string }[]>`
-        SELECT session_status FROM vendors WHERE id = ${vendorId}
-      `.catch(() => []);
-      
-      const isFirstTime = prevStatusRows[0]?.session_status === "pending";
 
       await sql`
-        UPDATE vendors SET session_status = 'connected', updated_at = now()
-        WHERE id = ${vendorId}
-      `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
-      logger.info({ vendorId }, "Baileys session connected");
+        UPDATE vendors SET session_status = 'connected', last_error = NULL, updated_at = now()
+        WHERE id = ${vendorId}::uuid
+      `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical DB update failed"));
+      logger.info({ vendorId }, "Baileys session connected successfully");
 
-      // Send the onboarding trigger
-      if (isFirstTime && vendorCfg?.personal_number) {
-        const merchantRows = await sql<{ name: string }[]>`
-          SELECT name FROM merchants WHERE id = ${vendorCfg.merchant_id}
-        `.catch(() => []);
-        const businessName = merchantRows[0]?.name || "your store";
-        
-        try {
-          await sock.sendMessage(`${vendorCfg.personal_number}@s.whatsapp.net`, {
-            text: `Hi ${businessName}, I'm Biblio. Nice call linking me — you'll never lose a client again! You can chat with me here to manage your inventory, approve customer offers, and track sales.`
-          });
-          logger.info({ vendorId }, "Sent Biblio Agent welcome message to vendor");
-        } catch (err) {
-          logger.error({ err, vendorId }, "Failed to send welcome message");
+      // Onboarding welcome notification
+      const lockKey = `vendor:${vendorId}:onboarding_cooldown`;
+      const isCooldown = await redis.get(lockKey);
+
+      if (!isCooldown) {
+        let targetPhone = vendorCfg?.personal_number || "";
+        let ownerName = "";
+        let businessName = "your store";
+
+        if (vendorCfg?.merchant_id) {
+          try {
+            const mRows = await sql<{ name: string; owner_first_name: string; contact_phone: string; phone_number_id: string }[]>`
+              SELECT name, owner_first_name, contact_phone, phone_number_id
+              FROM merchants
+              WHERE id = ${vendorCfg.merchant_id}
+              LIMIT 1
+            `;
+            if (mRows[0]) {
+              businessName = mRows[0].name || businessName;
+              ownerName = mRows[0].owner_first_name || "";
+              if (!targetPhone) {
+                targetPhone = mRows[0].contact_phone || mRows[0].phone_number_id || "";
+              }
+            }
+          } catch {}
+        }
+        const greetingName = ownerName || businessName;
+
+        const welcomeText =
+          `👋 Hello ${greetingName}! I am Biblio, your autonomous commerce assistant.\n\n` +
+          `Your WhatsApp is now linked and active. Here is how I work for you 24/7:\n\n` +
+          `1. 🛍️ Automated Sales & Negotiation: When buyers message your business line, I handle inquiries, check product stock, and negotiate discounts up to your approved limits.\n` +
+          `2. 💳 Instant Zero-Deduction Settlements: For every order, I generate a Providus Virtual Account Number (VAN). Customers pay, and funds settle directly into your bank account with zero deductions.\n` +
+          `3. ⚡ Store Command Center: You can chat with me right here anytime to manage your store.\n\n` +
+          `Try texting me any of these commands right now:\n` +
+          `• "Show my settlement account"\n` +
+          `• "Show recent customer inquiries"\n` +
+          `• "Add product: [Product Name] [Price]"\n` +
+          `• "Generate WhatsApp status post"\n\n` +
+          `I am live and ready to take sales!`;
+
+        let targetJid = "";
+        if (targetPhone) {
+          let bare = targetPhone.replace(/\D/g, "");
+          if (bare.startsWith("0") && bare.length === 11) {
+            bare = `234${bare.slice(1)}`;
+          }
+          targetJid = `${bare}@s.whatsapp.net`;
+        } else if (sock.user?.id) {
+          targetJid = jidNormalizedUser(sock.user.id);
+        }
+
+        if (targetJid) {
+          try {
+            await sock.sendMessage(targetJid, { text: welcomeText });
+            await redis.setex(lockKey, 300, "1");
+            logger.info({ vendorId, targetJid }, "Sent Biblio Agent onboarding message to vendor");
+
+            const merchantId = vendorCfg?.merchant_id;
+            if (merchantId) {
+              await sql`
+                INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+                VALUES (${merchantId}, 'whatsapp', 'agent', ${welcomeText}, ${JSON.stringify({ type: 'onboarding_welcome', timestamp: Date.now() })}::jsonb)
+              `.catch(() => {});
+
+              await redis.publish(`agent:stream:${merchantId}`, JSON.stringify({
+                channel: 'whatsapp',
+                sender_role: 'agent',
+                content: welcomeText,
+                created_at: new Date().toISOString()
+              })).catch(() => {});
+            }
+          } catch (err) {
+            logger.error({ err, vendorId, targetJid }, "Failed to send onboarding message");
+          }
         }
       }
     }
   });
 
-  // ── Inbound message handler ───────────────────────────────────────────────
+  // ── Presence & Typing Interception (Vendor Outranking Biblio) ──────────────
+  sock.ev.on("presence.update", async ({ id, presences }) => {
+    try {
+      const myJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+      if (!myJid) return;
+
+      const vendorPresence = presences[myJid];
+      if (
+        vendorPresence &&
+        (vendorPresence.lastKnownPresence === "composing" ||
+          vendorPresence.lastKnownPresence === "recording")
+      ) {
+        const chatJid = id;
+        await redis.set(`presence:vendor:${vendorId}:chat:${chatJid}`, "typing", "EX", 35);
+        await redis.set(`presence:vendor:${vendorId}:global`, "active", "EX", 300);
+
+        logger.info(
+          { vendorId, chatJid, presence: vendorPresence.lastKnownPresence },
+          "[SessionManager] Vendor typing presence detected! Setting presence lock."
+        );
+      }
+    } catch (presenceErr) {
+      logger.warn({ presenceErr, vendorId }, "[SessionManager] Error handling presence.update");
+    }
+  });
+
+  // ── Inbound Message Handling & Deduplication ───────────────────────────────
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    // type === 'notify': real-time new messages (what we want)
-    // type === 'append': history sync — skip
     if (type !== "notify") return;
 
     for (const msg of messages) {
       if (!msg.message) continue;
 
-      const rawText = (
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        msg.message.imageMessage?.caption ||
-        msg.message.videoMessage?.caption ||
-        msg.message.documentMessage?.caption ||
-        ""
-      ).trim();
-
-      const hasBusinessStart = /^(business|start-business|start\s+business)\b/i.test(rawText) || /^business[:\s]/i.test(rawText);
-      const isEndBusiness = /^(end-business|end\s+business|exit-business|exit\s+business)$/i.test(rawText);
-      const isBusinessModeActive = await redis.get(`vendor:${vendorId}:business_mode`);
-
-      // If it's a message sent by the bot itself / note-to-self:
+      // Vendor manual reply detection
       if (msg.key.fromMe) {
-        // ONLY process if business mode is active, or user sent 'business' / 'end-business'
-        if (!isBusinessModeActive && !hasBusinessStart && !isEndBusiness) {
-          continue;
+        const remoteJid = msg.key.remoteJid;
+        if (remoteJid && !remoteJid.endsWith("@g.us") && remoteJid !== "status@broadcast") {
+          await redis.set(`presence:vendor:${vendorId}:chat:${remoteJid}`, "replied", "EX", 600);
+          await redis.set(`presence:vendor:${vendorId}:last_manual_reply`, Date.now().toString());
+          logger.info(
+            { vendorId, remoteJid },
+            "[SessionManager] Vendor manually replied in chat — Biblio silenced for 10 mins."
+          );
         }
-        logger.info({ msgId: msg.key.id, isBusinessModeActive: !!isBusinessModeActive, hasBusinessStart, isEndBusiness }, "Captured vendor Note-to-Self command");
       }
 
-      // Cache message content for getMessage() — needed for Baileys internals
+      // Cache message content for getMessage() retry handling
       if (msg.key.id && msg.message) {
         await redis
           .setex(`msg_cache:${msg.key.id}`, 3600, JSON.stringify(msg.message, BufferJSON.replacer))
-          .catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
+          .catch(err => logger.warn({ err }, "[SessionManager] Failed to cache inbound message"));
       }
 
       // Deduplicate — Baileys can re-deliver the same message ID on reconnect
@@ -553,7 +864,6 @@ export async function createSession(vendorId: string, isPairing = false): Promis
       }
 
       try {
-        // withRetry ensures a cold Neon DB wake-up never silently drops a message.
         const vendor = await withRetry(
           () => loadVendorConfig(vendorId),
           `loadVendorConfig:${vendorId}`
@@ -569,9 +879,6 @@ export async function createSession(vendorId: string, isPairing = false): Promis
 }
 
 // ─── Pairing Code Provisioning ────────────────────────────────────────────────
-// Called by merchant-api / CLI when a vendor sets up their business line.
-// Returns the 8-character pairing code the vendor enters in WhatsApp →
-// Settings → Linked Devices → Link with phone number.
 
 export interface PairResult {
   code: string;
@@ -580,7 +887,6 @@ export interface PairResult {
 }
 
 export async function pairVendorNumber(phoneNumber: string, vendorId?: string, merchantId?: string): Promise<PairResult> {
-  // phoneNumber MUST be E.164 WITHOUT the '+' sign: "2348012345678"
   const normalised = phoneNumber.replace(/^\+/, "").replace(/\s/g, "");
   logger.info({ vendorId, merchantId, normalised }, "pairVendorNumber called");
 
@@ -598,32 +904,54 @@ export async function pairVendorNumber(phoneNumber: string, vendorId?: string, m
 
   const effectiveVendorId = vendor.id;
 
-  // Save the business line number
+  clearReconnectTimer(effectiveVendorId);
+  consecutiveConflictCount.delete(effectiveVendorId);
+
   await sql`
     UPDATE vendors 
-    SET business_line_number = ${normalised}, updated_at = now()
-    WHERE id = ${effectiveVendorId}
-  `.catch(err => logger.warn({ err }, "[SessionManager] Non-critical operation failed"));
+    SET business_line_number = ${normalised},
+        session_status = 'pairing',
+        last_error = NULL,
+        auth_creds = NULL,
+        updated_at = now()
+    WHERE id = ${effectiveVendorId}::uuid
+  `.catch(err => logger.warn({ err }, "[SessionManager] DB update failed"));
 
-  // Destroy any existing dead/zombie session to ensure fresh pairing code
+  await sql`
+    DELETE FROM vendor_baileys_keys WHERE vendor_id = ${effectiveVendorId}::uuid
+  `.catch(err => logger.warn({ err }, "[SessionManager] Failed to clear DB Signal keys"));
+
+  credsCache.delete(effectiveVendorId);
+  lastSessionError.delete(effectiveVendorId);
   if (sessions.has(effectiveVendorId)) {
     const oldSock = sessions.get(effectiveVendorId)!;
-    oldSock.end(undefined);
+    try {
+      oldSock.ev.removeAllListeners("connection.update");
+      oldSock.ev.removeAllListeners("creds.update");
+      oldSock.ev.removeAllListeners("messages.upsert");
+      oldSock.ev.removeAllListeners("presence.update");
+      oldSock.end(undefined);
+    } catch {}
     sessions.delete(effectiveVendorId);
   }
+  if (vendor?.merchant_id) {
+    merchantToVendor.delete(vendor.merchant_id);
+  }
 
-  // Force a completely fresh state for pairing
   await redis.del(`baileys:creds:${effectiveVendorId}`);
+  await redis.del(`baileys:last_error:${effectiveVendorId}`);
   const keys = await redis.keys(`baileys:keys:${effectiveVendorId}:*`);
   if (keys.length > 0) {
     await redis.del(...keys);
   }
 
+  pairingActiveUntil.set(effectiveVendorId, Date.now() + 120_000);
+  pendingPairingRestart.add(effectiveVendorId);
+
   const sock = await createSession(effectiveVendorId, true);
   if (!sock) throw new Error("Failed to create session");
   logger.info({ vendorId: effectiveVendorId }, "Socket created, waiting for connection handshake...");
 
-  // Event-driven wait: Wait for the socket to be fully ready for auth/pairing
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       logger.error({ vendorId: effectiveVendorId }, "Timeout waiting for socket to reach pairing state");
@@ -632,8 +960,6 @@ export async function pairVendorNumber(phoneNumber: string, vendorId?: string, m
 
     const handler = (update: any) => {
       logger.debug({ vendorId: effectiveVendorId, update }, "Pairing connection update");
-      // The `qr` event signifies that the NOISE handshake is done and it's waiting for auth.
-      // If it reaches 'open', it's already authenticated.
       if (update.qr || update.connection === "open") {
         sock.ev.off("connection.update", handler);
         clearTimeout(timeout);
@@ -646,8 +972,6 @@ export async function pairVendorNumber(phoneNumber: string, vendorId?: string, m
   });
 
   if (!sock.authState.creds.registered) {
-    // Mark this vendor as needing a post-515 pairing restart BEFORE requesting
-    // the code — the 515 arrives within seconds of the user accepting on phone.
     pendingPairingRestart.add(effectiveVendorId);
     logger.info({ vendorId: effectiveVendorId, phone: normalised }, "Requesting pairing code from WhatsApp servers");
     const code = await sock.requestPairingCode(normalised);
@@ -672,15 +996,32 @@ export function getAllActiveSessions(): string[] {
   return [...sessions.keys()];
 }
 
+export async function getSessionStatus(vendorId: string) {
+  const active = sessions.has(vendorId);
+  const isPairing = (pairingActiveUntil.get(vendorId) ?? 0) > Date.now();
+  let lastError = lastSessionError.get(vendorId);
+  if (!lastError) {
+    lastError = (await redis.get(`baileys:last_error:${vendorId}`)) ?? undefined;
+  }
+  const rows = await sql<{ session_status: string; last_error: string | null }[]>`
+    SELECT session_status, last_error FROM vendors WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid LIMIT 1
+  `.catch(() => []);
+
+  return {
+    vendorId,
+    inMemory: active,
+    dbStatus: rows[0]?.session_status ?? (active ? "connected" : "unknown"),
+    isPairing,
+    lastError: lastError || rows[0]?.last_error || null,
+  };
+}
+
 // ─── Reprovision Alert ────────────────────────────────────────────────────────
 
 async function alertVendorReprovision(vendorId: string): Promise<void> {
-  // In Phase 2: send an SMS via Africa's Talking / Twilio to the vendor's
-  // personal number telling them their business line needs re-pairing.
-  // For now: log loud so ops can act.
   const vendor = await loadVendorConfig(vendorId).catch(() => null);
   logger.error(
     { vendorId, phone: vendor?.personal_number },
-    "VENDOR SESSION LOGGED OUT — reprovision required"
+    "VENDOR SESSION LOGGED OUT OR BANNED — reprovision required"
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { useColorScheme } from 'nativewind';
+import { useRouter } from 'expo-router';
 import {
   Bell,
   MessageCircle,
@@ -11,6 +12,7 @@ import {
   Clock,
   AlertCircle,
   Radio,
+  ChevronRight,
 } from 'lucide-react-native';
 import { colors } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
@@ -19,6 +21,7 @@ import { EmptyState } from '../src/components/EmptyState';
 import { useNotificationHistory, useClearNotificationHistory, NotificationEvent } from '../src/api/client';
 import { useAlert } from '../src/store/alertStore';
 import { NotificationSkeleton } from '../src/components/PulsingSkeleton';
+import { safeHaptics } from '../src/utils/sanitizers';
 
 type ChannelFilter = 'All' | 'WhatsApp' | 'SMS' | 'In-App';
 
@@ -27,12 +30,33 @@ export default function NotificationHistoryScreen() {
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
   const alert = useAlert();
+  const router = useRouter();
 
   const [activeFilter, setActiveFilter] = useState<ChannelFilter>('All');
   const { data, isLoading, refetch, isRefetching } = useNotificationHistory();
   const clearMutation = useClearNotificationHistory();
 
-  const events: NotificationEvent[] = data?.events || [];
+  const events: NotificationEvent[] = Array.isArray(data?.events) ? data.events : [];
+
+  const handleNotificationTap = (event: NotificationEvent) => {
+    safeHaptics.impact();
+    const meta = event.metadata || {};
+    const chatId = meta.chatId || meta.chat_id || meta.customerId || meta.customer_id;
+    const threadId = meta.threadId || meta.thread_id;
+    const orderId = meta.orderId || meta.order_id;
+
+    if (chatId) {
+      router.push(`/chat/${encodeURIComponent(String(chatId))}` as any);
+    } else if (threadId) {
+      router.push(`/chat/${encodeURIComponent(String(threadId))}` as any);
+    } else if (orderId) {
+      router.push('/(tabs)/inbox' as any);
+    } else if (event.channel === 'whatsapp') {
+      router.push('/(tabs)/chats' as any);
+    } else {
+      router.push('/biblio-assistant' as any);
+    }
+  };
 
   const filteredEvents = useMemo(() => {
     if (activeFilter === 'All') return events;
@@ -149,10 +173,11 @@ export default function NotificationHistoryScreen() {
             {filteredEvents.map((event) => {
               const badge = getChannelBadge(event.channel);
               return (
-                <View
+                <Pressable
                   key={event.id}
+                  onPress={() => handleNotificationTap(event)}
                   style={{ backgroundColor: c.surface, borderColor: c.border }}
-                  className="p-4 rounded-2xl border"
+                  className="p-4 rounded-2xl border active:opacity-75"
                 >
                   <View className="flex-row items-start justify-between mb-2">
                     <View className="flex-row items-center flex-1 mr-2">
@@ -172,10 +197,13 @@ export default function NotificationHistoryScreen() {
                       </View>
                     </View>
 
-                    <View style={{ backgroundColor: badge.bg }} className="px-2 py-0.5 rounded-md">
-                      <Text style={{ color: badge.text }} className="text-[10px] font-extrabold uppercase">
-                        {badge.label}
-                      </Text>
+                    <View className="flex-row items-center gap-1.5">
+                      <View style={{ backgroundColor: badge.bg }} className="px-2 py-0.5 rounded-md">
+                        <Text style={{ color: badge.text }} className="text-[10px] font-extrabold uppercase">
+                          {badge.label}
+                        </Text>
+                      </View>
+                      <ChevronRight size={14} color={c.textTertiary} />
                     </View>
                   </View>
 
@@ -187,17 +215,17 @@ export default function NotificationHistoryScreen() {
                     <View className="flex-row items-center">
                       <CheckCircle2 size={13} color="#10B981" />
                       <Text style={{ color: '#10B981' }} className="text-[11px] font-bold ml-1">
-                        Carrier Delivered
+                        {event.status === 'delivered' ? 'Carrier Delivered' : event.status === 'failed' ? 'Delivery Issue' : 'Queued / In Flight'}
                       </Text>
                     </View>
 
-                    {event.metadata && (event.metadata.sku || event.metadata.provider || event.metadata.strategy) && (
+                    {event.metadata && (event.metadata.sku || event.metadata.provider || event.metadata.strategy || event.metadata.chatId) && (
                       <Text style={{ color: c.textTertiary }} className="text-[11px]">
-                        Ref: {event.metadata.sku || event.metadata.provider || event.metadata.strategy}
+                        Ref: {event.metadata.sku || event.metadata.provider || event.metadata.strategy || event.metadata.chatId}
                       </Text>
                     )}
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>

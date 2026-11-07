@@ -2,6 +2,9 @@ import { sql, redis, jsonb } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 
+const isValidUUID = (id: any): boolean =>
+  typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
+
 export const orderTools = [
 
   {
@@ -379,36 +382,37 @@ export const orderTools = [
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   request_refund_or_dispute: async (merchantId: string, args: { orderId: string; customerId?: string; reason: string; refundAmount?: number }) => {
     const { orderId, customerId = "", reason, refundAmount } = args;
+    if (!orderId || !isValidUUID(orderId)) return `Invalid order ID: ${orderId || 'none'}`;
     await logger.log(`[ToolHandler:request_refund_or_dispute] Opening dispute for order ${orderId}`, { merchantId, args });
 
     // Look up order total if refundAmount was not provided
     let amount = refundAmount;
     if (!amount) {
-      const orderRows = await sql<{ state: any }[]>`
-        SELECT state FROM orders WHERE id = ${orderId} LIMIT 1
-      `;
-      amount = Number(orderRows[0]?.state?.total ?? 0);
+      const orderRows = await sql<{ state: any; total_amount?: number }[]>`
+        SELECT state, total_amount FROM orders WHERE id = ${orderId}::uuid LIMIT 1
+      `.catch(() => []);
+      amount = Number(orderRows[0]?.total_amount || orderRows[0]?.state?.total || 0);
     }
 
     // Insert dispute record
     const disputeRows = await sql<{ id: string }[]>`
       INSERT INTO order_disputes (order_id, merchant_id, customer_id, reason, refund_amount_ngn, status)
-      VALUES (${orderId}, ${merchantId}, ${customerId}, ${reason}, ${amount || 0}, 'pending_review')
+      VALUES (${orderId}::uuid, ${merchantId}::uuid, ${customerId || 'unknown_customer'}, ${reason || 'Customer requested refund'}, ${amount || 0}, 'pending_review')
       RETURNING id
-    `;
+    `.catch(() => []);
     const disputeId = disputeRows[0]?.id;
 
     // Lock Escrow status to 'disputed'
     await sql`
       UPDATE escrow_accounts SET status = 'disputed', updated_at = now()
-      WHERE order_id = ${orderId}
-    `;
+      WHERE order_id = ${orderId}::uuid
+    `.catch(() => {});
 
     // Insert urgent action into escalations for Merchant App Inbox
     await sql`
       INSERT INTO escalations (merchant_id, customer_id, reason, context, resolved, created_at)
       VALUES (
-        ${merchantId}::uuid, ${customerId}, ${'dispute_review_required: ' + reason},
+        ${merchantId}::uuid, ${customerId || 'order_fulfillment'}, ${'dispute_review_required: ' + reason},
         ${JSON.stringify({ disputeId, orderId, customerId, reason, amount })}::jsonb,
         false,
         now()
@@ -420,14 +424,15 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
 
   resolve_dispute: async (merchantId: string, args: { disputeId: string; decision: string; note?: string }) => {
     const { disputeId, decision, note } = args;
+    if (!disputeId || !isValidUUID(disputeId)) return `Dispute #${disputeId || 'none'} not found.`;
     const newStatus = decision === "approve" ? "approved" : "rejected";
 
     const rows = await sql<{ order_id: string; refund_amount_ngn: number }[]>`
       UPDATE order_disputes
       SET status = ${newStatus}, resolved_at = now()
-      WHERE id = ${disputeId} AND merchant_id = ${merchantId}
+      WHERE id = ${disputeId}::uuid AND merchant_id = ${merchantId}::uuid
       RETURNING order_id, refund_amount_ngn
-    `;
+    `.catch(() => []);
 
     if (rows.length === 0) return `Dispute #${disputeId} not found.`;
     const { order_id, refund_amount_ngn } = rows[0];
@@ -435,25 +440,26 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     if (decision === "approve") {
       await sql`
         UPDATE escrow_accounts SET status = 'refunded', updated_at = now()
-        WHERE order_id = ${order_id}
-      `;
+        WHERE order_id = ${order_id}::uuid
+      `.catch(() => {});
       return `✅ Dispute #${disputeId.slice(0, 8)} approved. Refund of ₦${Number(refund_amount_ngn).toLocaleString()} unlocked for customer.`;
     } else {
       await sql`
         UPDATE escrow_accounts SET status = 'held', updated_at = now()
-        WHERE order_id = ${order_id}
-      `;
+        WHERE order_id = ${order_id}::uuid
+      `.catch(() => {});
       return `❌ Dispute #${disputeId.slice(0, 8)} rejected. Escrow returned to standard hold. Note: ${note || 'None'}`;
     }
   },
   request_visual_confirmation: async (merchantId: string, args: any) => {
     try {
       const { orderId } = args;
+      if (!isValidUUID(orderId)) return `Invalid order ID: ${orderId}`;
       await sql`
         UPDATE orders
         SET state = jsonb_set(COALESCE(state, '{}'::jsonb), '{visualConfirmationRequested}', 'true'::jsonb),
             updated_at = NOW()
-        WHERE id = ${orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
       `.catch(() => {});
 
       await sql`
@@ -470,12 +476,13 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
   send_visual_proof: async (merchantId: string, args: any) => {
     try {
       const { orderId, customerId, proofUrl } = args;
+      if (!isValidUUID(orderId)) return `Invalid order ID: ${orderId}`;
       const media = proofUrl || 'https://biblio.app/assets/proof-verified.png';
       await sql`
         UPDATE orders
         SET state = jsonb_set(COALESCE(state, '{}'::jsonb), '{visualProofSent}', ${JSON.stringify(media)}::jsonb),
             updated_at = NOW()
-        WHERE id = ${orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
       `.catch(() => {});
 
       if (customerId) {
@@ -496,9 +503,10 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
   dispatch_rider: async (merchantId: string, args: any) => {
     try {
       const { orderId, customerPhone } = args;
+      if (!isValidUUID(orderId)) return `Invalid order ID: ${orderId}`;
       const orders = await sql<{ id: string; state: any; customer_id: string }[]>`
         SELECT id, state, customer_id FROM orders
-        WHERE id = ${orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
         LIMIT 1
       `.catch(() => []);
 
@@ -532,20 +540,23 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
 
-  view_pending_orders: async (merchantId: string, args: any) => {
+  view_pending_orders: async (merchantId: string, _args: any) => {
     try {
       const rows = await sql`
         SELECT id, status, items, created_at, state
         FROM orders
-        WHERE tenant_id = ${merchantId}::uuid AND status IN ('pending', 'processing')
+        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+          AND status IN ('pending', 'processing')
         ORDER BY created_at DESC
         LIMIT 10
       `.catch(() => []);
       if (rows.length === 0) return "No pending orders waiting for fulfillment.";
       const list = rows.map(r => {
-        const items = Array.isArray(r.items) ? r.items : [];
-        const total = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
-        return `- Order #${r.id.slice(0, 8)} (${r.status}): ₦${total.toLocaleString()} — ${items.map(it => it.name || it.sku).join(', ') || 'Package'}`;
+        const items = Array.isArray(r.items) && r.items.length > 0
+          ? r.items
+          : (Array.isArray(r.state?.items) ? r.state.items : []);
+        const total = Number(r.total_amount || r.state?.total || 0) || items.reduce((s: number, it: any) => s + (Number(it.price || it.unitPrice || 0) * Number(it.quantity || 1)), 0);
+        return `- Order #${r.id.slice(0, 8)} (${r.status}): ₦${total.toLocaleString()} — ${items.map((it: any) => it.name || it.sku).join(', ') || 'Package'}`;
       }).join('\n');
       return `Pending Orders:\n${list}`;
     } catch (e) {
@@ -555,28 +566,44 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
   },
   mark_order_shipped: async (merchantId: string, args: any) => {
     if (!args.orderId) return "Order ID is required.";
+    if (!isValidUUID(args.orderId)) return `Order ${args.orderId} not found.`;
     try {
-      const orders = await sql<{ id: string; items: any; customer_id: string; state: any }[]>`
-        SELECT id, items, customer_id, state
+      const orders = await sql<{ id: string; items: any; customer_id: string; state: any; status: string }[]>`
+        SELECT id, items, customer_id, state, status
         FROM orders
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
         LIMIT 1
       `.catch(() => []);
 
       if (orders.length === 0) return `Order ${args.orderId} not found.`;
       const order = orders[0];
 
+      // Idempotency check: if already shipped or inventory already deducted, do not deduct again
+      if (order.status === 'shipped' || order.state?.inventoryDeducted === true) {
+        return `Order #${args.orderId.slice(0, 8)} is already marked as shipped.`;
+      }
+
+      const trackingRef = args.trackingNumber || order.state?.trackingNumber || 'EXPRESS-DISPATCH';
+      const updatedState = {
+        ...(order.state || {}),
+        trackingNumber: trackingRef,
+        inventoryDeducted: true
+      };
+
       // 1. Update Order Status
       await sql`
         UPDATE orders 
         SET status = 'shipped'::order_status, 
-            state = jsonb_set(COALESCE(state, '{}'::jsonb), '{trackingNumber}', ${JSON.stringify(args.trackingNumber || 'EXPRESS-DISPATCH')}::jsonb),
+            state = ${jsonb(updatedState)},
             updated_at = NOW() 
         WHERE id = ${args.orderId}::uuid
       `;
       
-      // 2. Deduct Inventory from items in JSONB
-      const items = Array.isArray(order.items) ? order.items : [];
+      // 2. Deduct Inventory from items in JSONB or top-level column
+      const items = (Array.isArray(order.items) && order.items.length > 0)
+        ? order.items
+        : (Array.isArray(order.state?.items) ? order.state.items : []);
+
       for (const item of items) {
         const qty = Number(item.quantity || 1);
         if (item.id || item.product_id) {
@@ -604,7 +631,7 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
         await queue.add('shipping_update', {
           merchantId,
           customerId: customerPhone,
-          text: `📦 Your Order #${args.orderId.slice(0, 8)} has shipped!\nTracking: ${args.trackingNumber || 'Assigned to Courier'}\nWe'll notify you as soon as the rider arrives.`
+          text: `📦 Your Order #${args.orderId.slice(0, 8)} has shipped!\nTracking: ${trackingRef}\nWe'll notify you as soon as the rider arrives.`
         }).catch(() => {});
       }
       
@@ -615,8 +642,13 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   cancel_order: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
     try {
-        const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)`;
+        const orders = await sql`
+          SELECT * FROM orders 
+          WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+          LIMIT 1
+        `;
         if (orders.length === 0) return { ok: false, error: 'Order not found' };
         const order = orders[0];
         
@@ -627,12 +659,33 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
         } catch (e) {
             newState = { ...order.state, status: 'cancelled' };
         }
-        await sql`UPDATE orders SET state = ${jsonb(newState)} WHERE id = ${args.orderId}`;
+        await sql`UPDATE orders SET status = 'cancelled'::order_status, state = ${jsonb(newState)}, updated_at = now() WHERE id = ${args.orderId}::uuid`;
+        
+        // Restore reserved inventory stock upon cancellation
+        const cancelItems = (Array.isArray(order.items) && order.items.length > 0)
+          ? order.items
+          : (Array.isArray(order.state?.items) ? order.state.items : []);
+        for (const item of cancelItems) {
+          const qty = Math.max(1, Math.round(Number(item.quantity || 1)));
+          if (item.id || item.product_id) {
+            await sql`
+              UPDATE products 
+              SET stock = stock + ${qty}, quantity = quantity + ${qty}, updated_at = NOW()
+              WHERE id = ${item.id || item.product_id}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+            `.catch(() => {});
+          } else if (item.sku) {
+            await sql`
+              UPDATE products 
+              SET stock = stock + ${qty}, quantity = quantity + ${qty}, updated_at = NOW()
+              WHERE sku = ${item.sku} AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+            `.catch(() => {});
+          }
+        }
         
         if (order.state?.status === 'payment_verified' || order.state?.status === 'paid') {
             const fetch = (await import('node-fetch')).default;
             const ref = order.reference || (order.state as any).providerRef;
-            if (ref) {
+            if (ref && process.env.PAYSTACK_SECRET_KEY) {
                 await fetch('https://api.paystack.co/refund', {
                     method: 'POST',
                     headers: {
@@ -640,14 +693,16 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ transaction: ref })
-                });
+                }).catch(() => {});
             }
         }
         
-        await redis.lpush('jobs:sms_outbound', JSON.stringify({
-            toPhone: order.customer_id,
-            text: `Your order #${args.orderId} has been cancelled.`
-        }));
+        if (order.customer_id) {
+          await redis.lpush('jobs:sms_outbound', JSON.stringify({
+              toPhone: order.customer_id,
+              text: `Your order #${args.orderId} has been cancelled.`
+          })).catch(() => {});
+        }
         
         return { ok: true };
     } catch(e) {
@@ -656,15 +711,19 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   resend_order_receipt: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return "Order ID is invalid or not found.";
     try {
       const orders = await sql`
         SELECT * FROM orders 
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        LIMIT 1
       `.catch(() => []);
       if (orders.length === 0) return `Order ${args.orderId} not found.`;
       const order = orders[0];
-      const items = Array.isArray(order.items) ? order.items : [];
-      const total = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
+      const items = (Array.isArray(order.items) && order.items.length > 0)
+        ? order.items
+        : (Array.isArray(order.state?.items) ? order.state.items : []);
+      const total = Number(order.total_amount || order.state?.total || 0) || items.reduce((s: number, it: any) => s + (Number(it.price || it.unitPrice || 0) * Number(it.quantity || 1)), 0);
       const customerPhone = order.state?.customerPhone || order.customer_id;
       if (customerPhone) {
         const { Queue } = await import('bullmq');
@@ -683,13 +742,14 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   update_shipping_address: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return "Invalid order ID.";
     try {
       await sql`
         UPDATE orders
         SET pickup_address = ${args.newAddress},
             state = jsonb_set(COALESCE(state, '{}'::jsonb), '{shipping,destination}', ${JSON.stringify(args.newAddress)}::jsonb),
             updated_at = NOW()
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
       `;
       return `Delivery address for Order #${args.orderId.slice(0, 8)} updated to "${args.newAddress}".`;
     } catch (e) {
@@ -698,6 +758,7 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   schedule_pickup: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return "Invalid order ID.";
     try {
       const pickupCode = `PK-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
       await sql`
@@ -705,7 +766,7 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
         SET fulfillment_type = 'pickup',
             pickup_code = ${pickupCode},
             updated_at = NOW()
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
       `;
       return `In-person store pickup scheduled for Order #${args.orderId.slice(0, 8)}. Pickup Verification Code: ${pickupCode}.`;
     } catch (e) {
@@ -715,13 +776,30 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
   },
   track_shipment: async (merchantId: string, args: any) => {
     try {
-      const rows = await sql`
-        SELECT state, status FROM orders 
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
-      `.catch(() => []);
-      if (rows.length === 0) return `Order ${args.orderId} not found.`;
-      const tracking = rows[0]?.state?.trackingNumber || 'PENDING-DISPATCH';
-      return `Shipment Status for Order #${args.orderId.slice(0, 8)}:\n- Fulfillment: ${rows[0].status}\n- Tracking Reference: ${tracking}`;
+      const tracking = (args.trackingNumber || args.orderId || '').trim();
+      if (!tracking) return "Tracking reference or order ID is required.";
+
+      let rows: any[] = [];
+      if (isValidUUID(tracking)) {
+        rows = await sql`
+          SELECT id, state, status FROM orders 
+          WHERE id = ${tracking}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+          LIMIT 1
+        `.catch(() => []);
+      }
+      if (rows.length === 0) {
+        rows = await sql`
+          SELECT id, state, status FROM orders 
+          WHERE (pickup_code = ${tracking} OR state->>'trackingNumber' = ${tracking} OR tracking_number = ${tracking})
+            AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+          LIMIT 1
+        `.catch(() => []);
+      }
+
+      if (rows.length === 0) return `Shipment for '${tracking}' not found.`;
+      const order = rows[0];
+      const trackingRef = order?.state?.trackingNumber || order?.pickup_code || 'PENDING-DISPATCH';
+      return `Shipment Status for Order #${order.id.slice(0, 8)}:\n- Fulfillment: ${order.status}\n- Tracking Reference: ${trackingRef}`;
     } catch (e) {
       return "Shipment tracking details unavailable.";
     }
@@ -730,12 +808,13 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     try {
       const { KwikAdapter } = await import('../../../logistics-coordination/src/adapters/kwik.js');
       const kwik = new KwikAdapter();
+      const weight = Number(args.weight ?? args.weightKg) || 1;
       const quote = await kwik.quote({
         orderId: 'QUOTE',
         merchantId,
         customerId: 'customer',
         customerPhone: '08000000000',
-        totalWeightKg: Number(args.weightKg) || 1,
+        totalWeightKg: weight,
         itemsDescription: 'Order Package',
         declaredValue: 5000,
         pickupAddress: { street: 'Ikeja', city: 'Lagos', state: 'Lagos', country: 'Nigeria', contactName: 'Merchant Store', contactPhone: '08000000000' },
@@ -746,23 +825,24 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
       return `Estimated delivery fee is ₦1,500.00 within standard delivery zones.`;
     }
   },
-  print_shipping_label: async (merchantId: string, args: any) => {
+  print_shipping_label: async (_merchantId: string, args: any) => {
     return `Shipping airway bill generated for Order #${(args.orderId || '').slice(0, 8)}. Ready to print and affix to packaging.`;
   },
-  split_order: async (merchantId: string, args: any) => {
+  split_order: async (_merchantId: string, args: any) => {
     return `Order #${(args.orderId || '').slice(0, 8)} package split initiated for multi-destination fulfillment.`;
   },
-  merge_orders: async (merchantId: string, args: any) => {
+  merge_orders: async (_merchantId: string, _args: any) => {
     return `Orders combined into single consolidated delivery parcel.`;
   },
   flag_fraudulent_order: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return "Invalid order ID.";
     try {
       await sql`
         UPDATE orders 
         SET status = 'cancelled'::order_status,
             state = jsonb_set(COALESCE(state, '{}'::jsonb), '{flaggedFraud}', 'true'::jsonb),
             updated_at = NOW()
-        WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
       `;
       return `Order #${args.orderId.slice(0, 8)} flagged as fraudulent and cancelled. Payment escrow suspended.`;
     } catch (e) {
@@ -770,13 +850,18 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   track_order: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
     try {
-      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)`;
+      const orders = await sql`
+        SELECT * FROM orders 
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        LIMIT 1
+      `;
       if (orders.length === 0) return { ok: false, error: 'Order not found' };
       const order = orders[0];
       let trackingInfo = null;
       if (order.tracking_number) {
-        const integrations = await sql`SELECT provider, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId} AND provider IN ('dhl', 'shippify')`;
+        const integrations = await sql`SELECT provider, metadata FROM merchant_integrations WHERE merchant_id = ${merchantId}::uuid AND provider IN ('dhl', 'shippify')`;
         if (integrations.length > 0) {
           trackingInfo = { status: 'in_transit', estimatedDelivery: '2026-09-05' };
         }
@@ -788,8 +873,13 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   fulfill_order: async (merchantId: string, args: any) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
     try {
-      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)`;
+      const orders = await sql`
+        SELECT * FROM orders 
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
+        LIMIT 1
+      `;
       if (orders.length === 0) return { ok: false, error: 'Order not found' };
       const order = orders[0];
       
@@ -801,12 +891,14 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
           newState = { ...order.state, status: 'processing' };
       }
       
-      await sql`UPDATE orders SET state = ${jsonb(newState)} WHERE id = ${args.orderId}`;
+      await sql`UPDATE orders SET state = ${jsonb(newState)}, updated_at = now() WHERE id = ${args.orderId}::uuid`;
       
-      await redis.lpush('jobs:sms_outbound', JSON.stringify({
-        toPhone: order.customer_id,
-        text: `Your order #${args.orderId} is being prepared! We'll notify you when it's shipped. 🚚`
-      }));
+      if (order.customer_id) {
+        await redis.lpush('jobs:sms_outbound', JSON.stringify({
+          toPhone: order.customer_id,
+          text: `Your order #${args.orderId} is being prepared! We'll notify you when it's shipped. 🚚`
+        })).catch(() => {});
+      }
       
       return { ok: true };
     } catch (e) {
@@ -815,8 +907,16 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   set_order_fulfillment: async (merchantId: string, args: { orderId: string; fulfillmentType: 'delivery' | 'pickup'; deliveryAddress?: string }) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
+    if (args.fulfillmentType !== 'delivery' && args.fulfillmentType !== 'pickup') {
+      return { ok: false, error: "Invalid fulfillmentType. Must be 'delivery' or 'pickup'." };
+    }
     try {
-      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) LIMIT 1`;
+      const orders = await sql`
+        SELECT * FROM orders 
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) 
+        LIMIT 1
+      `;
       if (orders.length === 0) return { ok: false, error: 'Order not found' };
       const order = orders[0];
 
@@ -866,8 +966,14 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   confirm_order_pickup: async (merchantId: string, args: { orderId: string; pickupCode: string }) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
+    if (!args.pickupCode || !args.pickupCode.trim()) return { ok: false, error: 'Pickup code is required.' };
     try {
-      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) LIMIT 1`;
+      const orders = await sql`
+        SELECT * FROM orders 
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) 
+        LIMIT 1
+      `;
       if (orders.length === 0) return { ok: false, error: 'Order not found' };
       const order = orders[0];
 
@@ -885,6 +991,7 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
 
       await sql`
         UPDATE orders SET
+          status = 'delivered'::order_status,
           state = ${jsonb(newState)},
           updated_at = now()
         WHERE id = ${args.orderId}::uuid
@@ -904,13 +1011,19 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   verify_payment_receipt: async (merchantId: string, args: { orderId: string; receiptImageUrl?: string; extractedAmount?: number }) => {
+    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
     try {
-      const orders = await sql`SELECT * FROM orders WHERE id = ${args.orderId}::uuid AND (tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) LIMIT 1`;
+      const orders = await sql`
+        SELECT * FROM orders 
+        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) 
+        LIMIT 1
+      `;
       if (orders.length === 0) return { ok: false, error: 'Order not found' };
       const order = orders[0];
 
       const expectedAmount = Number(order.total_amount || order.state?.total || 0);
-      const paidAmount = args.extractedAmount || expectedAmount;
+      const rawPaid = args.extractedAmount !== undefined ? Number(args.extractedAmount) : expectedAmount;
+      const paidAmount = Number.isFinite(rawPaid) && rawPaid > 0 ? rawPaid : expectedAmount;
 
       const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
       let newState;
@@ -926,6 +1039,7 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
 
       await sql`
         UPDATE orders SET
+          status = 'confirmed'::order_status,
           state = ${jsonb(newState)},
           updated_at = now()
         WHERE id = ${args.orderId}::uuid

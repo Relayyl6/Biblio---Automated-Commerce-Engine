@@ -47,7 +47,7 @@ export default function PulseScreen() {
     );
   }
 
-  const recentProducts = (products || []).slice(0, 8);
+  const recentProducts = Array.isArray(products) ? products.slice(0, 8) : [];
 
   return (
     <ScrollView
@@ -117,7 +117,7 @@ export default function PulseScreen() {
 
             <View className="flex-row items-baseline mb-2">
               <Text style={{ color: c.textPrimary }} className="text-4xl font-extrabold tracking-tight">
-                ₦{data?.revenue?.total?.toLocaleString() ?? '0'}
+                ₦{Number(data?.revenue?.total || 0).toLocaleString()}
               </Text>
             </View>
 
@@ -337,7 +337,7 @@ export default function PulseScreen() {
                   {alert.message}
                 </Text>
                 <Pressable
-                  onPress={() => router.push(isWinback ? '/inbox' : '/crm')}
+                  onPress={() => router.push(isWinback ? '/(tabs)/inbox' : '/crm')}
                   style={{ backgroundColor: c.textPrimary }}
                   className="rounded-full py-2.5 items-center active:opacity-80"
                 >
@@ -419,11 +419,11 @@ export default function PulseScreen() {
           <Text style={{ color: c.success }} className="font-bold">
             Live Signal:{' '}
           </Text>
-          {data?.market_pulse?.avg_price && data?.market_pulse?.avg_price > 0 ? (
-            data?.market_pulse?.surge_pct && data?.market_pulse?.surge_pct > 0 ? (
-              `Inquiries for '${data.market_pulse.trend}' are up ${data.market_pulse.surge_pct}% in your zone. Catalog pricing averages ₦${data.market_pulse.avg_price.toLocaleString()}.`
+          {data?.market_pulse?.avg_price && Number(data.market_pulse.avg_price) > 0 ? (
+            data?.market_pulse?.surge_pct && Number(data.market_pulse.surge_pct) > 0 ? (
+              `Inquiries for '${data.market_pulse.trend || 'popular items'}' are up ${data.market_pulse.surge_pct}% in your zone. Catalog pricing averages ₦${Number(data.market_pulse.avg_price).toLocaleString()}.`
             ) : (
-              `Catalog active with '${data.market_pulse.trend}' (averaging ₦${data.market_pulse.avg_price.toLocaleString()}). Real-time buyer inquiries are streaming.`
+              `Catalog active with '${data.market_pulse.trend || 'popular items'}' (averaging ₦${Number(data.market_pulse.avg_price).toLocaleString()}). Real-time buyer inquiries are streaming.`
             )
           ) : (
             `Autonomous demand velocity is actively listening across WhatsApp channels. Sync your catalog to unlock SKU-level insights.`
@@ -448,7 +448,7 @@ export default function PulseScreen() {
       <View className="px-4">
         <DeepDiveRow title="Product Performance Matrix" c={c} onPress={() => router.push('/crm')} />
         <DeepDiveRow title="Customer Cohort Analysis" c={c} onPress={() => router.push('/crm')} />
-        <DeepDiveRow title="Conversation Analytics" c={c} onPress={() => router.push('/inbox')} />
+        <DeepDiveRow title="Conversation Analytics" c={c} onPress={() => router.push('/(tabs)/inbox')} />
         <DeepDiveRow title="Logistics Scorecard" c={c} onPress={() => router.push('/finance')} />
       </View>
     </ScrollView>

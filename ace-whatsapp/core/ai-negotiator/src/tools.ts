@@ -666,10 +666,93 @@ async function closeDeal(
   if (!ctx.authorizedRange) {
     return { output: { ok: false, error: "No authorized range loaded." } };
   }
+  if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
+    return { output: { ok: false, error: "Invalid final price. Price must be a positive number." } };
+  }
   if (finalPrice < ctx.authorizedRange.floor) {
     return {
       output: { ok: false, error: `₦${finalPrice} is below floor ₦${ctx.authorizedRange.floor}.` },
     };
+  }
+
+  // Edge case 1: Validate customerId
+  const rawCustomerId = typeof ctx.customerId === "string" ? ctx.customerId.trim() : "";
+  if (!rawCustomerId || rawCustomerId === "undefined" || rawCustomerId === "null") {
+    return { output: { ok: false, error: "Invalid customer ID. A valid customer phone number or identifier is required." } };
+  }
+
+  // Edge case 2: Validate items array
+  if (!Array.isArray(items) || items.length === 0) {
+    return { output: { ok: false, error: "Order items cannot be empty. At least one item is required to close a deal." } };
+  }
+
+  // Edge case 3: Validate individual items and positive quantities
+  for (const it of items) {
+    const q = Number(it.quantity);
+    if (!Number.isFinite(q) || q <= 0 || !Number.isInteger(q)) {
+      return { output: { ok: false, error: `Invalid quantity '${it.quantity}' for item '${it.name || it.sku}'. Quantity must be a positive integer.` } };
+    }
+    const up = Number(it.unitPrice);
+    if (!Number.isFinite(up) || up <= 0) {
+      return { output: { ok: false, error: `Invalid unit price '${it.unitPrice}' for item '${it.name || it.sku}'. Price must be a positive number.` } };
+    }
+  }
+
+  // Edge case 4: Product catalog validation & atomic stock reservation (eliminating zero stock, negative stock, and race conditions)
+  const reservedProducts: { id: string; qty: number }[] = [];
+  try {
+    for (const it of items) {
+      const qty = Number(it.quantity);
+      const prodRows = await sql<{ id: string; sku: string; name: string; stock: number }[]>`
+        SELECT id, sku, name, COALESCE(stock, quantity, 0) as stock
+        FROM products
+        WHERE (merchant_id = ${ctx.merchantId}::uuid OR tenant_id = ${ctx.merchantId}::uuid)
+          AND (sku = ${it.sku} OR id::text = ${it.sku})
+          AND deleted_at IS NULL
+        LIMIT 1
+      `.catch(() => []);
+
+      if (prodRows.length === 0) {
+        // Rollback any earlier reservations
+        for (const res of reservedProducts) {
+          await sql`UPDATE products SET stock = stock + ${res.qty}, quantity = quantity + ${res.qty} WHERE id = ${res.id}::uuid`.catch(() => {});
+        }
+        return { output: { ok: false, error: `Product '${it.name || it.sku}' not found in store catalog.` } };
+      }
+
+      const prod = prodRows[0];
+      // Atomic reservation under condition: stock >= requested quantity
+      const updateRes = await sql<{ id: string; stock: number }[]>`
+        UPDATE products
+        SET stock = stock - ${qty},
+            quantity = GREATEST(quantity - ${qty}, 0),
+            updated_at = NOW()
+        WHERE id = ${prod.id}::uuid
+          AND (merchant_id = ${ctx.merchantId}::uuid OR tenant_id = ${ctx.merchantId}::uuid)
+          AND COALESCE(stock, quantity, 0) >= ${qty}
+        RETURNING id, stock
+      `.catch(() => []);
+
+      if (updateRes.length === 0) {
+        // Insufficient stock or concurrent race condition lost
+        for (const res of reservedProducts) {
+          await sql`UPDATE products SET stock = stock + ${res.qty}, quantity = quantity + ${res.qty} WHERE id = ${res.id}::uuid`.catch(() => {});
+        }
+        return {
+          output: {
+            ok: false,
+            error: `Insufficient stock for product '${prod.name}' (SKU: ${prod.sku}). Requested: ${qty}, Available: ${prod.stock}.`
+          }
+        };
+      }
+
+      reservedProducts.push({ id: prod.id, qty });
+    }
+  } catch (err: any) {
+    for (const res of reservedProducts) {
+      await sql`UPDATE products SET stock = stock + ${res.qty}, quantity = quantity + ${res.qty} WHERE id = ${res.id}::uuid`.catch(() => {});
+    }
+    return { output: { ok: false, error: `Stock reservation check failed: ${err.message}` } };
   }
 
   const mRows = await sql<{ physical_address: any; supports_pickup: boolean }[]>`
@@ -696,21 +779,30 @@ async function closeDeal(
 
     // Persist draft order
     try {
+      const totalQty = items.reduce((s, it) => s + Number(it.quantity || 1), 0);
       await sql`
-        INSERT INTO orders (id, merchant_id, customer_id, items, total_amount, state, fulfillment_type, pickup_address, created_at, updated_at)
+        INSERT INTO orders (
+          id, merchant_id, tenant_id, customer_id, items, qty, total_amount, state, status, fulfillment_type, pickup_address, created_at, updated_at
+        )
         VALUES (
           ${orderId}::uuid,
           ${ctx.merchantId}::uuid,
-          ${ctx.customerId},
+          ${ctx.merchantId}::uuid,
+          ${rawCustomerId},
           ${jsonb(items)},
+          ${totalQty},
           ${finalPrice},
           ${jsonb(newOrderState)},
+          'pending'::order_status,
           ${chosenFulfillment},
           ${chosenFulfillment === 'pickup' ? pickupAddress : null},
           now(),
           now()
         )
-        ON CONFLICT (id) DO UPDATE SET state = ${jsonb(newOrderState)}, updated_at = now()
+        ON CONFLICT (id) DO UPDATE SET
+          state = ${jsonb(newOrderState)},
+          total_amount = ${finalPrice},
+          updated_at = now()
       `;
     } catch (dbErr) {
       logger.warn("[closeDeal] DB insert notice (continuing in-memory state):", dbErr);
@@ -719,7 +811,7 @@ async function closeDeal(
     // Telemetry: Capture state transition for TrustScore signals
     dataIntelligence.captureOrderStateChange({
       merchantId: ctx.merchantId,
-      customerId: ctx.customerId,
+      customerId: rawCustomerId,
       orderId,
       fromState: ctx.orderState.status,
       toState: newOrderState.status,
@@ -738,6 +830,10 @@ async function closeDeal(
       newArc,
     };
   } catch (err) {
+    // If state machine transition failed, release reserved inventory
+    for (const res of reservedProducts) {
+      await sql`UPDATE products SET stock = stock + ${res.qty}, quantity = quantity + ${res.qty} WHERE id = ${res.id}::uuid`.catch(() => {});
+    }
     if (err instanceof TransitionError) return { output: { ok: false, error: err.message } };
     throw err;
   }

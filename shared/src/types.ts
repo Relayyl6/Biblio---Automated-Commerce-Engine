@@ -43,7 +43,32 @@ export type MessageContent =
       /** MIME type of the image, e.g. "image/jpeg". Required when base64 is present. */
       mimeType?: string;
     }
-  | { type: "interactive"; payload: unknown };
+  | { type: "interactive"; payload: unknown }
+  | {
+      type: "document";
+      mediaId?: string;
+      mediaUrl?: string;
+      filename?: string;
+      caption?: string;
+      mimeType?: string;
+      base64?: string;
+    }
+  | {
+      type: "location";
+      latitude: number;
+      longitude: number;
+      name?: string;
+      address?: string;
+      url?: string;
+    }
+  | {
+      type: "contact";
+      contacts: Array<{
+        displayName: string;
+        vcard?: string;
+        phone?: string;
+      }>;
+    };
 
 /** Raw webhook payload, normalized from WhatsApp's verbose Graph API shape. (Legacy Phase 1) */
 export interface InboundMessage {
@@ -169,6 +194,7 @@ export type OrderEvent =
   | { type: "PAYMENT_TIMEOUT" }
   | { type: "RIDER_ASSIGNED"; trackingUrl: string }
   | { type: "DELIVERY_CONFIRMED" }
+  | { type: "DELIVERY_FAILED"; reason?: string }
   | { type: "ORDER_CANCELLED"; reason: string };
 
 /** A message the agent wants to send back to the customer. */
@@ -221,6 +247,12 @@ export interface MerchantContext {
   businessPolicies: string | null;
   deliveryInfo: string | null;
   dialect: Dialect;
+  operatingHours?: any;
+  softMode?: boolean;
+  friendPricing?: any;
+  cancelWindowMinutes?: number;
+  allowList?: string[];
+  denyList?: string[];
 }
 
 /**

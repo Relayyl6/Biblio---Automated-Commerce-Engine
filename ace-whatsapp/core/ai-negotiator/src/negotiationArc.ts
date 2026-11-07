@@ -162,7 +162,7 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
         stage: "counter",
         customerLastOffer: event.customerOffer,
         turns: [
-          ...arc.turns,
+          ...(arc.turns || []),
           {
             role: "customer",
             offer: event.customerOffer,
@@ -186,7 +186,7 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
         tacticsDeployed: nextTactics,
         scarcitySignalDeployed: arc.scarcitySignalDeployed || isScarcity,
         turns: [
-          ...arc.turns,
+          ...(arc.turns || []),
           {
             role: "agent",
             offer: event.agentOffer,
@@ -209,7 +209,7 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
         agentLastOffer: event.agentOffer,
         tacticsDeployed: addTactic(arc.tacticsDeployed, "bundle_pivot"),
         turns: [
-          ...arc.turns,
+          ...(arc.turns || []),
           {
             role: "agent",
             offer: event.agentOffer,
@@ -231,7 +231,7 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
         futureCreditAttempted: true,
         tacticsDeployed: addTactic(arc.tacticsDeployed, "future_credit"),
         turns: [
-          ...arc.turns,
+          ...(arc.turns || []),
           {
             role: "agent",
             tactic: "future_credit",
@@ -280,7 +280,7 @@ export function advanceArc(arc: NegotiationArc, event: ArcEvent): NegotiationArc
         finalPrice: event.finalPrice,
         agentLastOffer: event.finalPrice,
         turns: [
-          ...arc.turns,
+          ...(arc.turns || []),
           {
             role: "agent",
             offer: event.finalPrice,
@@ -383,7 +383,7 @@ export const TERMINAL_STAGES = new Set<ArcStage>(["close", "escalate", "abandone
 export const MAX_NEGOTIATION_ATTEMPTS = 3;
 
 export function negotiationAttempts(arc: NegotiationArc): number {
-  return arc.turns.filter((t) => t.role === "agent" && (t.offer !== undefined || t.offeredPrice !== undefined)).length;
+  return (arc.turns || []).filter((t) => t.role === "agent" && (t.offer !== undefined || t.offeredPrice !== undefined)).length;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { sql, redis } from "@ace/shared/clients";
+import { sql, redis, jsonb } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 import Groq from "groq-sdk";
@@ -347,6 +347,22 @@ export const inventoryTools = [
   {
     "type": "function",
     "function": {
+      "name": "reserve_inventory",
+      "description": "Atomically reserve stock for an item to prevent overselling or race conditions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string", "description": "Product SKU to reserve" },
+          "quantity": { "type": "number", "description": "Quantity to reserve (positive integer)" },
+          "orderId": { "type": "string", "description": "Optional order reference" }
+        },
+        "required": ["sku", "quantity"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "extract_and_enrich_product",
       "description": "Extract structured product details from unstructured natural language (e.g. 'Blue Ankara with white shine shine 45k 3 yards left') or voice note transcription and image. Auto-extracts title, category, price, floor price, stock, colors, custom specifications, custom properties, and tags. Auto-saves to catalog unless autoSave is false.",
       "parameters": {
@@ -478,36 +494,37 @@ Extract structured JSON strictly with these fields:
         await logger.warn("[extract_and_enrich_product] Embedding generation skipped", embedErr);
       }
 
+      const descJson = JSON.stringify({ text: extracted.description || rawText });
+      const metadataJson = JSON.stringify({ floor: extracted.floor || (extracted.price * 0.85), tags: tagsArr });
+
       if (embeddingStr) {
         await sql`
           INSERT INTO products (
-            merchant_id, sku, name, title, description, detailed_description,
-            price, regular_price, floor, quantity, category, subcategory,
-            images, colors, sizes, custom_specifications, custom_properties, tags,
-            image_url, available, status, image_embedding, updated_at
+            merchant_id, sku, name, description, detailed_description,
+            price, regular_price, stock, quantity, category, subcategory,
+            images, colors, sizes, custom_specifications, custom_properties,
+            metadata, image_url, available, status, image_embedding, updated_at
           ) VALUES (
-            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
-            ${extracted.description || rawText}, ${extracted.description || rawText},
-            ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
-            ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
-            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
-            ${imageUrl || null}, true, 'Active', ${embeddingStr}::vector, now()
+            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${descJson}::jsonb, ${extracted.description || rawText},
+            ${extracted.price}, ${extracted.price}, ${extracted.stock || 1}, ${extracted.stock || 1},
+            ${extracted.category || "General"}, ${extracted.subcategory || null},
+            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb,
+            ${metadataJson}::jsonb, ${imageUrl || null}, true, 'Active', ${embeddingStr}::vector, now()
           )
         `;
       } else {
         await sql`
           INSERT INTO products (
-            merchant_id, sku, name, title, description, detailed_description,
-            price, regular_price, floor, quantity, category, subcategory,
-            images, colors, sizes, custom_specifications, custom_properties, tags,
-            image_url, available, status, updated_at
+            merchant_id, sku, name, description, detailed_description,
+            price, regular_price, stock, quantity, category, subcategory,
+            images, colors, sizes, custom_specifications, custom_properties,
+            metadata, image_url, available, status, updated_at
           ) VALUES (
-            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${extracted.title},
-            ${extracted.description || rawText}, ${extracted.description || rawText},
-            ${extracted.price}, ${extracted.price}, ${extracted.floor || (extracted.price * 0.85)},
-            ${extracted.stock || 1}, ${extracted.category || "General"}, ${extracted.subcategory || null},
-            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb, ${tagsArr},
-            ${imageUrl || null}, true, 'Active', now()
+            ${merchantId}::uuid, ${sku}, ${extracted.title}, ${descJson}::jsonb, ${extracted.description || rawText},
+            ${extracted.price}, ${extracted.price}, ${extracted.stock || 1}, ${extracted.stock || 1},
+            ${extracted.category || "General"}, ${extracted.subcategory || null},
+            ${imagesJson}::jsonb, ${colorsJson}::jsonb, ${sizesArr}, ${specsJson}::jsonb, ${propsJson}::jsonb,
+            ${metadataJson}::jsonb, ${imageUrl || null}, true, 'Active', now()
           )
         `;
       }
@@ -669,33 +686,64 @@ Extract structured JSON strictly with these fields:
   add_inventory: async (merchantId: string, args: any) => {
     let count = 0;
     try {
-      for (const item of (args.items || [])) {
-          const sku = "PROD-" + crypto.randomBytes(4).toString('hex').toUpperCase();
+      // Support both single item (from tool schema: { name, price, stock }) and batch ({ items: [...] })
+      const rawItems = Array.isArray(args.items) && args.items.length > 0
+        ? args.items
+        : (args.name ? [{ name: args.name, price: args.price, stock: args.stock, image_url: args.image_url }] : []);
+
+      if (rawItems.length === 0) {
+        return "Product name and price are required to add inventory.";
+      }
+
+      for (const item of rawItems) {
+        if (!item.name) continue;
+        const price = Math.max(0, Number(item.price || 0));
+        const stock = Math.max(0, Number(item.stock || 0));
+        const sku = "PROD-" + crypto.randomBytes(4).toString('hex').toUpperCase();
+        
+        // 1. Check if similar product exists
+        const existing = await sql`
+          SELECT id FROM products 
+          WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid) 
+            AND name ILIKE ${item.name}
+            AND deleted_at IS NULL
+          LIMIT 1
+        `.catch(() => []);
+        
+        if (existing.length === 0) {
+          // 2. Insert product
+          const inserted = await sql`
+            INSERT INTO products (merchant_id, sku, name, price, regular_price, stock, quantity, image_url, active, last_posted_at, created_at, updated_at) 
+            VALUES (
+              ${merchantId}::uuid, ${sku}, ${item.name}, ${price}, ${price}, ${stock}, ${stock}, 
+              ${item.image_url || null}, true, ${item.post_to_status ? sql`now()` : null}, now(), now()
+            )
+            RETURNING id
+          `;
           
-          // 1. Check if similar product exists
-          const existing = await sql`SELECT id FROM products WHERE merchant_id = ${merchantId} AND name ILIKE ${item.name}`;
-          
-          if (existing.length === 0) {
-              // 2. Insert product
-              const inserted = await sql`
-                  INSERT INTO products (merchant_id, sku, name, price, stock, image_url, last_posted_at) 
-                  VALUES (${merchantId}, ${sku}, ${item.name}, ${item.price}, ${item.stock || 0}, ${item.image_url || null}, ${item.post_to_status ? sql`now()` : null})
-                  RETURNING id
-              `;
-              
-              // 3. Trigger smart categorization job via Redis
-              await redis.lpush('jobs:categorize_product', JSON.stringify({ productId: inserted[0].id, name: item.name }));
-              count++;
+          // 3. Trigger smart categorization job via Redis
+          if (inserted.length > 0) {
+            await redis.lpush('jobs:categorize_product', JSON.stringify({ productId: inserted[0].id, name: item.name })).catch(() => {});
+            count++;
           }
+        } else {
+          // Update stock of existing product
+          await sql`
+            UPDATE products 
+            SET stock = stock + ${stock}, quantity = quantity + ${stock}, price = ${price > 0 ? price : sql`price`}, updated_at = now()
+            WHERE id = ${existing[0].id}
+          `.catch(() => {});
+          count++;
+        }
       }
       
       // Trigger background sync
-      await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId }));
+      await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId })).catch(() => {});
       
-      return `Processed ${args.items?.length || 0} items. Added ${count} new unique items to catalog.`;
-    } catch(e) {
+      return `Processed ${rawItems.length} item(s). Catalog updated with ${count} product(s).`;
+    } catch(e: any) {
       await logger.error("[add_inventory error]", e);
-      return { ok: false, error: String(e) };
+      return { ok: false, error: String(e?.message || e) };
     }
   },
   update_inventory: async (merchantId: string, args: any) => {
@@ -703,10 +751,15 @@ Extract structured JSON strictly with these fields:
       const { sku, price, stock, name } = args;
       if (!sku) return "SKU is required to update inventory.";
       if (price !== undefined) {
-        await sql`UPDATE products SET price = ${price}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
+        const numPrice = Number(price);
+        if (!Number.isFinite(numPrice) || numPrice < 0) return "Invalid price. Price must be a non-negative number.";
+        await sql`UPDATE products SET price = ${numPrice}, regular_price = ${numPrice}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
       }
       if (stock !== undefined) {
-        await sql`UPDATE products SET stock = ${stock}, quantity = ${stock}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
+        const numStock = Number(stock);
+        if (!Number.isFinite(numStock) || numStock < 0) return "Invalid stock. Stock must be a non-negative integer.";
+        const intStock = Math.round(numStock);
+        await sql`UPDATE products SET stock = ${intStock}, quantity = ${intStock}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
       }
       if (name) {
         await sql`UPDATE products SET name = ${name}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
@@ -719,6 +772,7 @@ Extract structured JSON strictly with these fields:
   },
   delete_inventory: async (merchantId: string, args: any) => {
     try {
+      if (!args.sku) return "SKU is required to delete inventory.";
       await sql`
         UPDATE products SET active = false, deleted_at = NOW()
         WHERE (sku = ${args.sku} OR id::text = ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
@@ -730,11 +784,12 @@ Extract structured JSON strictly with these fields:
   },
   search_inventory: async (merchantId: string, args: any) => {
     try {
-      const q = `%${args.query || ''}%`;
+      const q = `%${(args.query || '').trim()}%`;
       const results = await sql`
         SELECT id, name, sku, price, COALESCE(quantity, stock, 0) as stock, category
         FROM products 
         WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          AND deleted_at IS NULL
           AND (name ILIKE ${q} OR sku ILIKE ${q} OR category ILIKE ${q})
         LIMIT 10
       `.catch(() => []);
@@ -744,17 +799,32 @@ Extract structured JSON strictly with these fields:
     }
   },
   auto_restock_alert_config: async (merchantId: string, args: any) => {
-    return `Auto-restock notifications configured: threshold set to ${args.threshold || 5} units.`;
+    const thresh = Math.max(1, Math.round(Number(args.threshold) || 5));
+    return `Auto-restock notifications configured: threshold set to ${thresh} units.`;
   },
   bulk_price_update: async (merchantId: string, args: any) => {
     try {
-      const pct = Number(args.percentChange || 0);
-      if (pct === 0) return "No price change percentage specified.";
+      const pct = Number(args.percentage !== undefined ? args.percentage : args.percentChange || 0);
+      if (!Number.isFinite(pct) || pct === 0) return "No price change percentage specified.";
       const multiplier = 1 + (pct / 100);
+      const categoryFilter = args.category ? String(args.category).trim() : null;
+
+      if (categoryFilter) {
+        await sql`
+          UPDATE products 
+          SET price = ROUND((price * ${multiplier})::numeric, 0), updated_at = NOW()
+          WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+            AND deleted_at IS NULL
+            AND category ILIKE ${'%' + categoryFilter + '%'}
+        `;
+        return `Prices in category '${categoryFilter}' updated by ${pct > 0 ? '+' : ''}${pct}%`;
+      }
+
       await sql`
         UPDATE products 
         SET price = ROUND((price * ${multiplier})::numeric, 0), updated_at = NOW()
         WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          AND deleted_at IS NULL
       `;
       return `Catalog prices updated by ${pct > 0 ? '+' : ''}${pct}%`;
     } catch (e) {
@@ -766,11 +836,19 @@ Extract structured JSON strictly with these fields:
   },
   categorize_product: async (merchantId: string, args: any) => {
     try {
+      const { sku } = args;
+      if (!sku) return "SKU is required to categorize product.";
+      const category = args.category || (Array.isArray(args.tags) ? args.tags[0] : String(args.tags || 'General'));
+      const tags = Array.isArray(args.tags) ? args.tags : (args.category ? [args.category] : []);
+      
       await sql`
-        UPDATE products SET category = ${args.category}, updated_at = NOW()
-        WHERE (sku = ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+        UPDATE products 
+        SET category = ${category},
+            metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{tags}', ${jsonb(tags)}),
+            updated_at = NOW()
+        WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
       `;
-      return `SKU ${args.sku} categorized under '${args.category}'.`;
+      return `SKU ${sku} categorized under '${category}' (Tags: ${tags.join(', ')}).`;
     } catch (e) {
       return "Failed to categorize product.";
     }
@@ -820,6 +898,60 @@ Extract structured JSON strictly with these fields:
     return `Variant removed from product ${args.sku}.`;
   },
   set_minimum_order_quantity: async (merchantId: string, args: any) => {
-    return `Minimum order quantity for ${args.sku} set to ${args.moq || 1}.`;
+    const moq = Math.max(1, Math.round(Number(args.moq || args.quantity || 1)));
+    if (!args.sku) return "SKU is required to set minimum order quantity.";
+    await sql`
+      UPDATE products 
+      SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{moq}', ${moq}::jsonb), updated_at = NOW()
+      WHERE (sku = ${args.sku} OR id::text = ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+    `.catch(() => {});
+    return `Minimum order quantity for ${args.sku} set to ${moq}.`;
   },
+  reserve_inventory: async (merchantId: string, args: { sku: string; quantity: number; orderId?: string }) => {
+    const qty = Math.round(Number(args.quantity));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return { ok: false, error: "Invalid reservation quantity. Quantity must be a positive integer." };
+    }
+    if (!args.sku) return { ok: false, error: "Product SKU is required to reserve inventory." };
+
+    try {
+      const res = await sql<{ id: string; stock: number; name: string }[]>`
+        UPDATE products
+        SET stock = stock - ${qty}, quantity = GREATEST(quantity - ${qty}, 0), updated_at = NOW()
+        WHERE (sku = ${args.sku} OR id::text = ${args.sku})
+          AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          AND COALESCE(stock, quantity, 0) >= ${qty}
+        RETURNING id, stock, name
+      `.catch(() => []);
+
+      if (res.length === 0) {
+        const current = await sql<{ stock: number }[]>`
+          SELECT COALESCE(stock, quantity, 0) as stock FROM products
+          WHERE (sku = ${args.sku} OR id::text = ${args.sku})
+            AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          LIMIT 1
+        `.catch(() => []);
+        const avail = current[0]?.stock ?? 0;
+        return { ok: false, error: `Insufficient stock for SKU '${args.sku}'. Requested: ${qty}, Available: ${avail}.` };
+      }
+
+      // Record reservation in inventory_reservations if table exists
+      if (res[0]?.id) {
+        await sql`
+          INSERT INTO inventory_reservations (id, product_id, quantity, reserved_until, status)
+          VALUES (gen_random_uuid(), ${res[0].id}::uuid, ${qty}, NOW() + INTERVAL '30 minutes', 'active')
+        `.catch(() => {});
+      }
+
+      return {
+        ok: true,
+        reserved: qty,
+        remainingStock: res[0].stock,
+        message: `Successfully reserved ${qty} unit(s) of ${res[0].name}. Remaining stock: ${res[0].stock}.`
+      };
+    } catch (e: any) {
+      logger.error("[reserve_inventory error]", e);
+      return { ok: false, error: "Reservation failed: " + e.message };
+    }
+  }
 };

@@ -24,6 +24,7 @@ import { useAuthStore } from '../src/store/authStore';
 import { useAlert } from '../src/store/alertStore';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { InlineLoadingDots } from '../src/components/PulsingSkeleton';
+import { sanitizeCurrencyInput } from '../src/utils/sanitizers';
 
 const TOP_UP_TIERS = [
   { naira: 2000, tokens: 20000, label: 'Starter Pack' },
@@ -40,7 +41,7 @@ export default function TokensScreen() {
   const merchantId = useAuthStore(state => state.merchantId);
   const alert = useAlert();
 
-  const { data: tokenData, isLoading, refetch } = useTokens(merchantId || '');
+  const { data: tokenData, isLoading, isError, error, refetch } = useTokens(merchantId || '');
   const updateCapsMutation = useUpdateSpendCaps();
   const topUpMutation = useTopUpTokens();
 
@@ -52,8 +53,8 @@ export default function TokensScreen() {
 
   if (isLoading) return <LoadingScreen />;
 
-  const balanceTokens = tokenData?.balance_tokens ?? 50000;
-  const balanceNaira = tokenData?.balance_naira ?? 5000;
+  const balanceTokens = tokenData?.balance_tokens ?? (isError ? 0 : 50000);
+  const balanceNaira = tokenData?.balance_naira ?? (isError ? 0 : 5000);
   const dailyCap = tokenData?.daily_cap ?? 15000;
   const monthlyCap = tokenData?.monthly_cap ?? 100000;
   const spentToday = tokenData?.spent_today ?? 0;
@@ -62,7 +63,9 @@ export default function TokensScreen() {
   const usageBreakdown = tokenData?.usage_breakdown ?? [];
 
   // Threshold warning calculations
-  const monthlyPercentageUsed = monthlyCap > 0 ? (spentMonth / monthlyCap) * 100 : 0;
+  const safeMonthlyCap = Math.max(0, Number(monthlyCap) || 0);
+  const safeSpentMonth = Math.max(0, Number(spentMonth) || 0);
+  const monthlyPercentageUsed = safeMonthlyCap > 0 ? (safeSpentMonth / safeMonthlyCap) * 100 : 0;
   const isLowBalance = balanceNaira < 1500;
   const isCriticalBalance = balanceNaira < 500;
 
@@ -73,10 +76,14 @@ export default function TokensScreen() {
   };
 
   const handleSaveCaps = async () => {
-    const daily = Number(dailyCapInput);
-    const monthly = Number(monthlyCapInput);
-    if (isNaN(daily) || isNaN(monthly) || daily <= 0 || monthly <= 0) {
-      alert.warning('Invalid Limit', 'Please enter valid numerical amounts in Naira.');
+    const daily = sanitizeCurrencyInput(dailyCapInput, 0);
+    const monthly = sanitizeCurrencyInput(monthlyCapInput, 0);
+    if (daily <= 0 || monthly <= 0) {
+      alert.warning('Invalid Limit', 'Please enter positive numerical spend limits in Naira.');
+      return;
+    }
+    if (daily > monthly) {
+      alert.warning('Invalid Limit', 'Daily cap cannot exceed monthly cap.');
       return;
     }
     try {
@@ -106,9 +113,13 @@ export default function TokensScreen() {
   };
 
   const handleCustomTopUp = async () => {
-    const num = Number(customTopUp);
-    if (isNaN(num) || num < 500) {
-      alert.warning('Minimum Amount', 'Minimum top-up is ₦500.');
+    const num = sanitizeCurrencyInput(customTopUp, 0);
+    if (num < 500) {
+      alert.warning('Minimum Amount', 'Minimum top-up is ₦500. Negative or invalid amounts are not permitted.');
+      return;
+    }
+    if (num > 10000000) {
+      alert.warning('Maximum Exceeded', 'Maximum single top-up is ₦10,000,000.');
       return;
     }
     try {
@@ -140,6 +151,21 @@ export default function TokensScreen() {
       />
 
       <ScrollView className="flex-1 px-4" contentContainerStyle={{ paddingBottom: 120 }}>
+        {/* Connection or Query Error Banner */}
+        {isError && (
+          <View style={{ backgroundColor: c.dangerSoft, borderColor: c.danger }} className="p-4 rounded-2xl border mb-4 flex-row items-center justify-between">
+            <View className="flex-row items-center flex-1 mr-2">
+              <AlertTriangle size={18} color={c.danger} />
+              <Text style={{ color: c.danger }} className="text-xs font-semibold ml-2">
+                {(error as any)?.message || 'Failed to sync live token ledger.'}
+              </Text>
+            </View>
+            <Pressable onPress={() => refetch()} className="px-3 py-1.5 rounded-xl bg-red-500/10 active:opacity-70">
+              <Text style={{ color: c.danger }} className="text-xs font-bold">Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Low balance alert banner */}
         {(isLowBalance || isCriticalBalance) && (
           <Animated.View entering={FadeInDown.springify()} className="mb-4">
@@ -234,15 +260,15 @@ export default function TokensScreen() {
               <View>
                 <Text style={{ color: c.textSecondary }} className="text-xs">7-Day Burn Rate</Text>
                 <Text style={{ color: c.textPrimary }} className="text-xl font-bold mt-0.5">
-                  ₦{burnRate7d.toLocaleString()}
+                  ₦{Number(burnRate7d || 0).toLocaleString()}
                   <Text style={{ color: c.textTertiary }} className="text-xs font-normal">/wk</Text>
                 </Text>
               </View>
               <View className="items-end">
                 <Text style={{ color: c.textSecondary }} className="text-xs">Monthly Spend</Text>
                 <Text style={{ color: c.textPrimary }} className="text-xl font-bold mt-0.5">
-                  ₦{spentMonth.toLocaleString()}
-                  <Text style={{ color: c.textTertiary }} className="text-xs font-normal"> / ₦{monthlyCap.toLocaleString()}</Text>
+                  ₦{Number(spentMonth || 0).toLocaleString()}
+                  <Text style={{ color: c.textTertiary }} className="text-xs font-normal"> / ₦{Number(monthlyCap || 0).toLocaleString()}</Text>
                 </Text>
               </View>
             </View>
@@ -252,13 +278,13 @@ export default function TokensScreen() {
               <View
                 style={{
                   backgroundColor: monthlyPercentageUsed > 90 ? c.danger : monthlyPercentageUsed > 75 ? c.warning : c.accent,
-                  width: `${Math.min(100, Math.max(5, monthlyPercentageUsed))}%`,
+                  width: `${Math.min(100, Math.max(5, Number.isFinite(monthlyPercentageUsed) ? monthlyPercentageUsed : 0))}%`,
                   height: '100%',
                 }}
               />
             </View>
             <Text style={{ color: c.textTertiary }} className="text-[11px]">
-              {monthlyPercentageUsed.toFixed(1)}% of your ₦{monthlyCap.toLocaleString()} monthly safety cap used.
+              {(Number.isFinite(monthlyPercentageUsed) ? monthlyPercentageUsed : 0).toFixed(1)}% of your ₦{Number(monthlyCap || 0).toLocaleString()} monthly safety cap used.
             </Text>
           </View>
         </Animated.View>
@@ -294,11 +320,11 @@ export default function TokensScreen() {
                       {item.feature}
                     </Text>
                     <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-                      {item.tokens.toLocaleString()} tokens ({item.percentage}%)
+                      {Number(item.tokens || 0).toLocaleString()} tokens ({Number(item.percentage || 0)}%)
                     </Text>
                   </View>
                   <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
-                    ₦{item.naira.toLocaleString()}
+                    ₦{Number(item.naira || 0).toLocaleString()}
                   </Text>
                 </View>
               ))

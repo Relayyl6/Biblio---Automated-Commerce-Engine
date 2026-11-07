@@ -35,6 +35,20 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
 
   const translateX = useSharedValue(0);
 
+  const handleApproveAction = () => {
+    setIsDismissed(true);
+    if (typeof onApprove === 'function') {
+      onApprove(id);
+    }
+  };
+
+  const handleRejectAction = () => {
+    setIsDismissed(true);
+    if (typeof onReject === 'function') {
+      onReject(id);
+    }
+  };
+
   const panGesture = Gesture.Pan()
     .onUpdate((event) => {
       translateX.value = event.translationX;
@@ -42,13 +56,11 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
     .onEnd(() => {
       if (translateX.value > SWIPE_THRESHOLD) {
         translateX.value = withTiming(SCREEN_WIDTH * 1.5, { duration: 200 }, () => {
-          runOnJS(setIsDismissed)(true);
-          runOnJS(onApprove)(id);
+          runOnJS(handleApproveAction)();
         });
       } else if (translateX.value < -SWIPE_THRESHOLD) {
         translateX.value = withTiming(-SCREEN_WIDTH * 1.5, { duration: 200 }, () => {
-          runOnJS(setIsDismissed)(true);
-          runOnJS(onReject)(id);
+          runOnJS(handleRejectAction)();
         });
       } else {
         translateX.value = withSpring(0);
@@ -70,6 +82,8 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
   });
 
   if (isDismissed) return null;
+
+  const displayType = String(type || 'Draft').replace(/_/g, ' ');
 
   return (
     <View className="mb-4 relative rounded-[24px] overflow-hidden" style={{ minHeight: 100 }}>
@@ -94,7 +108,7 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
                 className="px-3 py-1 rounded-full"
               >
                 <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
-                  {type.replace('_', ' ')}
+                  {displayType}
                 </Text>
               </View>
 
@@ -122,8 +136,8 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
             )}
           </View>
           
-          <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-1">{title}</Text>
-          <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed">{subtitle}</Text>
+          <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-1">{title || 'Pending Draft'}</Text>
+          <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed">{subtitle || ''}</Text>
         </Animated.View>
       </GestureDetector>
     </View>

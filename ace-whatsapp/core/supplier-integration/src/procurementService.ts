@@ -1,8 +1,13 @@
 import { sql } from '@ace/shared/clients.js';
 import { ProcurementNode, RestockRequest, ChannelType } from './types';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 class ProcurementService {
   async registerNode(merchantId: string, node: Omit<ProcurementNode, 'id' | 'createdAt'>): Promise<ProcurementNode> {
+    if (!merchantId || !UUID_REGEX.test(merchantId)) {
+      throw new Error(`Invalid merchantId format: "${merchantId}" is not a valid UUID`);
+    }
     const result = await sql`
       INSERT INTO procurement_nodes (
         merchant_id,
@@ -12,7 +17,7 @@ class ProcurementService {
         categories,
         auto_restock_enabled
       ) VALUES (
-        ${merchantId},
+        ${merchantId}::uuid,
         ${node.name},
         ${node.channelType},
         ${node.channelId},
@@ -27,11 +32,12 @@ class ProcurementService {
   }
 
   async getNodesByCategory(merchantId: string, category: string): Promise<ProcurementNode[]> {
+    if (!merchantId || !UUID_REGEX.test(merchantId)) return [];
     const nodes = await sql`
       SELECT 
         id, merchant_id as "merchantId", name, channel_type as "channelType", channel_id as "channelId", categories, auto_restock_enabled as "autoRestockEnabled", created_at as "createdAt"
       FROM procurement_nodes
-      WHERE merchant_id = ${merchantId}
+      WHERE merchant_id = ${merchantId}::uuid
         AND auto_restock_enabled = true
         AND ${category} = ANY(categories)
     `;

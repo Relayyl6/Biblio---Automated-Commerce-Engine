@@ -3,37 +3,18 @@
 // This service has exactly ONE job: be the front door from Meta, and be
 // FAST and BORING about it.
 //
-// PRODUCTION ADDITIONS IN THIS VERSION (vs. the single-merchant draft):
+// PRODUCTION ADDITIONS IN THIS VERSION:
 //
-// 1) MULTI-TENANCY. A real ACE deployment serves many merchants, each with
-//    their own WhatsApp Business number (their own phone_number_id). Meta
-//    sends ALL of them to the SAME webhook URL — there's only one webhook
-//    per app, not one per merchant. So the first real job after parsing a
-//    message is "whose message is this?" — we resolve phone_number_id ->
-//    merchantId via a cached DB lookup and attach it before enqueueing.
-//    Skipping this means agentLoop has no idea which merchant's pricing
-//    rules / catalog / tone to use.
-//
-// 2) FAIL-CLOSED ENV VALIDATION. Import from shared/env — crash on boot if
-//    misconfigured, not on the first webhook.
-//
-// 3) HEALTH CHECK. Any real deployment (k8s, Fly, Render, ECS) needs a
-//    liveness/readiness endpoint to know when to route traffic to this
-//    instance and when to restart it.
-//
-// 4) GRACEFUL SHUTDOWN. On SIGTERM (every container platform sends this
-//    before killing a pod), stop accepting new connections, let in-flight
-//    requests finish, close the Redis/DB connections cleanly. Without
-//    this, deploys can silently drop a webhook mid-flight.
-//
-// 5) NO OPEN CORS. This endpoint is only ever called server-to-server by
-//    Meta — no browser ever hits it. `cors: { origin: "*" }` on a webhook
-//    is meaningless for security (Meta doesn't send an Origin header you
-//    care about) but it's also dead weight and can mask misconfiguration
-//    elsewhere. Removed.
-//
-// 6) DEFENSIVE JSON PARSING + PER-MESSAGE ERROR ISOLATION. One malformed
-//    message in a batch of 5 must not take down the other 4.
+// 1) MULTI-TENANCY: Resolves phone_number_id -> merchantId via a cached DB lookup.
+// 2) FAIL-CLOSED ENV VALIDATION: Crash on boot if misconfigured.
+// 3) HEALTH CHECK: Liveness/readiness endpoint.
+// 4) GRACEFUL SHUTDOWN: Drains requests and workers on SIGTERM.
+// 5) RAW BODY HMAC VERIFICATION: Verifies x-hub-signature-256 with timing-safe comparison.
+// 6) DURABLE QUEUE & IDEMPOTENT DEDUPLICATION:
+//    - Pushes incoming messages into BullMQ with deterministic jobId (wa_inbound_<waMessageId>)
+//      to prevent duplicate deliveries when Meta retries on network blips.
+//    - Comprehensive payload parsing: text, audio, image, button, interactive (lists/buttons),
+//      document, location, contacts.
 
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
@@ -60,25 +41,39 @@ await app.register(rawBody, { global: false, runFirst: true });
 // Instead of processing in-memory (which risks data loss if the DB is
 // cold/sleeping or the pod crashes), we push raw webhooks into BullMQ.
 const webhookQueue = new Queue("inbound-webhooks", {
-  connection: { ...redis.options, maxRetriesPerRequest: null }
+  connection: { ...redis.options, maxRetriesPerRequest: null },
 });
 
-const webhookWorker = new Worker("inbound-webhooks", async (job) => {
-  await processMessage(job.data as InboundMessage);
-}, { 
-  connection: { ...redis.options, maxRetriesPerRequest: null },
-  concurrency: 5
-});
+const webhookWorker = new Worker(
+  "inbound-webhooks",
+  async (job) => {
+    await processMessage(job.data as InboundMessage);
+  },
+  {
+    connection: { ...redis.options, maxRetriesPerRequest: null },
+    concurrency: 5,
+  }
+);
 
 webhookWorker.on("error", (err) => app.log.error(err, "Webhook worker Redis error"));
-webhookWorker.on("failed", (job, err) => app.log.error({ jobId: job?.id, err }, "Webhook processing failed, will retry"));
+webhookWorker.on("failed", (job, err) =>
+  app.log.error({ jobId: job?.id, err }, "Webhook processing failed, will retry")
+);
 
 // ─── Merchant resolution cache ─────────────────────────────────────────────
-// phone_number_id -> merchantId rarely changes (only on merchant onboarding
-// or number rotation), so a short-TTL in-memory cache avoids a DB round trip
-// on every single inbound message without risking long-lived staleness.
 const merchantCache = new Map<string, { merchantId: string; expiresAt: number }>();
 const MERCHANT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function purgeExpiredMerchantCache(): void {
+  const now = Date.now();
+  for (const [key, item] of merchantCache.entries()) {
+    if (now > item.expiresAt) {
+      merchantCache.delete(key);
+    }
+  }
+}
+
+setInterval(purgeExpiredMerchantCache, 60_000).unref();
 
 async function resolveMerchantId(phoneNumberId: string): Promise<string | null> {
   const cached = merchantCache.get(phoneNumberId);
@@ -129,7 +124,7 @@ app.post(
   async (req, reply) => {
     const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
 
-    if (!verifySignature(req.rawBody as Buffer, signatureHeader, env.WHATSAPP_APP_SECRET)) {
+    if (!req.rawBody || !verifySignature(req.rawBody as Buffer, signatureHeader, env.WHATSAPP_APP_SECRET)) {
       return reply.code(401).send();
     }
 
@@ -138,30 +133,32 @@ app.post(
       body = JSON.parse((req.rawBody as Buffer).toString("utf-8"));
     } catch (err) {
       app.log.warn(err, "failed to parse webhook body — acking anyway, Meta will not retry a 400 usefully");
-      return reply.code(200).send(); // ack; a malformed body from Meta itself is not our bug to retry into
+      return reply.code(200).send();
     }
 
     const messages = extractMessages(body);
 
     // Ack Meta immediately — everything below this point must be fast and
-    // must not be able to make Meta wait, even if a merchant lookup or
-    // Redis call is slow.
+    // must not be able to make Meta wait.
     reply.code(200).send();
-  
-    // Push raw payloads to durable queue immediately. 
-    // This safely decouples the webhook from Postgres cold-starts WITHOUT risking data loss.
+
+    // Push raw payloads to durable queue immediately.
+    // Set jobId to waMessageId so BullMQ natively deduplicates duplicate webhook deliveries.
     for (const msg of messages) {
-      webhookQueue.add("process-webhook", msg, {
-        attempts: 5,
-        backoff: { type: "exponential", delay: 2000 },
-        removeOnComplete: true
-      }).catch(err => {
-        app.log.error({ err, msg }, "CRITICAL: failed to enqueue inbound message");
-      });
+      webhookQueue
+        .add("process-webhook", msg, {
+          jobId: `wa_inbound_${msg.waMessageId}`,
+          attempts: 5,
+          backoff: { type: "exponential", delay: 2000 },
+          removeOnComplete: true,
+        })
+        .catch((err) => {
+          app.log.error({ err, msg }, "CRITICAL: failed to enqueue inbound message");
+        });
     }
 
     return reply;
-  },
+  }
 );
 
 async function processMessage(msg: InboundMessage): Promise<void> {
@@ -172,28 +169,30 @@ async function processMessage(msg: InboundMessage): Promise<void> {
     return;
   }
 
-  const merchantId = await resolveMerchantId(msg.toPhoneNumberId);
-  if (!merchantId) {
-    // A message arrived for a phone_number_id we don't recognize — either a
-    // merchant mid-offboarding, a stale webhook subscription, or a config
-    // bug. Don't silently drop it: log loud enough to alert on.
-    app.log.error({ phoneNumberId: msg.toPhoneNumberId }, "no merchant mapped to this phone_number_id");
-    return;
+  try {
+    const merchantId = await resolveMerchantId(msg.toPhoneNumberId);
+    if (!merchantId) {
+      app.log.error({ phoneNumberId: msg.toPhoneNumberId }, "no merchant mapped to this phone_number_id");
+      return;
+    }
+
+    // Refresh the 24h WhatsApp free-reply service window for this customer.
+    const windowKey = `conv:${merchantId}:${msg.fromPhone}:window`;
+    const windowExpiresAt = msg.timestamp + 24 * 60 * 60 * 1000;
+    await redis.set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25);
+
+    await enqueueInboundMessage({ ...msg, merchantId });
+  } catch (err) {
+    // If downstream enqueuing fails, delete the idempotency key so BullMQ retry attempts can succeed!
+    await redis.del(dedupeKey).catch(() => {});
+    throw err;
   }
-
-  // Refresh the 24h WhatsApp free-reply service window for this customer.
-  // comms-router reads this before sending to decide free-form vs. template.
-  const windowKey = `conv:${merchantId}:${msg.fromPhone}:window`;
-  const windowExpiresAt = msg.timestamp + 24 * 60 * 60 * 1000;
-  await redis.set(windowKey, String(windowExpiresAt), "EX", 60 * 60 * 25);
-
-  await enqueueInboundMessage({ ...msg, merchantId });
 }
 
 function verifySignature(
   rawBody: Buffer,
   signatureHeader: string | undefined,
-  appSecret: string,
+  appSecret: string
 ): boolean {
   if (!signatureHeader) return false;
   const expected =
@@ -223,19 +222,81 @@ function extractMessages(body: unknown): InboundMessage[] {
         };
 
         if (m.type === "text") {
-          out.push({ ...base, content: { type: "text", text: m.text.body } });
+          out.push({ ...base, content: { type: "text", text: m.text?.body || "" } });
         } else if (m.type === "audio") {
-          out.push({ ...base, content: { type: "audio", mediaId: m.audio.id } });
+          out.push({ ...base, content: { type: "audio", mediaId: m.audio?.id } });
         } else if (m.type === "image") {
           out.push({
             ...base,
-            content: { type: "image", mediaId: m.image.id, caption: m.image.caption },
+            content: { type: "image", mediaId: m.image?.id, caption: m.image?.caption },
           });
         } else if (m.type === "interactive") {
-          out.push({ ...base, content: { type: "interactive", payload: m.interactive } });
+          let payload = m.interactive;
+          if (m.interactive?.type === "button_reply") {
+            payload = {
+              type: "button_reply",
+              id: m.interactive.button_reply?.id,
+              text: m.interactive.button_reply?.title,
+              title: m.interactive.button_reply?.title,
+            };
+          } else if (m.interactive?.type === "list_reply") {
+            payload = {
+              type: "list_reply",
+              id: m.interactive.list_reply?.id,
+              title: m.interactive.list_reply?.title,
+              text: m.interactive.list_reply?.title,
+              description: m.interactive.list_reply?.description,
+            };
+          }
+          out.push({ ...base, content: { type: "interactive", payload } });
+        } else if (m.type === "button") {
+          out.push({
+            ...base,
+            content: {
+              type: "interactive",
+              payload: {
+                type: "button_reply",
+                id: m.button?.payload,
+                text: m.button?.text,
+              },
+            },
+          });
+        } else if (m.type === "document") {
+          out.push({
+            ...base,
+            content: {
+              type: "document",
+              mediaId: m.document?.id,
+              filename: m.document?.filename,
+              caption: m.document?.caption,
+              mimeType: m.document?.mime_type,
+            },
+          });
+        } else if (m.type === "location") {
+          out.push({
+            ...base,
+            content: {
+              type: "location",
+              latitude: m.location?.latitude ?? 0,
+              longitude: m.location?.longitude ?? 0,
+              name: m.location?.name,
+              address: m.location?.address,
+              url: m.location?.url,
+            },
+          });
+        } else if (m.type === "contacts") {
+          const contacts = (m.contacts || []).map((c: any) => ({
+            displayName: c.name?.formatted_name || c.name?.first_name || "Contact",
+            phone: c.phones?.[0]?.phone,
+          }));
+          out.push({
+            ...base,
+            content: {
+              type: "contact",
+              contacts,
+            },
+          });
         }
-        // Other types (location, contacts, reactions) — extend as needed.
-        // Deliberately not throwing on unknown types.
       }
     }
   }
@@ -246,22 +307,20 @@ function extractMessages(body: unknown): InboundMessage[] {
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 
 app.post("/sms/webhook", async (req, reply) => {
-  // Africa's Talking / Twilio payload: { from: '+234800...', text: '1', to: '...' }
   const b = req.body as { from: string; text: string };
   if (!b.from || !b.text) return reply.send({ ok: false });
 
-  // Resolve merchant by their registered phone number ID
   const rows = await sql<{ id: string }[]>`
     select id from merchants where phone_number_id = ${b.from} limit 1
   `;
   if (!rows[0]) {
     app.log.warn({ phone: b.from }, "SMS received from unknown merchant phone");
-    return reply.send({ ok: true }); // Ack provider
+    return reply.send({ ok: true });
   }
 
   const merchantId = rows[0].id;
   const handled = await vendorCommunique.handleMerchantReply(merchantId, b.text);
-  
+
   if (handled) {
     app.log.info({ merchantId, text: b.text }, "Processed Vendor Communique SMS reply");
   }
@@ -276,7 +335,7 @@ app.listen({ port: env.PORT, host: "0.0.0.0" }).then(() => {
 
 async function shutdown(signal: string) {
   app.log.info(`received ${signal}, shutting down gracefully`);
-  await app.close(); // stops accepting new connections, drains in-flight requests
+  await app.close();
   await webhookWorker.close();
   await redis.quit();
   process.exit(0);

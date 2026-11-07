@@ -522,6 +522,45 @@ export default function SupportScreen() {
           )}
         </View>
 
+        {/* Legal & Regulatory Compliance (NDPA 2023 & App Store 5.1.1(v)) */}
+        <SectionHeader label="Legal & Compliance Links" c={c} />
+        <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="rounded-3xl border mb-6">
+          <ContactRow
+            icon={<ShieldCheck size={20} color="#10B981" />}
+            iconBg="#10B9811A"
+            title="Privacy Policy"
+            subtitle="NDPA 2023 & statutory data disclosures"
+            onPress={() => {
+              const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+              Linking.openURL(`${base}/legal/privacy`);
+            }}
+            c={c}
+          />
+          <ContactRow
+            icon={<FileText size={20} color="#3B82F6" />}
+            iconBg="#3B82F61A"
+            title="Terms of Service"
+            subtitle="6-Layer Veto, risk limits & acceptable use"
+            onPress={() => {
+              const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+              Linking.openURL(`${base}/legal/terms`);
+            }}
+            c={c}
+          />
+          <ContactRow
+            icon={<Lock size={20} color="#EF4444" />}
+            iconBg="#EF44441A"
+            title="Account & Data Deletion"
+            subtitle="Public deletion form (App Store 5.1.1(v))"
+            onPress={() => {
+              const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
+              Linking.openURL(`${base}/legal/deletion`);
+            }}
+            last
+            c={c}
+          />
+        </View>
+
         {/* Legal & Controller Footer */}
         <View style={{ borderTopWidth: 1, borderColor: c.border }} className="pt-4 items-center">
           <Text style={{ color: c.textTertiary }} className="text-[11px] font-bold text-center">

@@ -162,6 +162,7 @@ export async function convertTokensToNgn(
   tokens: number,
   costPerMillionUsd: number = 0.79 // Groq Llama 3.3 70B default
 ): Promise<number> {
+  if (tokens <= 0) return 0;
   const costUsd = (tokens / 1_000_000) * costPerMillionUsd;
   const rate = await getLiveUsdNgnRate();
   return Math.max(1, Math.ceil(costUsd * rate));

@@ -94,7 +94,22 @@ export async function sendWhatsAppMessage(
   merchantId: string,
 ): Promise<void> {
   const accessToken = await resolveAccessToken(merchantId);
-  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+  
+  let resolvedPhoneId = phoneNumberId;
+  if (!resolvedPhoneId && merchantId) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantId);
+    if (isUuid) {
+      const rows = await sql<{ phone_number_id: string | null }[]>`
+        SELECT phone_number_id FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
+      `.catch(() => []);
+      resolvedPhoneId = rows[0]?.phone_number_id ?? "";
+    }
+  }
+  if (!resolvedPhoneId) {
+    resolvedPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID ?? "";
+  }
+
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${resolvedPhoneId}/messages`;
 
   const withinWindow = await isWithinSessionWindow(merchantId, msg.toPhone ?? "");
 
@@ -228,9 +243,19 @@ async function deadLetter(
   error: Error,
 ): Promise<void> {
   try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantId);
+    let resolvedMerchantId = isUuid ? merchantId : null;
+    if (!resolvedMerchantId && merchantId) {
+      const rows = await sql<{ id: string }[]>`
+        SELECT id FROM merchants WHERE phone_number_id = ${merchantId} OR contact_phone = ${merchantId} LIMIT 1
+      `.catch(() => []);
+      resolvedMerchantId = rows[0]?.id ?? null;
+    }
+    if (!resolvedMerchantId) return;
+
     await sql`
       insert into outbound_dead_letters (merchant_id, phone_number_id, payload, error, created_at)
-      values (${merchantId}, ${phoneNumberId}, ${JSON.stringify(msg)}, ${error.message}, now())
+      values (${resolvedMerchantId}::uuid, ${phoneNumberId}, ${JSON.stringify(msg)}, ${error.message}, now())
     `;
   } catch (dlqErr) {
     // If even the dead-letter write fails, at minimum this must hit logs/alerts.

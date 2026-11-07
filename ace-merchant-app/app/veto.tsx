@@ -236,12 +236,12 @@ export default function VetoPowerScreen() {
                         </Text>
                       </View>
                       <Text style={{ color: c.textTertiary }} className="text-[11px]">
-                        {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Pending'}
                       </Text>
                     </View>
 
                     <Text style={{ color: c.textPrimary }} className="font-bold text-base mb-1">
-                      {item.action_type.replace(/_/g, ' ').toUpperCase()}
+                      {String(item.action_type || 'action').replace(/_/g, ' ').toUpperCase()}
                     </Text>
 
                     <Text style={{ color: c.textSecondary }} className="text-xs mb-4 leading-relaxed">
@@ -353,14 +353,14 @@ export default function VetoPowerScreen() {
                   >
                     <View className="flex-1 mr-3">
                       <Text style={{ color: c.textPrimary }} className="font-semibold text-xs">
-                        {item.action_type.replace(/_/g, ' ')}
+                        {String(item.action_type || 'action').replace(/_/g, ' ')}
                       </Text>
                       <Text style={{ color: c.textSecondary }} className="text-[11px] mt-0.5" numberOfLines={1}>
-                        Blocked by {item.blocked_by}: {item.reason}
+                        Blocked by {item.blocked_by || 'Operator'}: {item.reason || 'Safety veto engaged'}
                       </Text>
                     </View>
                     <Text style={{ color: c.textTertiary }} className="text-[10px]">
-                      {new Date(item.created_at).toLocaleDateString()}
+                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Recent'}
                     </Text>
                   </View>
                 ))

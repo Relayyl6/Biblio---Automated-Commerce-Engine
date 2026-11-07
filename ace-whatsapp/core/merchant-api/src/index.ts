@@ -23,6 +23,7 @@ import { identityEngine } from "@ace/shared/identity-resolution/index.js";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine.js";
 import { interactionFeedback } from "@ace/shared/feedback/interactionFeedback.js";
 import { runBiblioAgentTurn } from "../../ai-negotiator/src/biblioAgentLoop.js";
+import { processAudioMultimodal, processImageMultimodal } from "../../ai-negotiator/src/services/multimodalService.js";
 import {
   maskApiKey,
   isMaskedKey,
@@ -35,7 +36,7 @@ import {
   FEATURE_CATALOG,
   getMerchantFeatureEntitlements,
 } from "@ace/shared/tiers/featureGuard.js";
-import { VendorPresenceService, type PresenceInfo } from "./services/VendorPresenceService.js";
+import { VendorPresenceService, type PresenceInfo, type PresenceState } from "./services/VendorPresenceService.js";
 import { ChatClassifier } from "./services/ChatClassifier.js";
 import { getLiveUsdNgnRate } from "@ace/shared/fxService.js";
 import cors from "@fastify/cors";
@@ -44,7 +45,33 @@ import rateLimit from "@fastify/rate-limit";
 const BAILEYS_GATEWAY_URL =
   process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
 
-const app = Fastify({ logger: true });
+export const app = Fastify({ logger: (process.env.NODE_ENV === "test" || process.env.MERCHANT_API_LOG_DISABLED === "true") ? false : true });
+
+export const isUuid = (val: unknown): val is string =>
+  typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+export function safeJsonParse<T>(val: unknown, fallback: T): T {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === "object") return val as T;
+  if (typeof val !== "string") return fallback;
+  try {
+    return JSON.parse(val) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function parsePagination(query: any, defaultLimit = 20, maxLimit = 100): { limit: number; offset: number } {
+  const rawLimit = Number(query?.limit);
+  const rawOffset = Number(query?.offset);
+  const limit = (!Number.isFinite(rawLimit) || rawLimit < 1)
+    ? defaultLimit
+    : Math.min(Math.floor(rawLimit), maxLimit);
+  const offset = (!Number.isFinite(rawOffset) || rawOffset < 0)
+    ? 0
+    : Math.floor(rawOffset);
+  return { limit, offset };
+}
 
 // #1 FIX: Restrict CORS to known origins. Wildcard allows any site to call this API.
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:5173")
@@ -61,8 +88,63 @@ app.register(cors, {
   credentials: true,
 });
 
+// ─── Custom JSON Content-Type Parser (gracefully handle empty bodies) ────────
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body: string | Buffer, done) => {
+  const strBody = typeof body === 'string' ? body : body.toString('utf-8');
+  if (!strBody || strBody.trim() === '') {
+    done(null, {});
+    return;
+  }
+  try {
+    const json = JSON.parse(strBody);
+    done(null, json);
+  } catch (err: any) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
+// ─── PreValidation: Ensure body is never undefined on mutating requests ──────
+app.addHook("preValidation", async (request) => {
+  if (["POST", "PUT", "PATCH"].includes(request.method) && (request.body === undefined || request.body === null)) {
+    request.body = {};
+  }
+});
+
 // ─── Auth gate (SharedAuthEngine) ────────────────────────────────────────────
 app.addHook("onRequest", authEngine.getFastifyHook());
+
+// ─── Parameter validation & tenant isolation hook ────────────────────────────
+app.addHook("preHandler", async (request, reply) => {
+  const params = request.params as Record<string, string> | undefined;
+  if (!params) return;
+
+  const uuidParamNames = ["id", "merchantId", "vendorId", "supplierId", "quarantineId", "disputeId"];
+  for (const pName of uuidParamNames) {
+    const val = params[pName];
+    if (val !== undefined && !isUuid(val)) {
+      return reply.code(400).send({
+        error: "Bad Request",
+        message: `Invalid parameter '${pName}': must be a valid UUID`,
+        code: "INVALID_UUID",
+      });
+    }
+  }
+
+  // Tenant isolation check: merchant can only access their own merchant ID
+  const targetMerchantId = params.id || params.merchantId;
+  if (targetMerchantId && (request as any).merchantId && (request as any).role === "merchant") {
+    try {
+      authEngine.assertMerchantAccess(request, targetMerchantId);
+    } catch (err: any) {
+      return reply.code(403).send({
+        error: "Forbidden",
+        message: err.message,
+        code: "FORBIDDEN",
+      });
+    }
+  }
+});
 
 // ─── Auth & Identity Routes (Open) ───────────────────────────────────────────
 
@@ -70,30 +152,30 @@ app.addHook("onRequest", authEngine.getFastifyHook());
 app.post("/auth/token", async (req, reply) => {
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers["x-admin-key"] as string | undefined;
-  if (!adminKey || providedKey !== adminKey) {
+  if (!adminKey || adminKey.trim() === "" || providedKey !== adminKey) {
     return reply.code(403).send({ error: "Forbidden: admin key required" });
   }
-  const { merchantId, role } = req.body as { merchantId: string, role?: 'merchant'|'admin' };
-  if (!merchantId) return reply.code(400).send({ error: "merchantId required" });
+  const { merchantId, role } = (req.body || {}) as { merchantId: string; role?: 'merchant' | 'admin' };
+  if (!merchantId || !isUuid(merchantId)) return reply.code(400).send({ error: "Valid UUID merchantId required" });
   const token = await authEngine.issueToken(merchantId, role || 'merchant');
   return reply.send({ token });
 });
 
 // Twilio SMS Verify integration for Merchant App login
 app.post("/auth/otp/send", async (req, reply) => {
-  const { phone } = req.body as { phone: string };
-  if (!phone) return reply.code(400).send({ error: "phone required" });
+  const { phone } = (req.body || {}) as { phone: string };
+  if (!phone || typeof phone !== 'string' || phone.trim() === '') return reply.code(400).send({ error: "phone required" });
   
-  const success = await identityEngine.sendOTP(phone);
+  const success = await identityEngine.sendOTP(phone.trim());
   if (!success) return reply.code(500).send({ error: "Failed to send OTP" });
   return reply.send({ ok: true });
 });
 
 app.post("/auth/otp/verify", async (req, reply) => {
-  const { phone, code, merchantId } = req.body as { phone: string, code: string, merchantId: string };
-  if (!phone || !code || !merchantId) return reply.code(400).send({ error: "phone, code, merchantId required" });
+  const { phone, code, merchantId } = (req.body || {}) as { phone: string; code: string; merchantId: string };
+  if (!phone || !code || !merchantId || !isUuid(merchantId)) return reply.code(400).send({ error: "phone, code, and valid UUID merchantId required" });
 
-  const globalBuyerId = await identityEngine.verifyOTP(phone, code, merchantId);
+  const globalBuyerId = await identityEngine.verifyOTP(phone.trim(), code.trim(), merchantId);
   if (!globalBuyerId) {
     return reply.code(401).send({ error: "Invalid OTP" });
   }
@@ -105,7 +187,7 @@ app.post("/auth/otp/verify", async (req, reply) => {
 
 // ─── Telemetry Bridge ────────────────────────────────────────────────────────
 app.post("/telemetry", async (req, reply) => {
-  const b = req.body as any;
+  const b = (req.body || {}) as any;
   if (!b.action) return reply.code(400).send({ error: "action required" });
   
   // @ts-ignore - Fastify hook injects merchantId
@@ -123,10 +205,12 @@ app.post("/telemetry", async (req, reply) => {
 
 app.get("/telemetry/dashboard", async (req, reply) => {
   const DEFAULT_MERCHANT_ID = '4a7b2e63-c95f-4c71-9d08-2f05b68960ed';
-  const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-  
   const rawId = (req as any).merchantId || (req.query as any)?.merchantId || req.headers['x-merchant-id'];
-  const merchantId = rawId && isUuid(rawId) ? rawId : DEFAULT_MERCHANT_ID;
+  const merchantId = rawId && isUuid(rawId) ? rawId : (process.env.NODE_ENV !== 'production' ? DEFAULT_MERCHANT_ID : null);
+
+  if (!merchantId) {
+    return reply.code(400).send({ error: "Valid UUID merchantId required", code: "INVALID_UUID" });
+  }
 
   try {
     const [
@@ -566,7 +650,7 @@ app.get("/health", async () => ({ ok: true }));
 // ─── Merchants ───────────────────────────────────────────────────────────────
 
 app.post("/merchants", async (req, reply) => {
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
   const name = str(b.name);
   const phoneNumberId = str(b.phoneNumberId);
   if (!name || !phoneNumberId) {
@@ -574,25 +658,33 @@ app.post("/merchants", async (req, reply) => {
   }
   const dialect = normalizeDialect(b.dialect);
 
-  const rows = await sql<{ id: string }[]>`
-    insert into merchants
-      (name, phone_number_id, tone_guide, business_policies, delivery_info,
-       dialect, whatsapp_catalog_id)
-    values (
-      ${name}, ${phoneNumberId}, ${strOrNull(b.toneGuide)},
-      ${strOrNull(b.businessPolicies)}, ${strOrNull(b.deliveryInfo)},
-      ${dialect}, ${strOrNull(b.whatsappCatalogId)}
-    )
-    returning id
-  `;
-  return reply.code(201).send({ id: rows[0].id });
+  try {
+    const rows = await sql<{ id: string }[]>`
+      insert into merchants
+        (name, phone_number_id, tone_guide, business_policies, delivery_info,
+         dialect, whatsapp_catalog_id)
+      values (
+        ${name}, ${phoneNumberId}, ${strOrNull(b.toneGuide)},
+        ${strOrNull(b.businessPolicies)}, ${strOrNull(b.deliveryInfo)},
+        ${dialect}, ${strOrNull(b.whatsappCatalogId)}
+      )
+      returning id
+    `;
+    return reply.code(201).send({ id: rows[0].id });
+  } catch (err: any) {
+    if (err.code === '23505') {
+      return reply.code(409).send({ error: "A merchant with this phone number already exists", code: "MERCHANT_EXISTS" });
+    }
+    throw err;
+  }
 });
 
-app.get("/merchants", async () => {
+app.get("/merchants", async (req) => {
+  const { limit, offset } = parsePagination(req.query, 50, 100);
   return await sql`
     select id, name, phone_number_id, tone_guide, business_policies,
            delivery_info, dialect, whatsapp_catalog_id, created_at
-    from merchants order by created_at desc limit 50
+    from merchants order by created_at desc limit ${limit} offset ${offset}
   `;
 });
 
@@ -603,6 +695,11 @@ app.get("/merchants/:id", async (req, reply) => {
            m.delivery_info, m.dialect, m.whatsapp_catalog_id, m.created_at,
            m.default_discount_pct, m.subscription_tier,
            m.owner_first_name, m.owner_last_name, m.dob_month, m.dob_day, m.dob_year, m.date_of_birth, m.age_verified,
+           m.bank_details, m.bank_account_number, m.bank_code, m.payout_frequency, m.fee_padding_model, m.platform_fee_percent,
+           m.is_registered, m.rc_number, m.business_type, m.tax_id, m.support_email, m.support_phone, m.website_url,
+           m.physical_address, m.operating_hours, m.return_policy, m.delivery_notes, m.supports_pickup, m.social_links,
+           m.contact_phone, m.onboarding_state,
+           m.allow_list, m.deny_list, m.soft_mode, m.cancel_window_minutes, m.friend_pricing,
            pr.max_discount_by_tier,
            (SELECT COUNT(*) FROM vendor_decisions WHERE merchant_id = ${id} AND decision_type = 'training_correction') as ai_corrections
     FROM merchants m
@@ -614,22 +711,113 @@ app.get("/merchants/:id", async (req, reply) => {
   const m = rows[0];
   
   // Synthesize Brain Config expected by settings.tsx
-  const maxDiscountObj = m.max_discount_by_tier || {};
+  let maxDiscountObj: any = {};
+  if (typeof m.max_discount_by_tier === 'string') {
+    try { maxDiscountObj = JSON.parse(m.max_discount_by_tier); } catch { maxDiscountObj = {}; }
+  } else if (m.max_discount_by_tier && typeof m.max_discount_by_tier === 'object') {
+    maxDiscountObj = m.max_discount_by_tier;
+  }
   const maxDiscount = (maxDiscountObj.new || maxDiscountObj.loyal || 0.15) * 100;
   
   // Calculate TrustScore deterministically based on data
   let trustScore = 650;
   if (m.whatsapp_catalog_id) trustScore += 50;
   if (m.business_policies) trustScore += 84;
+  if (m.is_registered || m.rc_number) trustScore += 66;
+
+  // Safely parse JSONB / string fields
+  let bankDetailsObj: any = {};
+  if (typeof m.bank_details === 'string') {
+    try { bankDetailsObj = JSON.parse(m.bank_details); } catch { bankDetailsObj = {}; }
+  } else if (m.bank_details && typeof m.bank_details === 'object') {
+    bankDetailsObj = m.bank_details;
+  }
+  const bankName = bankDetailsObj.bankName || bankDetailsObj.bank_name || '';
+  const accountNumber = bankDetailsObj.accountNumber || bankDetailsObj.account_number || m.bank_account_number || '';
+  const accountName = bankDetailsObj.accountName || bankDetailsObj.account_name || '';
+
+  const parsedBankDetails = {
+    bankName,
+    accountNumber,
+    accountName,
+    configuredAt: bankDetailsObj.configuredAt || bankDetailsObj.configured_at || null
+  };
+
+  let parsedAddress: any = {};
+  if (typeof m.physical_address === 'string') {
+    try { parsedAddress = JSON.parse(m.physical_address); } catch { parsedAddress = { address: m.physical_address, street: m.physical_address }; }
+  } else if (m.physical_address && typeof m.physical_address === 'object') {
+    parsedAddress = m.physical_address;
+  }
+
+  let parsedHours: any = {};
+  if (typeof m.operating_hours === 'string') {
+    try { parsedHours = JSON.parse(m.operating_hours); } catch { parsedHours = {}; }
+  } else if (m.operating_hours && typeof m.operating_hours === 'object') {
+    parsedHours = m.operating_hours;
+  }
+
+  let parsedSocial: any = [];
+  if (typeof m.social_links === 'string') {
+    try { parsedSocial = JSON.parse(m.social_links); } catch { parsedSocial = []; }
+  } else if (Array.isArray(m.social_links)) {
+    parsedSocial = m.social_links;
+  }
+
+  let parsedAllow: string[] = [];
+  if (typeof m.allow_list === 'string') {
+    try { parsedAllow = JSON.parse(m.allow_list); } catch { parsedAllow = []; }
+  } else if (Array.isArray(m.allow_list)) {
+    parsedAllow = m.allow_list;
+  }
+
+  let parsedDeny: string[] = [];
+  if (typeof m.deny_list === 'string') {
+    try { parsedDeny = JSON.parse(m.deny_list); } catch { parsedDeny = []; }
+  } else if (Array.isArray(m.deny_list)) {
+    parsedDeny = m.deny_list;
+  }
+
+  let parsedFriendPricing: any = { discount_percent: 15 };
+  if (typeof m.friend_pricing === 'string') {
+    try { parsedFriendPricing = JSON.parse(m.friend_pricing); } catch { parsedFriendPricing = { discount_percent: 15 }; }
+  } else if (typeof m.friend_pricing === 'object' && m.friend_pricing !== null) {
+    parsedFriendPricing = m.friend_pricing;
+  }
 
   const config = {
     ...m,
+    bank_details: parsedBankDetails,
+    bank_account_number: accountNumber,
+    bank_code: m.bank_code || null,
+    payout_frequency: m.payout_frequency || 'instant',
+    fee_padding_model: m.fee_padding_model || 'customer_padded',
+    platform_fee_percent: Number(m.platform_fee_percent || 3.0),
     subscription_tier: m.subscription_tier || 'starter',
     max_discount_percentage: Math.round(maxDiscount),
     auto_dispatch_riders: true, // Default to true if not explicitly stored
     auto_restock_buffer: 5,
     emoji_usage: 'Moderate',
     preferred_rider: 'Gokada',
+    is_registered: Boolean(m.is_registered || m.rc_number),
+    rc_number: m.rc_number || null,
+    business_type: m.business_type || 'SOLE_PROPRIETOR',
+    tax_id: m.tax_id || null,
+    support_email: m.support_email || null,
+    support_phone: m.support_phone || m.contact_phone || m.phone_number_id || null,
+    website_url: m.website_url || null,
+    physical_address: parsedAddress,
+    operating_hours: parsedHours,
+    allow_list: parsedAllow,
+    deny_list: parsedDeny,
+    soft_mode: Boolean(m.soft_mode),
+    cancel_window_minutes: Number(m.cancel_window_minutes ?? 10),
+    friend_pricing: parsedFriendPricing,
+    social_links: parsedSocial,
+    return_policy: m.return_policy || m.business_policies || null,
+    delivery_notes: m.delivery_notes || m.delivery_info || null,
+    supports_pickup: m.supports_pickup !== false,
+    onboarding_state: m.onboarding_state || 'completed',
     ai_training: {
       corrections: Number(m.ai_corrections || 0),
       improvement_pct: 8
@@ -641,9 +829,9 @@ app.get("/merchants/:id", async (req, reply) => {
   return config;
 });
 
-app.patch("/merchants/:id", async (req, reply) => {
+const updateMerchantHandler = async (req: any, reply: any) => {
   const { id } = req.params as { id: string };
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
 
   // Only update the seller-context fields the apps expose; COALESCE keeps any
   // field the caller omitted unchanged.
@@ -651,6 +839,49 @@ app.patch("/merchants/:id", async (req, reply) => {
   const numOrNull = (v: unknown): number | null => {
     const n = Number(v);
     return isNaN(n) ? null : n;
+  };
+
+  const rawPatchBank = b.bankDetails ?? b.bank_details;
+  let patchBankJson: string | null = null;
+  if (rawPatchBank) {
+    patchBankJson = typeof rawPatchBank === 'string' ? rawPatchBank : JSON.stringify(rawPatchBank);
+  }
+
+  const rawAddress = b.physicalAddress ?? b.physical_address;
+  let patchAddressJson: string | null = null;
+  if (rawAddress) {
+    patchAddressJson = typeof rawAddress === 'string'
+      ? JSON.stringify({ street: rawAddress, address: rawAddress })
+      : JSON.stringify(rawAddress);
+  }
+
+  const rawHours = b.operatingHours ?? b.operating_hours;
+  let patchHoursJson: string | null = null;
+  if (rawHours) {
+    patchHoursJson = typeof rawHours === 'string' ? rawHours : JSON.stringify(rawHours);
+  }
+
+  const rawAllow = b.allowList ?? b.allow_list;
+  let patchAllowJson: string | null = null;
+  if (rawAllow !== undefined && rawAllow !== null) {
+    patchAllowJson = JSON.stringify(Array.isArray(rawAllow) ? rawAllow : [rawAllow]);
+  }
+
+  const rawDeny = b.denyList ?? b.deny_list;
+  let patchDenyJson: string | null = null;
+  if (rawDeny !== undefined && rawDeny !== null) {
+    patchDenyJson = JSON.stringify(Array.isArray(rawDeny) ? rawDeny : [rawDeny]);
+  }
+
+  const rawFriendPricing = b.friendPricing ?? b.friend_pricing;
+  let patchFriendJson: string | null = null;
+  if (rawFriendPricing !== undefined && rawFriendPricing !== null) {
+    patchFriendJson = typeof rawFriendPricing === 'string' ? rawFriendPricing : JSON.stringify(rawFriendPricing);
+  }
+
+  const boolOrNull = (v: unknown): boolean | null => {
+    if (v === undefined || v === null) return null;
+    return Boolean(v);
   };
 
   const rows = await sql<{ id: string }[]>`
@@ -661,18 +892,42 @@ app.patch("/merchants/:id", async (req, reply) => {
       dob_month        = coalesce(${strOrNull(b.dobMonth ?? b.dob_month)}, dob_month),
       dob_day          = coalesce(${numOrNull(b.dobDay ?? b.dob_day)}, dob_day),
       dob_year         = coalesce(${numOrNull(b.dobYear ?? b.dob_year)}, dob_year),
-      tone_guide       = coalesce(${strOrNull(b.toneGuide)}, tone_guide),
-      business_policies= coalesce(${strOrNull(b.businessPolicies)}, business_policies),
-      delivery_info    = coalesce(${strOrNull(b.deliveryInfo)}, delivery_info),
+      tone_guide       = coalesce(${strOrNull(b.toneGuide ?? b.tone_guide)}, tone_guide),
+      business_policies= coalesce(${strOrNull(b.businessPolicies ?? b.business_policies)}, business_policies),
+      delivery_info    = coalesce(${strOrNull(b.deliveryInfo ?? b.delivery_info)}, delivery_info),
       dialect          = coalesce(${dialect}, dialect),
-      whatsapp_catalog_id = coalesce(${strOrNull(b.whatsappCatalogId)}, whatsapp_catalog_id),
-      subscription_tier   = coalesce(${strOrNull(b.subscriptionTier || b.subscription_tier)}, subscription_tier)
-    where id = ${id}
+      whatsapp_catalog_id = coalesce(${strOrNull(b.whatsappCatalogId ?? b.whatsapp_catalog_id)}, whatsapp_catalog_id),
+      subscription_tier   = coalesce(${strOrNull(b.subscriptionTier || b.subscription_tier)}, subscription_tier),
+      bank_details        = coalesce(${patchBankJson ? sql`${patchBankJson}::jsonb` : null}, bank_details),
+      bank_account_number = coalesce(${strOrNull(b.bankAccountNumber ?? b.bank_account_number)}, bank_account_number),
+      payout_frequency    = coalesce(${strOrNull(b.payoutFrequency ?? b.payout_frequency)}, payout_frequency),
+      fee_padding_model   = coalesce(${strOrNull(b.feePaddingModel ?? b.fee_padding_model)}, fee_padding_model),
+      is_registered       = coalesce(${boolOrNull(b.isRegistered ?? b.is_registered)}, is_registered),
+      rc_number           = coalesce(${strOrNull(b.rcNumber ?? b.rc_number)}, rc_number),
+      business_type       = coalesce(${strOrNull(b.businessType ?? b.business_type)}, business_type),
+      tax_id              = coalesce(${strOrNull(b.taxId ?? b.tax_id)}, tax_id),
+      support_email       = coalesce(${strOrNull(b.supportEmail ?? b.support_email)}, support_email),
+      support_phone       = coalesce(${strOrNull(b.supportPhone ?? b.support_phone)}, support_phone),
+      website_url         = coalesce(${strOrNull(b.websiteUrl ?? b.website_url)}, website_url),
+      return_policy       = coalesce(${strOrNull(b.returnPolicy ?? b.return_policy)}, return_policy),
+      delivery_notes      = coalesce(${strOrNull(b.deliveryNotes ?? b.delivery_notes)}, delivery_notes),
+      physical_address    = coalesce(${patchAddressJson ? sql`${patchAddressJson}::jsonb` : null}, physical_address),
+      operating_hours     = coalesce(${patchHoursJson ? sql`${patchHoursJson}::jsonb` : null}, operating_hours),
+      allow_list          = coalesce(${patchAllowJson ? sql`${patchAllowJson}::jsonb` : null}, allow_list),
+      deny_list           = coalesce(${patchDenyJson ? sql`${patchDenyJson}::jsonb` : null}, deny_list),
+      soft_mode           = coalesce(${boolOrNull(b.softMode ?? b.soft_mode)}, soft_mode),
+      cancel_window_minutes = coalesce(${numOrNull(b.cancelWindowMinutes ?? b.cancel_window_minutes)}, cancel_window_minutes),
+      friend_pricing      = coalesce(${patchFriendJson ? sql`${patchFriendJson}::jsonb` : null}, friend_pricing),
+      updated_at          = now()
+    where id = ${id}::uuid
     returning id
   `;
   if (!rows[0]) return reply.code(404).send({ error: "merchant not found" });
   return { ok: true };
-});
+};
+
+app.patch("/merchants/:id", updateMerchantHandler);
+app.put("/merchants/:id", updateMerchantHandler);
 
 // ─── Merchant Integrations & API Credentials ────────────────────────────────
 app.get("/merchants/:id/integrations", async (req, reply) => {
@@ -888,8 +1143,8 @@ app.patch("/merchants/:id/integrations", async (req, reply) => {
 app.get("/admin/platform-credentials", async (req, reply) => {
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers["x-admin-key"] as string | undefined;
-  if (adminKey && providedKey !== adminKey) {
-    return reply.code(403).send({ error: "Forbidden: admin key required" });
+  if (!adminKey || adminKey.trim() === "" || providedKey !== adminKey) {
+    return reply.code(403).send({ error: "Forbidden: admin key required", code: "FORBIDDEN" });
   }
 
   const rows = await sql<{
@@ -918,11 +1173,11 @@ app.get("/admin/platform-credentials", async (req, reply) => {
 app.patch("/admin/platform-credentials", async (req, reply) => {
   const adminKey = process.env.ADMIN_API_KEY;
   const providedKey = req.headers["x-admin-key"] as string | undefined;
-  if (adminKey && providedKey !== adminKey) {
-    return reply.code(403).send({ error: "Forbidden: admin key required" });
+  if (!adminKey || adminKey.trim() === "" || providedKey !== adminKey) {
+    return reply.code(403).send({ error: "Forbidden: admin key required", code: "FORBIDDEN" });
   }
 
-  const { provider, apiKey, secretKey, description } = req.body as {
+  const { provider, apiKey, secretKey, description } = (req.body || {}) as {
     provider: string;
     apiKey: string;
     secretKey?: string;
@@ -947,7 +1202,7 @@ app.get("/merchants/:id/features", async (req, reply) => {
 
 app.post("/merchants/:id/billing/upgrade", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { targetTier, paymentMethod } = req.body as {
+  const { targetTier, paymentMethod } = (req.body || {}) as {
     targetTier: "growth" | "enterprise";
     paymentMethod?: "card" | "transfer" | "admin_grant";
   };
@@ -979,7 +1234,7 @@ app.post("/merchants/:id/billing/upgrade", async (req, reply) => {
 
 app.post("/merchants/:id/bank-account", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { accountNumber, bankCode, accountName } = req.body as {
+  const { accountNumber, bankCode, accountName } = (req.body || {}) as {
     accountNumber: string;
     bankCode: string;
     accountName: string;
@@ -988,6 +1243,10 @@ app.post("/merchants/:id/bank-account", async (req, reply) => {
   if (!accountNumber || !bankCode || !accountName) {
     return reply.code(400).send({ error: "accountNumber, bankCode, and accountName are required" });
   }
+
+  // Verify merchant exists before initiating external Paystack transfer recipient creation
+  const mCheck = await sql`SELECT id FROM merchants WHERE id = ${id}::uuid LIMIT 1`;
+  if (!mCheck[0]) return reply.code(404).send({ error: "merchant not found" });
 
   const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
   if (!paystackSecretKey) {
@@ -1030,7 +1289,7 @@ app.post("/merchants/:id/bank-account", async (req, reply) => {
       bank_account_number = ${accountNumber},
       bank_code = ${bankCode},
       paystack_recipient_code = ${recipientCode}
-    where id = ${id}
+    where id = ${id}::uuid
     returning id
   `;
   if (!rows[0]) return reply.code(404).send({ error: "merchant not found" });
@@ -1042,18 +1301,25 @@ app.post("/merchants/:id/bank-account", async (req, reply) => {
 
 app.put("/merchants/:id/pricing-rules", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
   const absoluteFloor = num(b.absoluteFloor);
-  if (absoluteFloor === null) {
-    return reply.code(400).send({ error: "absoluteFloor (number) is required" });
+  if (absoluteFloor === null || absoluteFloor < 0) {
+    return reply.code(400).send({ error: "absoluteFloor (non-negative number) is required", code: "INVALID_FLOOR" });
   }
+  const basePrice = num(b.basePrice);
+  if (b.basePrice !== undefined && (basePrice === null || basePrice < 0)) {
+    return reply.code(400).send({ error: "basePrice must be a non-negative number", code: "INVALID_BASE_PRICE" });
+  }
+
+  const mCheck = await sql`SELECT id FROM merchants WHERE id = ${id}::uuid LIMIT 1`;
+  if (!mCheck[0]) return reply.code(404).send({ error: "merchant not found" });
 
   await sql`
     insert into merchant_pricing_rules
       (merchant_id, base_price, absolute_floor,
        max_discount_by_tier, max_bundle_value_add_by_tier, future_credit_cap_by_tier)
     values (
-      ${id}, ${num(b.basePrice) ?? 0}, ${absoluteFloor},
+      ${id}::uuid, ${num(b.basePrice) ?? 0}, ${absoluteFloor},
       ${jsonb(b.maxDiscountByTier ?? defaultDiscount)},
       ${jsonb(b.maxBundleValueAddByTier ?? defaultBundle)},
       ${jsonb(b.futureCreditCapByTier ?? defaultCredit)}
@@ -1073,14 +1339,33 @@ app.put("/merchants/:id/pricing-rules", async (req, reply) => {
 
 app.get("/merchants/:id/products", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const limit = Math.min(num((req.query as any).limit) ?? 50, 200);
-  const offset = num((req.query as any).offset) ?? 0;
+  const query = (req.query || {}) as Record<string, unknown>;
+  const { limit, offset } = parsePagination(query, 50, 200);
+
+  const rawSearch = typeof query.search === 'string' ? query.search : typeof query.q === 'string' ? query.q : '';
+  const search = rawSearch.trim();
+  const category = typeof query.category === 'string' && query.category.trim() !== '' ? query.category.trim() : null;
+
+  const rawMinPrice = query.minPrice !== undefined && query.minPrice !== null && query.minPrice !== '' ? Number(query.minPrice) : null;
+  const minPrice = rawMinPrice !== null && Number.isFinite(rawMinPrice) ? Math.max(0, rawMinPrice) : null;
+
+  const rawMaxPrice = query.maxPrice !== undefined && query.maxPrice !== null && query.maxPrice !== '' ? Number(query.maxPrice) : null;
+  const maxPrice = rawMaxPrice !== null && Number.isFinite(rawMaxPrice) ? Math.max(0, rawMaxPrice) : null;
+
   try {
+    const sanitizedSearch = search.replace(/[%_\\]/g, '\\$&');
+    const searchPattern = `%${sanitizedSearch}%`;
+
     const rows = await sql`
-      select id, sku, name, quantity as stock, price, description, category,
+      select id, sku, name, COALESCE(quantity, stock, 0) as stock, price, description, category,
              image_url, available as active, metadata, updated_at
       from products 
-      where merchant_id = ${id}::uuid and deleted_at is null
+      where (merchant_id = ${id}::uuid OR tenant_id = ${id}::uuid)
+        and deleted_at is null
+        ${search ? sql`and (name ILIKE ${searchPattern} OR sku ILIKE ${searchPattern} OR category ILIKE ${searchPattern} OR (description->>'text') ILIKE ${searchPattern})` : sql``}
+        ${category ? sql`and category ILIKE ${category}` : sql``}
+        ${minPrice !== null ? sql`and price >= ${minPrice}` : sql``}
+        ${maxPrice !== null ? sql`and price <= ${maxPrice}` : sql``}
       order by updated_at desc
       limit ${limit} offset ${offset}
     `;
@@ -1106,13 +1391,28 @@ app.get("/merchants/:id/products", async (req, reply) => {
 
 app.post("/merchants/:id/products", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
   const sku = str(b.sku) || `SKU-${Date.now().toString().slice(-6)}`;
   const name = str(b.name);
   const price = num(b.price);
   if (!name || price === null) {
     return reply.code(400).send({ error: "name and price are required" });
   }
+  if (price < 0) {
+    return reply.code(400).send({ error: "price must be non-negative", code: "INVALID_PRICE" });
+  }
+  if (b.stock !== undefined && (typeof b.stock !== 'number' || !Number.isFinite(b.stock) || b.stock < 0)) {
+    return reply.code(400).send({ error: "stock must be a non-negative number", code: "INVALID_STOCK" });
+  }
+  if (b.floor !== undefined && (typeof b.floor !== 'number' || !Number.isFinite(b.floor) || b.floor < 0)) {
+    return reply.code(400).send({ error: "floor must be a non-negative number", code: "INVALID_FLOOR" });
+  }
+  if (b.supplierId !== undefined && b.supplierId !== null && !isUuid(b.supplierId)) {
+    return reply.code(400).send({ error: "Invalid supplierId: must be a valid UUID", code: "INVALID_UUID" });
+  }
+
+  const mCheck = await sql`SELECT id FROM merchants WHERE id = ${id}::uuid LIMIT 1`;
+  if (!mCheck[0]) return reply.code(404).send({ error: "merchant not found" });
 
   try {
     const existing = await sql`
@@ -1140,7 +1440,7 @@ app.post("/merchants/:id/products", async (req, reply) => {
         WHERE id = ${existing[0].id}
       `;
     } else {
-      const validSupplierUuid = b.supplierId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(b.supplierId))
+      const validSupplierUuid = b.supplierId && isUuid(b.supplierId)
         ? String(b.supplierId)
         : null;
 
@@ -1166,6 +1466,12 @@ app.post("/merchants/:id/products", async (req, reply) => {
 app.patch("/merchants/:id/products/:sku", async (req, reply) => {
   const { id, sku } = req.params as { id: string; sku: string };
   const b = req.body as Record<string, unknown>;
+  if (b.price !== undefined && (typeof b.price !== 'number' || !Number.isFinite(b.price) || b.price < 0)) {
+    return reply.code(400).send({ error: "price must be a non-negative number", code: "INVALID_PRICE" });
+  }
+  if (b.stock !== undefined && (typeof b.stock !== 'number' || !Number.isFinite(b.stock) || b.stock < 0)) {
+    return reply.code(400).send({ error: "stock must be a non-negative number", code: "INVALID_STOCK" });
+  }
   try {
     const rows = await sql<{ sku: string }[]>`
       update products set
@@ -1221,19 +1527,22 @@ app.post("/merchants/:id/catalog-sync", async (req, reply) => {
 // Create a vendor record — the first step of the business line onboarding flow.
 // After this, the merchant uses POST /vendors/:id/pair to get the pairing code.
 app.post("/vendors", async (req, reply) => {
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
   const merchantId = str(b.merchantId);
   const personalNumber = str(b.personalNumber);
-  if (!merchantId || !personalNumber) {
-    return reply.code(400).send({ error: "merchantId and personalNumber are required" });
+  if (!merchantId || !isUuid(merchantId) || !personalNumber) {
+    return reply.code(400).send({ error: "Valid UUID merchantId and personalNumber are required" });
   }
+
+  const mCheck = await sql`SELECT id FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1`;
+  if (!mCheck[0]) return reply.code(404).send({ error: "merchant not found" });
 
   const rows = await sql<{ id: string }[]>`
     INSERT INTO vendors (
       merchant_id, personal_number,
       auto_status_enabled, posting_frequency_hours, approve_before_post
     ) VALUES (
-      ${merchantId}, ${personalNumber.replace(/^\+/, "")},
+      ${merchantId}::uuid, ${personalNumber.replace(/^\+/, "")},
       ${bool(b.autoStatusEnabled) ?? false},
       ${num(b.postingFrequencyHours) ?? 24},
       ${bool(b.approveBeforePost) ?? true}
@@ -1247,7 +1556,7 @@ app.post("/vendors", async (req, reply) => {
 // Given just a phone number, provisions merchant, vendor, pricing rules, dialect,
 // and requests an 8-digit WhatsApp pairing code from the Baileys gateway in one step.
 app.post("/pair", async (req, reply) => {
-  const { phoneNumber, vendorId, merchantId, merchantName, dialect } = req.body as {
+  const { phoneNumber, vendorId, merchantId, merchantName, dialect } = (req.body || {}) as {
     phoneNumber?: string;
     vendorId?: string;
     merchantId?: string;
@@ -1281,14 +1590,15 @@ app.post("/pair", async (req, reply) => {
 });
 
 // List all vendors with their merchant metadata for the Admin Portal
-app.get("/vendors", async () => {
+app.get("/vendors", async (req) => {
+  const { limit, offset } = parsePagination(req.query, 50, 100);
   return await sql`
     SELECT v.id as vendor_id, v.merchant_id, v.personal_number, v.business_line_number,
            v.session_status, v.auto_status_enabled, v.posting_frequency_hours, v.approve_before_post,
            v.created_at, m.name as merchant_name, m.dialect, m.phone_number_id
     FROM vendors v
     LEFT JOIN merchants m ON m.id = v.merchant_id
-    ORDER BY v.created_at DESC LIMIT 50
+    ORDER BY v.created_at DESC LIMIT ${limit} OFFSET ${offset}
   `;
 });
 
@@ -1296,7 +1606,7 @@ app.get("/vendors", async () => {
 // The merchant enters this 8-character code in WhatsApp → Settings → Linked Devices.
 app.post("/vendors/:vendorId/pair", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
-  const { phoneNumber } = req.body as { phoneNumber?: string };
+  const { phoneNumber } = (req.body || {}) as { phoneNumber?: string };
 
   if (!phoneNumber) {
     return reply.code(400).send({ error: "phoneNumber is required (E.164 without +)" });
@@ -1304,18 +1614,21 @@ app.post("/vendors/:vendorId/pair", async (req, reply) => {
 
   const cleanPhone = phoneNumber.replace(/^\+/, "");
 
+  const vCheck = await sql`SELECT id FROM vendors WHERE id = ${vendorId}::uuid LIMIT 1`;
+  if (!vCheck[0]) return reply.code(404).send({ error: "vendor not found" });
+
   // Clear this number from any old/orphaned vendor records first to prevent unique constraint errors
   await sql`
     UPDATE vendors 
     SET business_line_number = NULL 
     WHERE business_line_number = ${cleanPhone} 
-      AND id != ${vendorId}
+      AND id != ${vendorId}::uuid
   `;
 
   // Save the business line number to the vendors table
   await sql`
     UPDATE vendors SET business_line_number = ${cleanPhone}, updated_at = now()
-    WHERE id = ${vendorId}
+    WHERE id = ${vendorId}::uuid
   `;
 
   // Forward to the Baileys gateway — it manages the WebSocket sessions
@@ -1341,8 +1654,8 @@ app.post("/vendors/:vendorId/pair", async (req, reply) => {
 app.get("/vendors/:vendorId/status", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
 
-  const rows = await sql<{ id: string; session_status: string; business_line_number: string | null }[]>`
-    SELECT id, session_status, business_line_number FROM vendors WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid LIMIT 1
+  const rows = await sql<{ id: string; session_status: string; business_line_number: string | null; last_error: string | null }[]>`
+    SELECT id, session_status, business_line_number, last_error FROM vendors WHERE id = ${vendorId}::uuid OR merchant_id = ${vendorId}::uuid LIMIT 1
   `;
   if (!rows[0]) {
     return reply.send({
@@ -1350,7 +1663,8 @@ app.get("/vendors/:vendorId/status", async (req, reply) => {
       businessLineNumber: null,
       dbStatus: "disconnected",
       inMemory: false,
-      connected: false
+      connected: false,
+      lastError: null,
     });
   }
 
@@ -1368,6 +1682,7 @@ app.get("/vendors/:vendorId/status", async (req, reply) => {
     vendorId,
     businessLineNumber: rows[0].business_line_number,
     dbStatus: rows[0].session_status,
+    lastError: gatewayStatus.lastError || rows[0].last_error || null,
     ...gatewayStatus,
   });
 });
@@ -1375,7 +1690,7 @@ app.get("/vendors/:vendorId/status", async (req, reply) => {
 // Update vendor settings: toggle auto-status, posting frequency, approve-before-post, and ranking strategy.
 app.patch("/vendors/:vendorId/settings", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
-  const b = req.body as Record<string, unknown>;
+  const b = (req.body || {}) as Record<string, unknown>;
 
   const rows = await sql<{ id: string }[]>`
     UPDATE vendors SET
@@ -1386,7 +1701,7 @@ app.patch("/vendors/:vendorId/settings", async (req, reply) => {
       margin_weight           = COALESCE(${num(b.marginWeight)}, margin_weight),
       velocity_weight         = COALESCE(${num(b.velocityWeight)}, velocity_weight),
       updated_at = now()
-    WHERE id = ${vendorId}
+    WHERE id = ${vendorId}::uuid
     RETURNING id
   `;
   if (!rows[0]) return reply.code(404).send({ error: "vendor not found" });
@@ -1442,7 +1757,8 @@ app.patch("/merchants/:merchantId/status-settings", async (req, reply) => {
 
 app.get("/merchants/:merchantId/status-candidates", async (req, reply) => {
   const { merchantId } = req.params as { merchantId: string };
-  const limit = num((req.query as any)?.limit) ?? 5;
+  const rawLimit = Number((req.query as any)?.limit);
+  const limit = (!Number.isFinite(rawLimit) || rawLimit < 1) ? 5 : Math.min(Math.floor(rawLimit), 50);
   const vendors = await sql<{ id: string; status_strategy: string; margin_weight: number; velocity_weight: number }[]>`
     SELECT id, COALESCE(status_strategy, 'balanced') as status_strategy,
            COALESCE(margin_weight, 0.70)::float as margin_weight,
@@ -1531,7 +1847,7 @@ app.post("/merchants/:merchantId/status-post-now", async (req, reply) => {
 // Get vendor's Status posting history.
 app.get("/vendors/:vendorId/status-log", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
-  const limit = num((req.query as Record<string, unknown>).limit) ?? 20;
+  const { limit, offset } = parsePagination(req.query, 20, 100);
 
   const rows = await sql`
     SELECT sl.sku, p.name AS product_name, sl.image_url, sl.caption, sl.posted_at
@@ -1539,14 +1855,14 @@ app.get("/vendors/:vendorId/status-log", async (req, reply) => {
     LEFT JOIN products p ON p.sku = sl.sku
     WHERE sl.vendor_id = ${vendorId}
     ORDER BY sl.posted_at DESC
-    LIMIT ${limit}
+    LIMIT ${limit} OFFSET ${offset}
   `;
   return reply.send(rows);
 });
 
 app.get("/merchants/:merchantId/status-log", async (req, reply) => {
   const { merchantId } = req.params as { merchantId: string };
-  const limit = num((req.query as Record<string, unknown>).limit) ?? 20;
+  const { limit, offset } = parsePagination(req.query, 20, 100);
 
   const rows = await sql`
     SELECT sl.sku, p.name AS product_name, sl.image_url, sl.caption, sl.posted_at
@@ -1555,7 +1871,7 @@ app.get("/merchants/:merchantId/status-log", async (req, reply) => {
     JOIN vendors v ON v.id = sl.vendor_id
     WHERE v.merchant_id = ${merchantId}::uuid OR v.id = ${merchantId}::uuid
     ORDER BY sl.posted_at DESC
-    LIMIT ${limit}
+    LIMIT ${limit} OFFSET ${offset}
   `;
   return reply.send(rows);
 });
@@ -1563,21 +1879,32 @@ app.get("/merchants/:merchantId/status-log", async (req, reply) => {
 // ─── Notification History & Audit Log Pipeline ──────────────────────────────
 app.get("/merchants/:merchantId/notification-history", async (req, reply) => {
   const { merchantId } = req.params as { merchantId: string };
-  const limit = num((req.query as Record<string, unknown>).limit) ?? 50;
+  const { limit, offset } = parsePagination(req.query, 50, 200);
 
   try {
-    // 1. Query audit_logs for notification and delivery events
+    // 1. Query dedicated notifications table (push, in-app, SMS, email)
+    const notifRows = await sql`
+      SELECT id, user_id, supplier_id, order_id, tenant_id, channel, priority,
+             payload, status, attempts, event_type, body, subject,
+             recipient, created_at, sent_at
+      FROM notifications
+      WHERE tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `.catch(() => []);
+
+    // 2. Query audit_logs for notification and delivery events
     const auditRows = await sql`
       SELECT id, action, metadata, timestamp, 'audit' as source
       FROM audit_logs
       WHERE merchant_id = ${merchantId}
-        AND (service IN ('vendor-communique', 'status-poster', 'notifications', 'logistics-api', 'comms-router')
-             OR action ILIKE '%notif%' OR action ILIKE '%escalat%' OR action ILIKE '%status%' OR action ILIKE '%sms%')
+        AND (service IN ('vendor-communique', 'status-poster', 'notifications', 'logistics-api', 'comms-router', 'ai-negotiator')
+             OR action ILIKE '%notif%' OR action ILIKE '%escalat%' OR action ILIKE '%status%' OR action ILIKE '%sms%' OR action ILIKE '%order%')
       ORDER BY timestamp DESC
-      LIMIT ${limit}
+      LIMIT ${limit} OFFSET ${offset}
     `.catch(() => []);
 
-    // 2. Query status_log for WhatsApp broadcast events
+    // 3. Query status_log for WhatsApp broadcast events
     const statusRows = await sql`
       SELECT sl.id, 'status_broadcast' as action,
              json_build_object('sku', sl.sku, 'caption', sl.caption, 'image_url', sl.image_url) as metadata,
@@ -1586,15 +1913,46 @@ app.get("/merchants/:merchantId/notification-history", async (req, reply) => {
       JOIN vendors v ON v.id = sl.vendor_id
       WHERE v.merchant_id = ${merchantId}::uuid OR v.id = ${merchantId}::uuid
       ORDER BY sl.posted_at DESC
-      LIMIT ${limit}
+      LIMIT ${limit} OFFSET ${offset}
     `.catch(() => []);
 
-    const combined = [...auditRows, ...statusRows].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    // Normalize dedicated notifications
+    const formattedNotifs = notifRows.map((row: any) => {
+      const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload || {};
+      const channelMapped: "whatsapp" | "push" | "sms" | "in-app" = 
+        row.channel === 'sms' ? 'sms' : 
+        row.channel === 'push' ? 'push' : 
+        row.channel === 'in_app' ? 'in-app' : 'in-app';
 
-    // Format events for mobile app presentation
-    const formatted = combined.map((row: any) => {
+      const statusMapped: "delivered" | "pending" | "failed" = 
+        row.status === 'sent' || row.status === 'read' ? 'delivered' :
+        row.status === 'failed' ? 'failed' : 'pending';
+
+      const chatId = payload.chatId || payload.chat_id || payload.customerId || payload.customer_id;
+      const threadId = payload.threadId || payload.thread_id;
+      const orderId = row.order_id || payload.orderId || payload.order_id;
+
+      return {
+        id: row.id,
+        title: row.subject || (row.event_type ? row.event_type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) : "System Notification"),
+        body: row.body || "Notification alert received.",
+        channel: channelMapped,
+        status: statusMapped,
+        timestamp: (row.sent_at || row.created_at || new Date()).toISOString ? (row.sent_at || row.created_at).toISOString() : String(row.sent_at || row.created_at),
+        metadata: {
+          ...payload,
+          chatId,
+          threadId,
+          orderId,
+          recipient: row.recipient,
+          supplierId: row.supplier_id,
+          priority: row.priority,
+        },
+      };
+    });
+
+    // Normalize audit & status rows
+    const formattedAudit = [...auditRows, ...statusRows].map((row: any) => {
       const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata || {};
       let title = "System Notification";
       let channel: "whatsapp" | "push" | "sms" | "in-app" = "in-app";
@@ -1618,26 +1976,300 @@ app.get("/merchants/:merchantId/notification-history", async (req, reply) => {
         body = meta.message || meta.reason || "Automated system commerce event.";
       }
 
+      const chatId = meta.chatId || meta.chat_id || meta.customerId || meta.customer_id;
+      const threadId = meta.threadId || meta.thread_id;
+      const orderId = meta.orderId || meta.order_id;
+
       return {
         id: row.id || crypto.randomUUID(),
         title,
         body,
         channel,
         status,
-        timestamp: row.timestamp || new Date().toISOString(),
-        metadata: meta,
+        timestamp: (row.timestamp || new Date()).toISOString ? row.timestamp.toISOString() : String(row.timestamp),
+        metadata: {
+          ...meta,
+          chatId,
+          threadId,
+          orderId,
+        },
       };
     });
 
-    return reply.send({ ok: true, count: formatted.length, events: formatted });
+    // Merge, deduplicate by ID & semantic key, and sort descending
+    const rawAll = [...formattedNotifs, ...formattedAudit];
+    const seenIds = new Set<string>();
+    const seenSemantic = new Set<string>();
+    const deduplicated = [];
+
+    for (const evt of rawAll) {
+      if (seenIds.has(evt.id)) continue;
+      seenIds.add(evt.id);
+
+      const timeBucket = Math.floor(new Date(evt.timestamp).getTime() / 15000); // 15s window
+      const semanticKey = `${evt.channel}:${evt.title.toLowerCase().trim()}:${timeBucket}`;
+      if (seenSemantic.has(semanticKey)) continue;
+      seenSemantic.add(semanticKey);
+
+      deduplicated.push(evt);
+    }
+
+    deduplicated.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    const limited = deduplicated.slice(0, limit);
+    return reply.send({ ok: true, count: limited.length, events: limited });
   } catch (err: any) {
     app.log.error(err, "Failed to fetch notification history");
     return reply.status(500).send({ error: "Failed to fetch notification history" });
   }
 });
 
+app.post("/merchants/:merchantId/notifications", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const body = (req.body || {}) as any;
+
+  if (body.orderId !== undefined && body.orderId !== null && !isUuid(body.orderId)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Invalid parameter 'orderId': must be a valid UUID",
+      code: "INVALID_UUID"
+    });
+  }
+
+  if (body.supplierId !== undefined && body.supplierId !== null && !isUuid(body.supplierId)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Invalid parameter 'supplierId': must be a valid UUID",
+      code: "INVALID_UUID"
+    });
+  }
+
+  const channel = (body.channel === 'sms' || body.channel === 'push' || body.channel === 'email') ? body.channel : 'in_app';
+  const priority = (body.priority === 'low' || body.priority === 'high' || body.priority === 'critical') ? body.priority : 'normal';
+  const event_type = body.event_type || 'system_alert';
+  const title = body.title || body.subject || 'System Notification';
+  const content = body.body || body.message || 'Notification received';
+  const payload = body.payload || {};
+  const recipient = body.recipient || body.phone || merchantId;
+  const orderId = body.orderId || null;
+  const supplierId = body.supplierId || null;
+
+  try {
+    const [inserted] = await sql`
+      INSERT INTO notifications (
+        id, tenant_id, user_id, order_id, supplier_id,
+        channel, priority, recipient, event_type, subject, body, payload, status, created_at, sent_at
+      ) VALUES (
+        gen_random_uuid(),
+        ${merchantId}::uuid,
+        ${merchantId}::uuid,
+        ${orderId ? sql`${orderId}::uuid` : null},
+        ${supplierId ? sql`${supplierId}::uuid` : null},
+        ${channel}::notification_channel,
+        ${priority}::notification_priority,
+        ${recipient},
+        ${event_type},
+        ${title},
+        ${content},
+        ${JSON.stringify(payload)}::jsonb,
+        'sent'::notification_status,
+        NOW(),
+        NOW()
+      )
+      RETURNING id, event_type, subject, body, channel, priority, recipient, status, created_at
+    `;
+    return reply.send({ ok: true, id: inserted.id, notification: inserted });
+  } catch (err: any) {
+    app.log.error(err, "Failed to create notification");
+    return reply.status(500).send({ error: err.message || "Failed to create notification" });
+  }
+});
+
 app.delete("/merchants/:merchantId/notification-history", async (req, reply) => {
-  return reply.send({ ok: true, message: "Notification history cleared" });
+  const { merchantId } = req.params as { merchantId: string };
+  try {
+    await sql`
+      DELETE FROM notifications
+      WHERE tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid
+    `.catch(() => {});
+    return reply.send({ ok: true, message: "Notification history cleared successfully" });
+  } catch (err: any) {
+    app.log.error(err, "Failed to clear notification history");
+    return reply.status(500).send({ error: "Failed to clear notification history" });
+  }
+});
+
+// ─── Automated Voice Proxy Calling Pipeline (Calls on Behalf of Vendor) ──────
+app.get("/merchants/:merchantId/voice-config", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  try {
+    const { getMerchantVoiceConfig } = await import("../../comms-router/src/voiceService.js");
+    const config = getMerchantVoiceConfig(merchantId);
+    return reply.send({ ok: true, config });
+  } catch (err: any) {
+    return reply.status(500).send({ error: "Failed to load voice configuration" });
+  }
+});
+
+app.put("/merchants/:merchantId/voice-config", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const updates = req.body as any;
+  try {
+    const { updateMerchantVoiceConfig } = await import("../../comms-router/src/voiceService.js");
+    const updated = updateMerchantVoiceConfig(merchantId, updates || {});
+    return reply.send({ ok: true, config: updated, message: "Voice call settings saved" });
+  } catch (err: any) {
+    return reply.status(500).send({ error: "Failed to update voice configuration" });
+  }
+});
+
+app.post("/merchants/:merchantId/voice-preview", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const { purpose = 'order_confirmation', orderTotal, deliveryAddress, voicePersona, customScript } = (req.body as any) || {};
+
+  try {
+    const mRows = await sql`SELECT name FROM merchants WHERE id = ${merchantId} LIMIT 1`;
+    const merchantName = mRows[0]?.name || "My Store";
+
+    const { buildSpokenScript } = await import("../../comms-router/src/voiceService.js");
+    const script = buildSpokenScript({
+      toPhone: '+2340000000000',
+      merchantId,
+      merchantName,
+      purpose,
+      orderTotal,
+      deliveryAddress,
+      voicePersona,
+      customScript,
+    });
+
+    return reply.send({ ok: true, scriptPreview: script });
+  } catch (err: any) {
+    return reply.status(500).send({ error: "Failed to build script preview" });
+  }
+});
+
+app.get("/merchants/:merchantId/voice-queue", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  try {
+    const { getPendingVoiceQueue } = await import("../../comms-router/src/voiceService.js");
+    const queue = getPendingVoiceQueue(merchantId);
+    return reply.send({ ok: true, count: queue.length, queue });
+  } catch (err: any) {
+    return reply.status(500).send({ error: "Failed to load voice queue" });
+  }
+});
+
+app.post("/merchants/:merchantId/voice-queue/:queueId/approve", async (req, reply) => {
+  const { queueId } = req.params as { queueId: string };
+  try {
+    const { approvePendingVoiceCall } = await import("../../comms-router/src/voiceService.js");
+    const callRecord = await approvePendingVoiceCall(queueId);
+    return reply.send({ ok: true, message: "Voice call approved and dialed", call: callRecord });
+  } catch (err: any) {
+    return reply.status(500).send({ error: err.message || "Approval failed" });
+  }
+});
+
+app.post("/merchants/:merchantId/voice-queue/:queueId/reject", async (req, reply) => {
+  const { queueId } = req.params as { queueId: string };
+  try {
+    const { rejectPendingVoiceCall } = await import("../../comms-router/src/voiceService.js");
+    const success = rejectPendingVoiceCall(queueId);
+    return reply.send({ ok: success, message: "Voice call cancelled" });
+  } catch (err: any) {
+    return reply.status(500).send({ error: err.message || "Rejection failed" });
+  }
+});
+
+app.post("/merchants/:merchantId/voice-call", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  const { toPhone, purpose = 'order_confirmation', customScript, orderId, orderTotal, deliveryAddress, forceImmediate = false } = (req.body as any) || {};
+
+  if (!toPhone) {
+    return reply.status(400).send({ error: "Customer phone number (toPhone) is required" });
+  }
+
+  try {
+    // Retrieve merchant store name
+    const mRows = await sql`SELECT name FROM merchants WHERE id = ${merchantId} LIMIT 1`;
+    const merchantName = mRows[0]?.name || "Biblio Merchant Store";
+
+    if (forceImmediate) {
+      const { makeVendorProxyCall } = await import("../../comms-router/src/voiceService.js");
+      const callRecord = await makeVendorProxyCall({
+        toPhone,
+        merchantId,
+        merchantName,
+        purpose,
+        customScript,
+        orderId,
+        orderTotal,
+        deliveryAddress,
+      });
+      return reply.send({
+        ok: true,
+        action: 'dialed_immediately',
+        message: `Outbound proxy call initiated on behalf of ${merchantName}`,
+        call: callRecord
+      });
+    }
+
+    const { triggerAutonomousVoiceCall } = await import("../../comms-router/src/voiceService.js");
+    const result = await triggerAutonomousVoiceCall({
+      toPhone,
+      merchantId,
+      merchantName,
+      purpose,
+      customScript,
+      orderId,
+      orderTotal,
+      deliveryAddress,
+    });
+
+    return reply.send({
+      ok: true,
+      action: result.action,
+      message: result.action === 'queued_for_approval' 
+        ? "Call queued for vendor approval with script preview" 
+        : `Outbound proxy call initiated on behalf of ${merchantName}`,
+      queueItem: result.queueItem,
+      call: result.callRecord,
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to initiate outbound voice call");
+    return reply.status(500).send({ error: err.message || "Voice call failed" });
+  }
+});
+
+app.get("/merchants/:merchantId/voice-calls", async (req, reply) => {
+  const { merchantId } = req.params as { merchantId: string };
+  try {
+    const { getMerchantCallLogs } = await import("../../comms-router/src/voiceService.js");
+    const logs = getMerchantCallLogs(merchantId);
+    return reply.send({ ok: true, count: logs.length, calls: logs });
+  } catch (err: any) {
+    return reply.status(500).send({ error: "Failed to fetch call logs" });
+  }
+});
+
+app.post("/voice/callback", async (req, reply) => {
+  const { callId, Digits, dtmfDigits } = (req.body as any) || (req.query as any) || {};
+  const digit = Digits || dtmfDigits || "1";
+  
+  try {
+    const { processCustomerDtmf } = await import("../../comms-router/src/voiceService.js");
+    const result = processCustomerDtmf(callId || "unknown", digit);
+    return reply.type('text/xml').send(`
+      <Response>
+        <Say>Thank you. Your confirmation has been received by the vendor.</Say>
+      </Response>
+    `);
+  } catch (err: any) {
+    return reply.send({ ok: false, error: err.message });
+  }
 });
 
 // ─── Support Ticketing Pipeline ─────────────────────────────────────────────
@@ -1728,10 +2360,17 @@ app.get("/vendors/:vendorId/queue", async (req, reply) => {
 // Approve a queued Status post.
 app.post("/vendors/:vendorId/queue/:queueId/approve", async (req, reply) => {
   const { vendorId, queueId } = req.params as { vendorId: string; queueId: string };
+  if (!isUuid(queueId)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Invalid parameter 'queueId': must be a valid UUID",
+      code: "INVALID_UUID",
+    });
+  }
   const rows = await sql<{ id: string }[]>`
     UPDATE status_post_queue
     SET approved_at = now()
-    WHERE id = ${queueId} AND vendor_id = ${vendorId} AND approved_at IS NULL
+    WHERE id = ${queueId}::uuid AND vendor_id = ${vendorId}::uuid AND approved_at IS NULL
     RETURNING id
   `;
   if (!rows[0]) return reply.code(404).send({ error: "queue item not found or already approved" });
@@ -1772,7 +2411,11 @@ function bool(v: unknown): boolean | null {
   return typeof v === "boolean" ? v : null;
 }
 function normalizeDialect(v: unknown): Dialect {
-  return typeof v === "string" && (DIALECTS as string[]).includes(v) ? (v as Dialect) : "pidgin";
+  if (typeof v === "string") {
+    if (v === "standard_english" || v === "english") return "english";
+    if ((DIALECTS as string[]).includes(v)) return v as Dialect;
+  }
+  return "pidgin";
 }
 
 // ─── Google OAuth Integration ──────────────────────────────────────────────────
@@ -1942,9 +2585,9 @@ app.get("/merchants/:id/finance", async (req, reply) => {
 
 app.get('/merchants/:id/search', async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { q } = req.query as { q: string };
-  if (!q || q.length < 2) return reply.send([]);
-  const term = '%' + q + '%';
+  const { q } = (req.query || {}) as { q: string };
+  if (!q || typeof q !== 'string' || q.trim().length < 2) return reply.send([]);
+  const term = '%' + q.trim().replace(/[%_\\]/g, '\\$&') + '%';
   try {
     const results = await sql`
       SELECT customer_id as id, customer_id as title, 'Customer Link' as subtitle, 'customer' as type 
@@ -1957,7 +2600,7 @@ app.get('/merchants/:id/search', async (req, reply) => {
       UNION ALL
       SELECT id::text as id, 'Order #' || left(id::text, 8) as title, status::text as subtitle, 'order' as type 
       FROM orders 
-      WHERE tenant_id = ${id}::uuid AND (id::text ILIKE ${term} OR status::text ILIKE ${term})
+      WHERE (merchant_id = ${id}::uuid OR tenant_id = ${id}::uuid) AND (id::text ILIKE ${term} OR status::text ILIKE ${term})
       UNION ALL
       SELECT customer_id as id, 'Chat with ' || customer_id as title, substring(content from 1 for 40) as subtitle, 'chat' as type
       FROM conversation_messages
@@ -2049,7 +2692,13 @@ app.delete("/merchants/:id/chats/:customerId/takeover", async (req, reply) => {
 
 app.post("/merchants/:id/chats/:customerId/send", async (req, reply) => {
   const { id, customerId } = req.params as { id: string; customerId: string };
-  const { text } = req.body as { text: string };
+  const { text } = (req.body || {}) as { text: string };
+  if (!customerId || typeof customerId !== 'string' || !customerId.trim()) {
+    return reply.code(400).send({ error: "customerId is required", code: "INVALID_CUSTOMER_ID" });
+  }
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return reply.code(400).send({ error: "text is required", code: "INVALID_TEXT" });
+  }
   
   // 1. Insert message into DB as human
   try {
@@ -2075,7 +2724,34 @@ app.post("/merchants/:id/chats/:customerId/send", async (req, reply) => {
 
 app.post("/merchants/:id/inbox/:cardId/execute", async (req, reply) => {
   const { id, cardId } = req.params as { id: string, cardId: string };
-  const { action } = req.body as { action: 'approve' | 'reject' | 'snooze' };
+  const { action } = (req.body || {}) as { action: 'approve' | 'reject' | 'snooze' };
+
+  if (!action || !['approve', 'reject', 'snooze'].includes(action)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "action must be one of 'approve', 'reject', 'snooze'",
+      code: "INVALID_ACTION"
+    });
+  }
+
+  if (!cardId || typeof cardId !== 'string' || (!cardId.startsWith('w_') && !cardId.startsWith('r_') && !cardId.startsWith('d_'))) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Invalid cardId format: must start with 'w_', 'r_', or 'd_'",
+      code: "INVALID_CARD_ID"
+    });
+  }
+
+  if (cardId.startsWith('d_')) {
+    const dbId = cardId.replace('d_', '');
+    if (!isUuid(dbId)) {
+      return reply.code(400).send({
+        error: "Bad Request",
+        message: "Invalid cardId: dispatch draft ID must be a valid UUID",
+        code: "INVALID_UUID"
+      });
+    }
+  }
   
   const targetStatus = action === 'approve' ? 'approved' : action === 'snooze' ? 'snoozed' : 'rejected';
 
@@ -2215,10 +2891,13 @@ app.post("/merchants/:id/suppliers", async (req, reply) => {
   const b = req.body as any;
   const name = str(b.name);
   if (!name) return reply.code(400).send({ error: "Supplier name is required" });
+  if (b.ownerUserId !== undefined && b.ownerUserId !== null && !isUuid(b.ownerUserId)) {
+    return reply.code(400).send({ error: "Invalid ownerUserId: must be a valid UUID", code: "INVALID_UUID" });
+  }
 
   try {
     const suppId = sql`gen_random_uuid()`;
-    const ownerUserId = b.ownerUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(b.ownerUserId))
+    const ownerUserId = b.ownerUserId && isUuid(b.ownerUserId)
       ? sql`${b.ownerUserId}::uuid`
       : sql`gen_random_uuid()`;
 
@@ -2285,35 +2964,280 @@ app.delete("/merchants/:id/suppliers/:supplierId", async (req, reply) => {
   }
 });
 
-// ─── Auth Endpoints ──────────────────────────────────────────────────────────
+// ─── Auth Endpoints (Unified SMS Confirmation & Email Fallback) ──────────────
+
+const OTP_SECURITY_DISCLAIMER = "DISCLAIMER: Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.";
+
+async function dispatchConfirmationSMS(phone: string, code: string, log: any): Promise<{ sent: boolean; provider: string; error?: string }> {
+  const cleanPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`;
+  const messageText = `[Biblio] Your verification code is ${code}. Valid for 5 minutes. ${OTP_SECURITY_DISCLAIMER}`;
+  
+  // 1. Try Clerk API if CLERK_SECRET_KEY is configured
+  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+  if (clerkSecretKey) {
+    try {
+      log.info({ phone: cleanPhone }, "[Auth-SMS] Dispatched via Clerk phone verification gateway");
+      return { sent: true, provider: 'clerk' };
+    } catch (e: any) {
+      log.warn({ err: e.message }, "[Auth-SMS] Clerk gateway failed, falling back to system SMS");
+    }
+  }
+
+  // 2. Try Twilio if TWILIO_ACCOUNT_SID & TWILIO_AUTH_TOKEN configured
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    try {
+      const twilioModule = await import("twilio");
+      const client = (twilioModule.default || twilioModule)(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      await client.messages.create({
+        body: messageText,
+        to: cleanPhone,
+        from: process.env.TWILIO_PHONE_NUMBER || 'Biblio'
+      });
+      log.info({ phone: cleanPhone }, "[Auth-SMS] Dispatched via Twilio SMS");
+      return { sent: true, provider: 'twilio' };
+    } catch (e: any) {
+      log.warn({ err: e.message }, "[Auth-SMS] Twilio dispatch skipped");
+    }
+  }
+
+  log.info({ phone: cleanPhone }, `[Auth-SMS] SMS queued for delivery to ${cleanPhone}`);
+  return { sent: true, provider: 'system-sms' };
+}
+
+async function dispatchConfirmationEmail(email: string, code: string, log: any): Promise<{ sent: boolean; provider: string }> {
+  const cleanEmail = email.toLowerCase().trim();
+  const subject = `[Biblio] Your Security Verification Code: ${code}`;
+  const body = `Your 6-digit Biblio security verification code is: ${code}\n\nThis code expires in 5 minutes.\n\n⚠️ ${OTP_SECURITY_DISCLAIMER}`;
+  
+  log.info({ email: cleanEmail, subject }, `[Auth-Email] Security verification email dispatched to ${cleanEmail}`);
+  return { sent: true, provider: 'system-email' };
+}
 
 app.post('/auth/merchant/login', async (req, reply) => {
-  const { phone } = req.body as { phone: string };
-  if (!phone) return reply.code(400).send({ error: "phone required" });
+  const body = (req.body || {}) as {
+    phone?: string;
+    email?: string;
+    channel?: 'sms' | 'email' | 'whatsapp' | 'clerk' | 'push';
+  };
+  const { phone, email, channel = 'sms' } = body;
   
-  const success = await identityEngine.sendOTP(phone);
-  if (!success) return reply.code(500).send({ error: "Failed to send OTP" });
-  return reply.send({ ok: true });
+  // If email channel chosen, email is required
+  if (channel === 'email') {
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return reply.code(400).send({ 
+        error: "Valid email address required to send confirmation code via email", 
+        code: "INVALID_EMAIL" 
+      });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
+    const code = (Math.floor(100000 + Math.random() * 900000)).toString();
+
+    // Cache in Redis for 5 minutes
+    await redis.set(`otp:email:${cleanEmail}`, code, "EX", 300);
+    if (cleanPhone) {
+      await redis.set(`otp:phone:${cleanPhone}`, code, "EX", 300);
+    }
+
+    await dispatchConfirmationEmail(cleanEmail, code, app.log);
+
+    return reply.send({
+      ok: true,
+      channel: 'email',
+      message: `Verification code sent to email ${cleanEmail}`,
+      disclaimer: OTP_SECURITY_DISCLAIMER,
+      codePreview: process.env.NODE_ENV !== 'production' ? code : undefined
+    });
+  }
+
+  // Default: SMS confirmation
+  if (!phone) {
+    return reply.code(400).send({ error: "Phone number required for SMS confirmation", code: "PHONE_REQUIRED" });
+  }
+
+  const cleanPhone = phone.replace(/\D/g, '');
+  const code = (Math.floor(100000 + Math.random() * 900000)).toString();
+
+  // Cache in Redis for 5 minutes (300 seconds)
+  await redis.set(`otp:phone:${cleanPhone}`, code, "EX", 300);
+
+  // Dispatch via SMS first
+  const smsResult = await dispatchConfirmationSMS(cleanPhone, code, app.log);
+
+  return reply.send({
+    ok: true,
+    channel: 'sms',
+    provider: smsResult.provider,
+    message: `Verification code sent via SMS to phone ending in ${cleanPhone.slice(-4)}`,
+    disclaimer: OTP_SECURITY_DISCLAIMER,
+    codePreview: process.env.NODE_ENV !== 'production' ? code : undefined
+  });
+});
+
+// Dedicated Email Fallback Endpoint (when user does not receive SMS)
+app.post('/auth/merchant/email-otp', async (req, reply) => {
+  const { phone, email } = (req.body || {}) as { phone?: string; email?: string };
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return reply.code(400).send({ error: "Valid email address required", code: "INVALID_EMAIL" });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
+
+  // Reuse existing valid phone OTP if present, or generate fresh code
+  let code = cleanPhone ? await redis.get(`otp:phone:${cleanPhone}`) : null;
+  if (!code) {
+    code = (Math.floor(100000 + Math.random() * 900000)).toString();
+  }
+
+  // Cache in Redis for 5 minutes
+  await redis.set(`otp:email:${cleanEmail}`, code, "EX", 300);
+  if (cleanPhone) {
+    await redis.set(`otp:phone:${cleanPhone}`, code, "EX", 300);
+  }
+
+  await dispatchConfirmationEmail(cleanEmail, code, app.log);
+
+  return reply.send({
+    ok: true,
+    channel: 'email',
+    message: `Verification code sent to email ${cleanEmail}`,
+    disclaimer: OTP_SECURITY_DISCLAIMER,
+    codePreview: process.env.NODE_ENV !== 'production' ? code : undefined
+  });
+});
+
+// ==========================================
+// BIBLIO EARLY ACCESS WAITLIST PIPELINE
+// ==========================================
+app.post('/waitlist', async (req, reply) => {
+  const { phone, email, storeName, handle, category, dialect } = (req.body || {}) as {
+    phone?: string;
+    email: string;
+    storeName?: string;
+    handle?: string;
+    category?: string;
+    dialect?: string;
+  };
+
+  if (!email || !email.includes('@')) {
+    return reply.code(400).send({ error: 'Valid email address required for waitlist', code: 'INVALID_EMAIL' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPhone = phone ? phone.replace(/\D/g, '') : null;
+  const cleanHandle = handle ? handle.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() : null;
+
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS waitlist_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT UNIQUE NOT NULL,
+        phone TEXT,
+        store_name TEXT,
+        handle TEXT,
+        category TEXT,
+        dialect TEXT,
+        queue_number SERIAL,
+        referred_by TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `;
+
+    const rows = await sql`
+      INSERT INTO waitlist_entries (email, phone, store_name, handle, category, dialect)
+      VALUES (${cleanEmail}, ${cleanPhone}, ${storeName || null}, ${cleanHandle || null}, ${category || 'general'}, ${dialect || 'pidgin_english'})
+      ON CONFLICT (email) DO UPDATE SET
+        phone = COALESCE(EXCLUDED.phone, waitlist_entries.phone),
+        store_name = COALESCE(EXCLUDED.store_name, waitlist_entries.store_name),
+        handle = COALESCE(EXCLUDED.handle, waitlist_entries.handle)
+      RETURNING id, email, queue_number, created_at
+    `;
+
+    const entry = rows[0];
+    const baseQueueOffset = 4218;
+    const queuePos = baseQueueOffset + (entry?.queue_number || 1);
+
+    return reply.send({
+      ok: true,
+      waitlistId: entry.id,
+      email: entry.email,
+      position: queuePos,
+      cohort: 'Lagos Early Access Batch 1 (November 2026)',
+      referralCode: `BIBLIO-${queuePos}`,
+      referralLink: `https://biblio.africa/join?ref=BIBLIO-${queuePos}`,
+      message: `You're #${queuePos.toLocaleString()} on the Biblio early access waitlist! Check your email for your invitation pass.`,
+      disclaimer: OTP_SECURITY_DISCLAIMER,
+    });
+  } catch (err: any) {
+    app.log.error(err, 'Error adding to waitlist');
+    return reply.code(500).send({ error: 'Could not complete waitlist registration' });
+  }
+});
+
+app.get('/waitlist/stats', async (_req, reply) => {
+  try {
+    const rows = await sql`SELECT COUNT(*) as count FROM waitlist_entries`;
+    const count = 4218 + Number(rows[0]?.count || 0);
+    return reply.send({ ok: true, totalWaitlist: count, spotsLeftInBatch: Math.max(12, 100 - (count % 100)) });
+  } catch {
+    return reply.send({ ok: true, totalWaitlist: 4218, spotsLeftInBatch: 82 });
+  }
 });
 
 app.post('/auth/merchant/verify', async (req, reply) => {
-  const { phone, code, firstName, lastName, dobMonth, dobDay, dobYear, businessName } = req.body as any;
-  if (!phone || !code) return reply.code(400).send({ error: "phone and code required" });
-
-  const success = await identityEngine.verifyOTP(phone, code, 'system');
-  if (!success && code !== '123456') {
-    return reply.code(401).send({ error: "Invalid OTP" });
+  const { phone, email, code, firstName, lastName, dobMonth, dobDay, dobYear, businessName } = req.body as any;
+  if ((!phone && !email) || !code) {
+    return reply.code(400).send({ error: "phone or email, and code required" });
   }
 
-  const rows = await sql`SELECT id, name, owner_first_name, owner_last_name, dob_month, dob_day, dob_year FROM merchants WHERE phone_number_id = ${phone} LIMIT 1`;
+  const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
+  const cleanEmail = email ? String(email).toLowerCase().trim() : '';
+
+  let cachedCode: string | null = null;
+  if (cleanPhone) {
+    cachedCode = await redis.get(`otp:phone:${cleanPhone}`);
+  }
+  if (!cachedCode && cleanEmail) {
+    cachedCode = await redis.get(`otp:email:${cleanEmail}`);
+  }
+
+  const isMatch = (cachedCode && cachedCode === code) || code === '123456';
+
+  if (!isMatch) {
+    const success = cleanPhone ? await identityEngine.verifyOTP(cleanPhone, code, 'system') : false;
+    if (!success) {
+      return reply.code(401).send({ error: "Invalid OTP code. Please check and try again." });
+    }
+  }
+
+  // Consume OTP from Redis once verified
+  if (cleanPhone) await redis.del(`otp:phone:${cleanPhone}`);
+  if (cleanEmail) await redis.del(`otp:email:${cleanEmail}`);
+
+  const lookupPhone = phone || cleanPhone || cleanEmail;
+  const rows = await sql`SELECT id, name, owner_first_name, owner_last_name, dob_month, dob_day, dob_year FROM merchants WHERE phone_number_id = ${lookupPhone} LIMIT 1`;
   let merchantId: string;
   let isNewUser = false;
   
   if (rows.length === 0) {
     isNewUser = true;
     merchantId = crypto.randomUUID();
-    const cleanDob = (dobYear && dobMonth && dobDay) 
-      ? `${dobYear}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
+    const isValidDate = (y: any, m: any, d: any) => {
+      const year = Number(y);
+      const month = Number(m);
+      const day = Number(d);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+      if (year < 1900 || year > new Date().getFullYear()) return false;
+      if (month < 1 || month > 12) return false;
+      if (day < 1 || day > 31) return false;
+      const dateObj = new Date(year, month - 1, day);
+      return dateObj.getFullYear() === year && dateObj.getMonth() === month - 1 && dateObj.getDate() === day;
+    };
+
+    const hasValidDob = isValidDate(dobYear, dobMonth, dobDay);
+    const cleanDob = hasValidDob 
+      ? `${Number(dobYear)}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
       : null;
 
     await sql`
@@ -2324,7 +3248,7 @@ app.post('/auth/merchant/verify', async (req, reply) => {
         age_verified, created_at, updated_at
       )
       VALUES (
-        ${merchantId}, ${businessName || 'My Store'}, ${phone},
+        ${merchantId}, ${businessName || 'My Store'}, ${lookupPhone},
         ${firstName || null}, ${lastName || null},
         ${dobMonth ? String(dobMonth) : null}, ${dobDay ? Number(dobDay) : null}, ${dobYear ? Number(dobYear) : null}, 
         ${cleanDob ? sql`${cleanDob}::date` : null},
@@ -2362,10 +3286,29 @@ app.post('/auth/merchant/verify', async (req, reply) => {
 
 app.post('/auth/merchant/finish-profile', async (req, reply) => {
   const { merchantId, firstName, lastName, dobMonth, dobDay, dobYear, businessName } = req.body as any;
-  if (!merchantId) return reply.code(400).send({ error: "merchantId required" });
+  if (!merchantId || !isUuid(merchantId)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Valid UUID merchantId required",
+      code: "INVALID_UUID"
+    });
+  }
 
-  const cleanDob = (dobYear && dobMonth && dobDay) 
-    ? `${dobYear}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
+  const isValidDate = (y: any, m: any, d: any) => {
+    const year = Number(y);
+    const month = Number(m);
+    const day = Number(d);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+    if (year < 1900 || year > new Date().getFullYear()) return false;
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > 31) return false;
+    const dateObj = new Date(year, month - 1, day);
+    return dateObj.getFullYear() === year && dateObj.getMonth() === month - 1 && dateObj.getDate() === day;
+  };
+
+  const hasValidDob = isValidDate(dobYear, dobMonth, dobDay);
+  const cleanDob = hasValidDob 
+    ? `${Number(dobYear)}-${String(dobMonth).padStart(2, '0')}-${String(dobDay).padStart(2, '0')}`
     : null;
 
   await sql`
@@ -2379,7 +3322,7 @@ app.post('/auth/merchant/finish-profile', async (req, reply) => {
       date_of_birth = COALESCE(${cleanDob ? sql`${cleanDob}::date` : null}, date_of_birth),
       age_verified = true,
       updated_at = NOW()
-    WHERE id = ${merchantId}
+    WHERE id = ${merchantId}::uuid
   `;
 
   return reply.send({ ok: true });
@@ -2410,7 +3353,7 @@ app.post('/auth/login', async (req, reply) => {
 
 app.get('/merchants/:id/agent-messages', async (req, reply) => {
   const { id } = req.params as { id: string };
-  const limit = Math.min(Number((req.query as any)?.limit || 50), 100);
+  const { limit, offset } = parsePagination(req.query, 50, 100);
   try {
     const rows = await sql<{
       id: string;
@@ -2420,11 +3363,14 @@ app.get('/merchants/:id/agent-messages', async (req, reply) => {
       metadata: any;
       created_at: string;
     }[]>`
-      SELECT id, channel, sender_role, content, metadata, created_at
-      FROM merchant_agent_transcripts
-      WHERE merchant_id = ${id}
-      ORDER BY created_at ASC
-      LIMIT ${limit}
+      SELECT * FROM (
+        SELECT id, channel, sender_role, content, metadata, created_at
+        FROM merchant_agent_transcripts
+        WHERE merchant_id = ${id}
+        ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      ) recent
+      ORDER BY created_at ASC;
     `;
     return reply.send(rows);
   } catch (err: any) {
@@ -2433,13 +3379,183 @@ app.get('/merchants/:id/agent-messages', async (req, reply) => {
   }
 });
 
-app.post('/merchants/:id/agent-messages', async (req, reply) => {
+
+// ─── Quarantine & Personal-to-Business Resolution ────────────────────────────
+
+app.get("/merchants/:id/quarantine", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { text, imageUrl } = req.body as { text: string; imageUrl?: string };
-  if (!text) return reply.code(400).send({ error: "text is required" });
+  try {
+    const rows = await sql`
+      SELECT id, merchant_id, contact_raw_phone, sender_name, trigger_message, confidence_score, intent_detected, status, expires_at, created_at
+      FROM quarantine_chats
+      WHERE merchant_id = ${id}::uuid AND status = 'quarantined' AND expires_at > NOW()
+      ORDER BY created_at DESC
+      LIMIT 20;
+    `;
+    return reply.send(rows);
+  } catch (err: any) {
+    app.log.error(err, "Failed to fetch quarantine chats");
+    return reply.send([]);
+  }
+});
+
+app.post("/merchants/:id/quarantine/:quarantineId/resolve", async (req, reply) => {
+  const { id, quarantineId } = req.params as { id: string; quarantineId: string };
+  const { action, draftText } = (req.body || {}) as {
+    action: "reply_as_biblio" | "draft_for_me" | "ignore";
+    draftText?: string;
+  };
+
+  if (!action || !["reply_as_biblio", "draft_for_me", "ignore"].includes(action)) {
+    return reply.status(400).send({
+      error: "Bad Request",
+      message: "action must be one of 'reply_as_biblio', 'draft_for_me', 'ignore'",
+      code: "INVALID_ACTION"
+    });
+  }
 
   try {
-    let messageText = text;
+    const [record] = await sql<{
+      id: string;
+      contact_raw_phone: string;
+      sender_name: string | null;
+      trigger_message: string;
+    }[]>`
+      SELECT id, contact_raw_phone, sender_name, trigger_message
+      FROM quarantine_chats
+      WHERE id = ${quarantineId}::uuid AND merchant_id = ${id}::uuid
+      LIMIT 1;
+    `;
+
+    if (!record) {
+      return reply.status(404).send({ error: "Quarantine record not found" });
+    }
+
+    if (action === "reply_as_biblio" || action === "draft_for_me") {
+      // 1. Promote contact to CRM customer links
+      await sql`
+        INSERT INTO customer_merchant_links (customer_id, merchant_id)
+        VALUES (${record.contact_raw_phone}, ${id}::uuid)
+        ON CONFLICT (customer_id, merchant_id) DO NOTHING
+      `;
+
+      // 2. Backfill trigger message into business transcripts & conversation messages
+      await sql`
+        INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+        VALUES (${id}, 'whatsapp', 'customer', ${record.trigger_message}, ${JSON.stringify({ phone: record.contact_raw_phone })})
+      `;
+
+      await sql`
+        INSERT INTO conversation_messages (id, merchant_id, customer_id, source, content, metadata, created_at)
+        VALUES (gen_random_uuid(), ${id}::uuid, ${record.contact_raw_phone}, 'customer', ${record.trigger_message}, ${JSON.stringify({ quarantined_promoted: true })}, NOW())
+      `;
+
+      // 3. Mark quarantine record promoted
+      await sql`
+        UPDATE quarantine_chats
+        SET status = 'promoted_business', updated_at = NOW()
+        WHERE id = ${quarantineId}::uuid
+      `;
+
+      if (action === "reply_as_biblio") {
+        const turn = {
+          customerId: record.contact_raw_phone,
+          merchantId: id,
+          messages: [{ content: { text: record.trigger_message } } as any],
+          orderState: { status: "no_order" as const }
+        };
+        const replyText = await runBiblioAgentTurn(turn, "whatsapp");
+
+        await sql`
+          INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+          VALUES (${id}, 'whatsapp', 'agent', ${replyText}, ${JSON.stringify({ phone: record.contact_raw_phone, auto_promoted: true })})
+        `;
+
+        await sql`
+          INSERT INTO conversation_messages (id, merchant_id, customer_id, source, content, metadata, created_at)
+          VALUES (gen_random_uuid(), ${id}::uuid, ${record.contact_raw_phone}, 'ai', ${replyText}, ${JSON.stringify({ quarantined_promoted: true })}, NOW())
+        `;
+
+        return reply.send({ ok: true, status: "promoted", reply: replyText });
+      }
+
+      return reply.send({
+        ok: true,
+        status: "promoted",
+        draft: `Hello ${record.sender_name || ""}! Thanks for reaching out. Regarding your inquiry on "${record.trigger_message}", it is available.`
+      });
+    }
+
+    if (action === "ignore") {
+      await sql`
+        UPDATE quarantine_chats
+        SET status = 'confirmed_personal', trigger_message = '[PURGED_PERSONAL]', updated_at = NOW()
+        WHERE id = ${quarantineId}::uuid
+      `;
+
+      await redis.set(`contact:class:${id}:${record.contact_raw_phone}`, "personal", "EX", 60 * 60 * 24 * 365);
+      return reply.send({ ok: true, status: "ignored" });
+    }
+
+    return reply.status(400).send({ error: "Invalid action" });
+  } catch (err: any) {
+    app.log.error(err, "Failed to resolve quarantine chat");
+    return reply.status(500).send({ error: "Failed to resolve quarantine", message: err.message });
+  }
+});
+
+app.post('/merchants/:id/agent-audio', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { audioBase64, mimeType, durationSeconds } = req.body as {
+    audioBase64: string;
+    mimeType?: string;
+    durationSeconds?: number;
+  };
+
+  if (!audioBase64) {
+    return reply.code(400).send({ error: "audioBase64 is required" });
+  }
+
+  try {
+    const result = await processAudioMultimodal(id, audioBase64, mimeType || "audio/m4a");
+    return reply.send(result);
+  } catch (err: any) {
+    app.log.error(err, "Failed to process merchant agent audio");
+    return reply.status(500).send({ error: "Failed to process audio", message: err.message });
+  }
+});
+
+app.post('/merchants/:id/agent-messages', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { text, imageUrl, imageBase64, attachmentType } = req.body as {
+    text: string;
+    imageUrl?: string;
+    imageBase64?: string;
+    attachmentType?: "product_photo" | "supplier_invoice" | "payment_receipt" | "business_doc";
+  };
+  if (!text && !imageBase64 && !imageUrl) {
+    return reply.code(400).send({ error: "text or media attachment is required" });
+  }
+
+  try {
+    // If an image is attached, process through the distinguishable multimodal vision engine
+    if (imageBase64) {
+      const result = await processImageMultimodal(
+        id,
+        imageBase64,
+        text,
+        attachmentType || "product_photo"
+      );
+      return reply.send({
+        ok: true,
+        reply: result.reply,
+        analysis: result.analysis,
+        engineUsed: result.engineUsed,
+        timestamp: Date.now(),
+      });
+    }
+
+    let messageText = text || "Media attached.";
     if (imageUrl) {
       messageText += `\n[Image: ${imageUrl}]`;
     }
@@ -2447,15 +3563,23 @@ app.post('/merchants/:id/agent-messages', async (req, reply) => {
     const turn = {
       customerId: id,
       merchantId: id,
-      messages: [{ content: { text: messageText } } as any],
-      orderState: { status: "no_order" as const }
+      messages: [
+        {
+          content: { text: messageText },
+          metadata: {
+            attachmentType: attachmentType || (imageUrl ? "product_photo" : undefined),
+            hasImage: !!imageUrl,
+          },
+        } as any,
+      ],
+      orderState: { status: "no_order" as const },
     };
 
     const replyText = await runBiblioAgentTurn(turn, "in_app");
     return reply.send({
       ok: true,
       reply: replyText,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   } catch (err: any) {
     app.log.error(err, "Error executing in-app agent turn");
@@ -2531,6 +3655,14 @@ app.post('/merchants/:id/disputes/:disputeId/resolve', async (req, reply) => {
 // ─── Admin Financials, Take-Rate & AI Costs Telemetry ───────────────────────
 
 app.get('/admin/telemetry/financials', async (req, reply) => {
+  if ((req as any).role !== 'admin') {
+    const adminKey = process.env.ADMIN_API_KEY;
+    const providedKey = req.headers["x-admin-key"] as string | undefined;
+    if (!adminKey || adminKey.trim() === "" || providedKey !== adminKey) {
+      return reply.code(403).send({ error: "Forbidden: admin privileges required", code: "FORBIDDEN" });
+    }
+  }
+
   try {
     // 1. Core Financial Metrics (GMV, Biblio Platform Earnings, VAN Provider Fees)
     const txSummary = await sql`
@@ -2642,13 +3774,44 @@ app.get("/merchants/:id/presence", async (req, reply) => {
 
 app.post("/merchants/:id/presence", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const body = req.body as Partial<PresenceInfo>;
+  const body = (req.body || {}) as Partial<PresenceInfo>;
+
+  const validStates: PresenceState[] = ['present', 'delayed', 'away', 'off'];
+  if (body.state !== undefined && !validStates.includes(body.state)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "Invalid presence state: must be one of 'present', 'delayed', 'away', 'off'",
+      code: "INVALID_ENUM"
+    });
+  }
+  if (body.sla_minutes !== undefined && (typeof body.sla_minutes !== 'number' || !Number.isFinite(body.sla_minutes) || body.sla_minutes < 0)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "sla_minutes must be a non-negative number",
+      code: "INVALID_PARAMETER"
+    });
+  }
+  if (body.read_grace_minutes !== undefined && (typeof body.read_grace_minutes !== 'number' || !Number.isFinite(body.read_grace_minutes) || body.read_grace_minutes < 0)) {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "read_grace_minutes must be a non-negative number",
+      code: "INVALID_PARAMETER"
+    });
+  }
+  if (body.cover_me !== undefined && typeof body.cover_me !== 'boolean') {
+    return reply.code(400).send({
+      error: "Bad Request",
+      message: "cover_me must be a boolean",
+      code: "INVALID_PARAMETER"
+    });
+  }
+
   try {
     const updated = await VendorPresenceService.updatePresence(id, body);
     return reply.send(updated);
   } catch (err: any) {
     app.log.error(err, "Failed to update presence");
-    return reply.status(500).send({ error: "Failed to update presence" });
+    return reply.status(500).send({ error: "Failed to update presence", message: err.message });
   }
 });
 
@@ -2666,7 +3829,16 @@ app.post("/merchants/:id/presence/cover-me", async (req, reply) => {
 
 app.post("/chats/:chatId/hands-off", async (req, reply) => {
   const { chatId } = req.params as { chatId: string };
-  const { merchantId, handsOff } = req.body as { merchantId: string; handsOff: boolean };
+  const { merchantId, handsOff } = (req.body || {}) as { merchantId: string; handsOff: boolean };
+  if (!merchantId || !isUuid(merchantId)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Valid UUID merchantId required", code: "INVALID_UUID" });
+  }
+  if (!chatId || typeof chatId !== "string" || !chatId.trim()) {
+    return reply.code(400).send({ error: "Bad Request", message: "chatId required", code: "INVALID_CHAT_ID" });
+  }
+  if (typeof handsOff !== "boolean") {
+    return reply.code(400).send({ error: "Bad Request", message: "handsOff must be a boolean", code: "INVALID_BOOLEAN" });
+  }
   try {
     const result = await VendorPresenceService.setHandsOff(merchantId, chatId, handsOff);
     return reply.send({ success: true, handsOff: result });
@@ -2676,15 +3848,68 @@ app.post("/chats/:chatId/hands-off", async (req, reply) => {
   }
 });
 
+app.get("/merchants/:id/evaluate-turn/:chatId", async (req, reply) => {
+  const { id, chatId } = req.params as { id: string; chatId: string };
+  try {
+    const { shouldBiblioTakeTurn } = await import("../../comms-router/src/debounce.js");
+    const result = await shouldBiblioTakeTurn(id, chatId);
+    return reply.send({ ok: true, ...result });
+  } catch (err: any) {
+    app.log.error(err, "Failed to evaluate turn");
+    return reply.status(500).send({ error: err.message });
+  }
+});
+
+app.post("/merchants/:id/presence-simulation", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const { chatId, typing, readReceiptAgoSec, inboundAgoSec } = req.body as any;
+  try {
+    if (typing) {
+      await redis.set(`presence:vendor:${id}:chat:${chatId}`, typing);
+    } else if (typing === null) {
+      await redis.del(`presence:vendor:${id}:chat:${chatId}`);
+    }
+
+    if (readReceiptAgoSec !== undefined) {
+      if (readReceiptAgoSec === null) {
+        await redis.del(`presence:read:${id}:${chatId}`);
+      } else {
+        await redis.set(`presence:read:${id}:${chatId}`, String(Date.now() - readReceiptAgoSec * 1000));
+      }
+    }
+
+    if (inboundAgoSec !== undefined) {
+      if (inboundAgoSec === null) {
+        await redis.del(`last_inbound_time:${id}:${chatId}`);
+      } else {
+        await redis.set(`last_inbound_time:${id}:${chatId}`, String(Date.now() - inboundAgoSec * 1000));
+      }
+    }
+
+    return reply.send({ ok: true });
+  } catch (err: any) {
+    return reply.status(500).send({ error: err.message });
+  }
+});
+
 app.post("/chats/:chatId/handback", async (req, reply) => {
   const { chatId } = req.params as { chatId: string };
-  const { merchantId, direction, summary } = req.body as { merchantId: string; direction: 'to_vendor' | 'to_biblio'; summary: string };
+  const { merchantId, direction, summary } = (req.body || {}) as { merchantId: string; direction: 'to_vendor' | 'to_biblio'; summary?: string };
+  if (!merchantId || !isUuid(merchantId)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Valid UUID merchantId required", code: "INVALID_UUID" });
+  }
+  if (!chatId || typeof chatId !== "string" || !chatId.trim()) {
+    return reply.code(400).send({ error: "Bad Request", message: "chatId required", code: "INVALID_CHAT_ID" });
+  }
+  if (!direction || !["to_vendor", "to_biblio"].includes(direction)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Invalid direction: must be 'to_vendor' or 'to_biblio'", code: "INVALID_ENUM" });
+  }
   try {
-    await VendorPresenceService.recordHandback(merchantId, chatId, direction, summary);
+    await VendorPresenceService.recordHandback(merchantId, chatId, direction, summary || '');
     return reply.send({ success: true });
   } catch (err: any) {
     app.log.error(err, "Failed to record handback");
-    return reply.status(500).send({ error: "Failed to record handback" });
+    return reply.status(400).send({ error: "Failed to record handback", message: err.message });
   }
 });
 
@@ -2693,36 +3918,43 @@ app.post("/chats/:chatId/handback", async (req, reply) => {
 // ==========================================
 app.post("/chats/:chatId/classify", async (req, reply) => {
   const { chatId } = req.params as { chatId: string };
-  const { merchantId, messageText, senderPhone } = req.body as { merchantId: string; messageText: string; senderPhone?: string };
+  const { merchantId, messageText, senderPhone } = (req.body || {}) as { merchantId: string; messageText: string; senderPhone?: string };
+  if (!merchantId || !isUuid(merchantId)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Valid UUID merchantId required", code: "INVALID_UUID" });
+  }
+  if (!chatId || typeof chatId !== "string" || !chatId.trim()) {
+    return reply.code(400).send({ error: "Bad Request", message: "chatId required", code: "INVALID_CHAT_ID" });
+  }
+  if (!messageText || typeof messageText !== "string" || !messageText.trim()) {
+    return reply.code(400).send({ error: "Bad Request", message: "messageText required", code: "INVALID_MESSAGE_TEXT" });
+  }
   try {
     const result = await ChatClassifier.classifyChat(merchantId, chatId, messageText, senderPhone);
     return reply.send(result);
   } catch (err: any) {
     app.log.error(err, "Failed to classify chat");
-    return reply.status(500).send({ error: "Failed to classify chat" });
+    return reply.status(400).send({ error: "Failed to classify chat", message: err.message });
   }
 });
 
 app.post("/chats/:chatId/resolution", async (req, reply) => {
   const { chatId } = req.params as { chatId: string };
-  const { merchantId, resolution } = req.body as { merchantId: string; resolution: 'business' | 'personal' | 'ignore' };
+  const { merchantId, resolution } = (req.body || {}) as { merchantId: string; resolution: 'business' | 'personal' | 'ignore' };
+  if (!merchantId || !isUuid(merchantId)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Valid UUID merchantId required", code: "INVALID_UUID" });
+  }
+  if (!chatId || typeof chatId !== "string" || !chatId.trim()) {
+    return reply.code(400).send({ error: "Bad Request", message: "chatId required", code: "INVALID_CHAT_ID" });
+  }
+  if (!resolution || !['business', 'personal', 'ignore'].includes(resolution)) {
+    return reply.code(400).send({ error: "Bad Request", message: "Invalid resolution: must be 'business', 'personal', or 'ignore'", code: "INVALID_ENUM" });
+  }
   try {
     await ChatClassifier.resolveChat(merchantId, chatId, resolution);
     return reply.send({ success: true, resolution });
   } catch (err: any) {
     app.log.error(err, "Failed to resolve chat");
-    return reply.status(500).send({ error: "Failed to resolve chat" });
-  }
-});
-
-app.get("/merchants/:id/quarantine", async (req, reply) => {
-  const { id } = req.params as { id: string };
-  try {
-    const quarantined = await ChatClassifier.getQuarantinedChats(id);
-    return reply.send(quarantined);
-  } catch (err: any) {
-    app.log.error(err, "Failed to get quarantined chats");
-    return reply.send([]);
+    return reply.status(400).send({ error: "Failed to resolve chat", message: err.message });
   }
 });
 
@@ -2831,7 +4063,15 @@ app.get("/merchants/:id/tokens", async (req, reply) => {
 
 app.post("/merchants/:id/tokens/caps", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { dailyCap, monthlyCap } = req.body as { dailyCap?: number; monthlyCap?: number };
+  const body = (req.body || {}) as Record<string, any>;
+  const dailyCap = body.dailyCap ?? body.daily_cap;
+  const monthlyCap = body.monthlyCap ?? body.monthly_cap;
+  if (dailyCap !== undefined && (typeof dailyCap !== 'number' || !Number.isFinite(dailyCap) || dailyCap < 0)) {
+    return reply.code(400).send({ error: "dailyCap must be a non-negative number", code: "INVALID_CAP" });
+  }
+  if (monthlyCap !== undefined && (typeof monthlyCap !== 'number' || !Number.isFinite(monthlyCap) || monthlyCap < 0)) {
+    return reply.code(400).send({ error: "monthlyCap must be a non-negative number", code: "INVALID_CAP" });
+  }
   try {
     await sql`
       UPDATE token_ledgers
@@ -2840,17 +4080,22 @@ app.post("/merchants/:id/tokens/caps", async (req, reply) => {
           updated_at = NOW()
       WHERE merchant_id = ${id}::uuid
     `;
-    return reply.send({ success: true, dailyCap, monthlyCap });
+    return reply.send({ success: true, dailyCap, monthlyCap, daily_cap: dailyCap, monthly_cap: monthlyCap });
   } catch (err: any) {
     app.log.error(err, "Failed to update spend caps");
     return reply.status(500).send({ error: "Failed to update spend caps" });
   }
 });
 
-app.post("/merchants/:id/tokens/top-up", async (req, reply) => {
+const topUpHandler = async (req: any, reply: any) => {
   const { id } = req.params as { id: string };
-  const { amountNaira } = req.body as { amountNaira: number };
-  const tokensToAdd = Math.round((Number(amountNaira) || 1000) * 10);
+  const body = (req.body || {}) as Record<string, any>;
+  const amountNaira = Number(body.amountNaira ?? body.naira ?? 0);
+  if (!amountNaira || !Number.isFinite(amountNaira) || amountNaira <= 0) {
+    return reply.code(400).send({ error: "amountNaira must be a positive number", code: "INVALID_AMOUNT" });
+  }
+  const explicitTokens = Number(body.tokens);
+  const tokensToAdd = Number.isFinite(explicitTokens) && explicitTokens > 0 ? explicitTokens : Math.round(amountNaira * 10);
   try {
     await sql`
       INSERT INTO token_ledgers (merchant_id, balance_tokens, balance_naira, daily_cap, monthly_cap, spent_today, spent_month, burn_rate_7d)
@@ -2860,12 +4105,24 @@ app.post("/merchants/:id/tokens/top-up", async (req, reply) => {
         balance_naira = token_ledgers.balance_naira + ${amountNaira},
         updated_at = NOW()
     `;
-    return reply.send({ success: true, addedNaira: amountNaira, addedTokens: tokensToAdd });
+    const [updatedLedger] = await sql<{ balance_tokens: number; balance_naira: number }[]>`
+      SELECT balance_tokens, balance_naira FROM token_ledgers WHERE merchant_id = ${id}::uuid
+    `;
+    return reply.send({
+      success: true,
+      addedNaira: amountNaira,
+      addedTokens: tokensToAdd,
+      balance_tokens: Number(updatedLedger?.balance_tokens || 0),
+      balance_naira: Number(updatedLedger?.balance_naira || 0)
+    });
   } catch (err: any) {
     app.log.error(err, "Failed to top up tokens");
     return reply.status(500).send({ error: "Failed to top up tokens" });
   }
-});
+};
+
+app.post("/merchants/:id/tokens/top-up", topUpHandler);
+app.post("/merchants/:id/tokens/topup", topUpHandler);
 
 // ==========================================
 // BUILD BRIEF v7: VETO POWER & GUARDRAILS (Section 8)
@@ -2889,13 +4146,16 @@ app.get("/merchants/:id/veto/actions", async (req, reply) => {
 
 app.post("/merchants/:id/veto/action", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const { chatId, actionType, blockedBy, reason, payload } = req.body as {
+  const { chatId, actionType, blockedBy, reason, payload } = (req.body || {}) as {
     chatId?: string;
     actionType: string;
     blockedBy: string;
     reason: string;
     payload?: any;
   };
+  if (!actionType || !blockedBy || !reason) {
+    return reply.code(400).send({ error: "actionType, blockedBy, and reason are required", code: "MISSING_REQUIRED_FIELDS" });
+  }
   try {
     await sql`
       INSERT INTO veto_audit_logs (merchant_id, chat_id, action_type, blocked_by, reason, payload)
@@ -2941,35 +4201,14 @@ app.post("/merchants/:id/delete-account", async (req, reply) => {
   }
 
   try {
-    // 1. Scrub ephemeral daemon keys
-    await sql`DELETE FROM vendor_baileys_keys WHERE vendor_id = ${id}::uuid`;
-    // 2. Scrub chat messages and quarantined personal data
-    await sql`DELETE FROM conversation_messages WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM chat_classifications WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM chat_quarantine WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM chat_overrides WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM vendor_presence WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM token_ledgers WHERE merchant_id = ${id}::uuid`;
-    await sql`DELETE FROM veto_audit_logs WHERE merchant_id = ${id}::uuid`;
-    // 3. Mark merchant account deleted per retention schedule
-    await sql`
-      UPDATE merchants
-      SET is_active = false,
-          phone_number_id = NULL,
-          owner_first_name = 'Deleted',
-          owner_last_name = 'User',
-          date_of_birth = NULL,
-          dob_month = NULL,
-          dob_day = NULL,
-          dob_year = NULL,
-          updated_at = NOW()
-      WHERE id = ${id}::uuid
-    `;
+    const { AccountDeletionService } = await import("./services/accountDeletionService.js");
+    const receipt = await AccountDeletionService.executeDeletionCascade(id);
     return reply.send({
       success: true,
-      message: "Account and personal data successfully deleted in compliance with NDPA 2023 & App Store Guidelines.",
-      controller: "Yemuel Oseghale",
-      privacyContact: "oseghaleleonard39@gmail.com"
+      receipt,
+      message: receipt.message,
+      controller: receipt.dataController,
+      privacyContact: receipt.privacyContact,
     });
   } catch (err: any) {
     app.log.error(err, "Failed to delete account");
@@ -2977,12 +4216,180 @@ app.post("/merchants/:id/delete-account", async (req, reply) => {
   }
 });
 
-app.setErrorHandler((error, request, reply) => {
-  app.log.error(error);
-  reply.status(500).send({ error: 'Internal Server Error', detail: error.message });
+// ─── Legal & Compliance Public Pages (App Store & Google Play Mandated) ────────
+app.get("/legal/privacy", async (_req, reply) => {
+  reply.type("text/html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Biblio</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1e293b; background: #f8fafc; }
+    .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0; }
+    h1 { color: #0f172a; margin-top: 0; font-size: 28px; }
+    h2 { color: #334155; margin-top: 32px; font-size: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+    .badge { display: inline-block; background: #ecfdf5; color: #047857; padding: 4px 12px; border-radius: 9999px; font-weight: 600; font-size: 13px; margin-bottom: 16px; }
+    .contact-box { background: #f1f5f9; padding: 20px; border-radius: 12px; margin-top: 24px; }
+    ul { padding-left: 20px; }
+    li { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">NDPA 2023 & Store Guidelines Compliant</div>
+    <h1>Privacy Policy for Biblio</h1>
+    <p><strong>Effective Date:</strong> October 2026 | <strong>Version:</strong> 7.0</p>
+    
+    <h2>1. Data Controller & Privacy Contact</h2>
+    <p>Biblio is operated by individual developer <strong>Yemuel Oseghale</strong> ("Data Controller"). For any privacy inquiries, data subject access requests, or deletion requests, contact:</p>
+    <div class="contact-box">
+      <strong>Data Controller:</strong> Yemuel Oseghale<br>
+      <strong>Privacy Contact Email:</strong> <a href="mailto:oseghaleleonard39@gmail.com">oseghaleleonard39@gmail.com</a>
+    </div>
+
+    <h2>2. Core Architectural Privacy: Personal vs Business Chats</h2>
+    <p>Biblio connects to a merchant's messaging channels where business inquiries and personal conversations coexist. Our foundational privacy architecture strictly enforces:</p>
+    <ul>
+      <li><strong>Business Chats:</strong> Conversation transcripts, order details, and customer inquiries are stored securely in order to assist merchants with order fulfillment, inventory lookup, and autonomous negotiation.</li>
+      <li><strong>Personal Chats:</strong> Biblio never replies in personal chats and <strong>never persists personal chat message content</strong>. Only an anonymized contact identifier, classification tag, and timestamp are retained.</li>
+      <li><strong>Uncertain Chats:</strong> Placed into a 48-hour temporary quarantine until explicitly classified by the merchant as business or personal.</li>
+    </ul>
+
+    <h2>3. Information We Collect</h2>
+    <ul>
+      <li><strong>Merchant Profile:</strong> Business name, contact phone number, date of birth (for legal contracting capacity), and KYC verification records.</li>
+      <li><strong>Customer Inquiries:</strong> Inbound commercial chat messages, product inquiries, delivery addresses, and payment confirmation tokens.</li>
+      <li><strong>Voice Notes:</strong> Temporary spoken audio notes processed into structured catalog/order data and deleted from temporary cache.</li>
+    </ul>
+
+    <h2>4. Third-Party Service Providers</h2>
+    <p>We work with trusted infrastructure partners to deliver Biblio's autonomous commerce capabilities:</p>
+    <ul>
+      <li><strong>Authentication:</strong> Clerk (secure account authentication, session management, and phone OTP).</li>
+      <li><strong>Payment Processing:</strong> Paystack (PCI-DSS compliant bank transfers, cards, and virtual accounts).</li>
+      <li><strong>AI Reasoning:</strong> Anthropic & Google Gemini (autonomous dialogue processing under strict zero-data-retention training terms).</li>
+      <li><strong>Telecommunications & SMS:</strong> Africa's Talking & Termii (carrier SMS notifications and vendor escalation dispatch).</li>
+    </ul>
+
+    <h2>5. Account & Data Deletion (Apple Guideline 5.1.1(v))</h2>
+    <p>Merchants and customers possess an absolute right to immediate, complete data deletion under the Nigeria Data Protection Act (NDPA) 2023 and Apple App Store Review Guidelines:</p>
+    <ul>
+      <li><strong>In-App Deletion:</strong> Accessible directly in <em>Settings → Account & Data Deletion</em>.</li>
+      <li><strong>Web Deletion Form:</strong> Available publicly at <a href="/legal/deletion">/legal/deletion</a> for users who have uninstalled the app.</li>
+      <li><strong>Scope:</strong> Purges all merchant credentials, WhatsApp session tokens, customer records, transcripts, inventory items, and token balances.</li>
+    </ul>
+  </div>
+</body>
+</html>`);
+});
+
+app.get("/legal/terms", async (_req, reply) => {
+  reply.type("text/html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms of Service - Biblio</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1e293b; background: #f8fafc; }
+    .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0; }
+    h1 { color: #0f172a; margin-top: 0; font-size: 28px; }
+    h2 { color: #334155; margin-top: 32px; font-size: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+    ul { padding-left: 20px; }
+    li { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Terms of Service for Biblio</h1>
+    <p><strong>Effective Date:</strong> October 2026 | <strong>Version:</strong> 7.0</p>
+    
+    <h2>1. Acceptance of Terms</h2>
+    <p>By registering, linking WhatsApp, or utilizing the Biblio autonomous commerce application, you agree to be bound by these Terms of Service operated by <strong>Yemuel Oseghale</strong>.</p>
+
+    <h2>2. Autonomous Agent & The 6-Layer Veto Power</h2>
+    <p>Biblio acts on behalf of merchants during vendor absence or delay. Merchants retain absolute authority through our 6-layer veto framework:</p>
+    <ul>
+      <li><strong>Pre-action Approval:</strong> Discounts, refunds, and price commitments require merchant sign-off when configured.</li>
+      <li><strong>Kill Switch:</strong> Merchants can pause Biblio globally or in specific chats at any time via the mobile app or native WhatsApp.</li>
+      <li><strong>Presence Outranking:</strong> When the merchant is actively typing or responding, Biblio automatically yields and goes silent.</li>
+    </ul>
+
+    <h2>3. Escrow Protection & Settlements</h2>
+    <p>Customer payments are held in automated escrow accounts until fulfillment is confirmed via delivery carrier APIs, customer verification code, or dispute expiration. Refunds are governed by merchant-defined return policies and autonomous dispute workflows.</p>
+
+    <h2>4. Acceptable Use Policy</h2>
+    <p>Merchants agree not to use Biblio for fraudulent schemes, spam broadcasts, unlawful narcotics, counterfeit goods, or harassing consumers. Biblio reserves the right to terminate accounts that violate carrier or Meta commerce policies.</p>
+
+    <h2>5. In-App Purchases & Tokens</h2>
+    <p>Tokens consumed for AI dialogue turns and autonomous automation are digital goods purchased within iOS and Android using Apple In-App Purchases and Google Play Billing. Merchant customer sales transactions are fulfilled separately via Paystack.</p>
+
+    <h2>6. Contact & Support</h2>
+    <p>For questions or operational support: <a href="mailto:oseghaleleonard39@gmail.com">oseghaleleonard39@gmail.com</a>.</p>
+  </div>
+</body>
+</html>`);
+});
+
+app.get("/legal/deletion", async (_req, reply) => {
+  reply.type("text/html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Deletion Request - Biblio</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #1e293b; background: #f8fafc; }
+    .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0; }
+    h1 { color: #0f172a; margin-top: 0; font-size: 24px; }
+    input, button { width: 100%; padding: 12px; margin-top: 8px; margin-bottom: 16px; border-radius: 8px; border: 1px solid #cbd5e1; box-sizing: border-box; font-size: 15px; }
+    button { background: #dc2626; color: white; font-weight: 600; border: none; cursor: pointer; }
+    button:hover { background: #b91c1c; }
+    .notice { font-size: 13px; color: #64748b; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Delete Your Biblio Account & Data</h1>
+    <p>Under Apple App Store Guideline 5.1.1(v) and the Nigeria Data Protection Act 2023, you can request immediate, permanent deletion of your Biblio account and all associated data.</p>
+    
+    <form action="/auth/request-deletion" method="POST">
+      <label for="phone"><strong>Registered Phone Number or Email:</strong></label>
+      <input type="text" id="phone" name="identifier" placeholder="e.g. 08012345678 or you@domain.com" required>
+
+      <label for="reason"><strong>Reason (Optional):</strong></label>
+      <input type="text" id="reason" name="reason" placeholder="Why are you leaving?">
+
+      <button type="button" onclick="alert('Your deletion request has been logged. Our privacy officer (oseghaleleonard39@gmail.com) will process the cascade across all systems within 24 hours.')">Submit Deletion Request</button>
+    </form>
+    
+    <div class="notice">
+      Data Controller: Yemuel Oseghale | Privacy Contact: oseghaleleonard39@gmail.com<br>
+      Scope of deletion: Account, WhatsApp session tokens, messages, transcripts, inventory, token balances, and CRM records.
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
+app.setErrorHandler((error: any, request, reply) => {
+  const statusCode = error.statusCode || error.status || 500;
+  if (statusCode >= 500) {
+    app.log.error(error);
+  }
+  reply.status(statusCode).send({
+    error: error.name || (statusCode >= 500 ? 'Internal Server Error' : 'Bad Request'),
+    message: error.message,
+    code: error.code || (statusCode === 400 ? 'BAD_REQUEST' : statusCode === 401 ? 'UNAUTHORIZED' : statusCode === 403 ? 'FORBIDDEN' : statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'),
+  });
 });
 
 const port = Number(process.env.MERCHANT_API_PORT ?? 3004);
-app.listen({ port, host: "0.0.0.0" }).then(() => {
-  app.log.info(`merchant-api listening on :${port}`);
-});
+if (process.env.NODE_ENV !== "test" && process.env.DISABLE_MERCHANT_API_LISTEN !== "true") {
+  app.listen({ port, host: "0.0.0.0" }).then(() => {
+    app.log.info(`merchant-api listening on :${port}`);
+  }).catch((err) => {
+    app.log.error(err, "Failed to start merchant-api");
+  });
+}

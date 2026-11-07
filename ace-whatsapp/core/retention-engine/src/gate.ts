@@ -4,12 +4,15 @@ import { redis } from '@ace/shared/clients.js';
 import { logger } from '@ace/shared/logger.js';
 
 export const outboundQueue = new Queue('outbound_messages', {
-  connection: { ...redis.options, maxRetriesPerRequest: null }
+  connection: { host: redis.options.host || "127.0.0.1", port: redis.options.port || 6381, maxRetriesPerRequest: null }
 });
 
 export class RetentionApprovalGate {
   async approveAndSend(draftId: string, merchantId: string): Promise<boolean> {
     try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantId);
+      if (!isUuid) return false;
+
       const drafts = await sql<any[]>`
         SELECT d.id, d.customer_id, d.message_draft, d.status
         FROM winback_drafts d
@@ -31,7 +34,7 @@ export class RetentionApprovalGate {
       await sql`
         UPDATE winback_drafts 
         SET status = 'sent', updated_at = NOW() 
-        WHERE id = ${draftId}
+        WHERE id = ${draftId} AND merchant_id = ${merchantId}::uuid
       `;
 
       const targetPhone = draft.customer_id;
@@ -54,6 +57,9 @@ export class RetentionApprovalGate {
 
   async reject(draftId: string, merchantId: string): Promise<boolean> {
     try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantId);
+      if (!isUuid) return false;
+
       const result = await sql`
         UPDATE winback_drafts 
         SET status = 'rejected', updated_at = NOW() 

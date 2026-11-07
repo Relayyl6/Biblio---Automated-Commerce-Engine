@@ -47,13 +47,16 @@ export default function DeleteAccountScreen() {
       destructive: true,
       onConfirm: async () => {
         try {
-          await deleteMutation.mutateAsync({
+          const res = await deleteMutation.mutateAsync({
             merchantId: merchantId || '',
             confirmation: 'DELETE',
           });
+          const receipt = res?.receipt;
           alert.success(
-            'Account Deleted',
-            'Your account and all associated personal data have been scrubbed in compliance with NDPA 2023 & App Store Guidelines.'
+            'Account Permanently Deleted',
+            receipt?.receiptId
+              ? `Receipt: ${receipt.receiptId}. All telemetry, tokens, WhatsApp keys, and personal records were scrubbed per NDPA 2023.`
+              : 'Your account and all associated personal data have been scrubbed in compliance with NDPA 2023 & App Store Guidelines.'
           );
           logout();
           router.replace('/login');

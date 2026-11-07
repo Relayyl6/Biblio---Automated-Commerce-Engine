@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
+import { safeHaptics } from '../utils/sanitizers';
 import { colors, shadows } from '../../theme';
 
 export type AlertVariant = 'info' | 'success' | 'warning' | 'danger' | 'soft-delete' | 'neutral';
@@ -71,14 +71,10 @@ export function CustomAlertModal({
   // Trigger haptic feedback when modal opens
   useEffect(() => {
     if (visible) {
-      if (variant === 'danger') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      } else if (variant === 'warning' || variant === 'soft-delete') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-      } else if (variant === 'success') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (variant === 'danger' || variant === 'warning' || variant === 'soft-delete' || variant === 'success') {
+        safeHaptics.notification();
       } else {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        safeHaptics.impact();
       }
     }
   }, [visible, variant]);
@@ -148,7 +144,7 @@ export function CustomAlertModal({
     (buttonLayout === 'auto' && (resolvedActions.length > 2 || resolvedActions.some(a => a.label.length > 14)));
 
   const handleActionPress = async (action: AlertAction) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    safeHaptics.impact();
     if (action.autoClose !== false) {
       onClose();
     }

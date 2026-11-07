@@ -60,8 +60,15 @@ export default function SuppliersScreen() {
 
   if (isLoading) return <LoadingScreen />;
 
-  const safeNodes: ProcurementNode[] = nodes || [];
-  const filteredNodes = safeNodes.filter((node) => node.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const safeNodes: ProcurementNode[] = Array.isArray(nodes) ? nodes : [];
+  const q = searchQuery.toLowerCase();
+  const filteredNodes = safeNodes.filter((node) => {
+    if (!node) return false;
+    const nameMatch = (node.name || '').toLowerCase().includes(q);
+    const catMatch = (node.categories || []).some(cat => String(cat).toLowerCase().includes(q));
+    const typeMatch = (TYPE_LABELS[node.channelType] || '').toLowerCase().includes(q);
+    return nameMatch || catMatch || typeMatch;
+  });
 
   const getIconForType = (type: ChannelType) =>
     ({ whatsapp_group: Users, whatsapp_direct: MessageCircle, telegram_channel: Send, ig_dm: Camera }[type] ?? Link2);

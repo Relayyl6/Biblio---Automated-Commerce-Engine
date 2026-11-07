@@ -25,7 +25,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import P from "pino";
 import { sql } from "@ace/shared/clients";
-import { createSession, getSession, getAllActiveSessions, pairVendorNumber } from "./sessionManager.js";
+import { createSession, getSession, getAllActiveSessions, pairVendorNumber, getSessionStatus } from "./sessionManager.js";
 import { startStatusCron, runStatusCron, getStatusCandidates, postProductToStatusBySku } from "./statusPoster.js";
 import { sendViaBaileys, canSendViaBaileys } from "./outboundAdapter.js";
 import type { OutboundMessage } from "@ace/shared/types";
@@ -88,17 +88,8 @@ app.post("/pair", async (req, reply) => {
 // ─── Get vendor session status ────────────────────────────────────────────────
 app.get("/sessions/:vendorId", async (req, reply) => {
   const { vendorId } = req.params as { vendorId: string };
-  const active = getAllActiveSessions().includes(vendorId);
-
-  const rows = await sql<{ session_status: string }[]>`
-    SELECT session_status FROM vendors WHERE id = ${vendorId} LIMIT 1
-  `;
-
-  return {
-    vendorId,
-    inMemory: active,
-    dbStatus: rows[0]?.session_status ?? "unknown",
-  };
+  const status = await getSessionStatus(vendorId);
+  return reply.send(status);
 });
 
 // ─── Manually reconnect a vendor session ─────────────────────────────────────

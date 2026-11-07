@@ -25,13 +25,13 @@ import {
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import { colors } from '../../theme';
 import { Camera, Video, Tv } from 'lucide-react-native';
 import { usePairWhatsApp, useMerchantConfig, useStatusSettings, useVendorStatus } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/authStore';
 import { useAlert } from '../../src/store/alertStore';
 import { InlineLoadingDots } from '../../src/components/PulsingSkeleton';
+import { safeHaptics, normalizePhoneNumber } from '../../src/utils/sanitizers';
 
 type MenuItem = {
   id: string;
@@ -62,7 +62,7 @@ function MenuRow({ item, index, c }: { item: MenuItem; index: number; c: typeof 
     <Animated.View entering={FadeInDown.delay(130 + index * 40).springify()}>
       <Pressable
         onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          safeHaptics.impact();
           router.push(item.route as any);
         }}
         style={{ backgroundColor: c.surface, borderColor: c.border }}
@@ -104,12 +104,37 @@ export default function MoreScreen() {
   const [showPairing, setShowPairing] = useState(false);
   const [phoneToPair, setPhoneToPair] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairingSecondsLeft, setPairingSecondsLeft] = useState(120);
   const pairMutation = usePairWhatsApp();
 
   const isWhatsAppConnected =
     statusSettings?.settings?.session_status === 'connected' ||
     vendorStatus?.dbStatus === 'connected' ||
     vendorStatus?.connected === true;
+
+  // Auto-dismiss code when pairing completes
+  React.useEffect(() => {
+    if (isWhatsAppConnected && pairingCode) {
+      setPairingCode(null);
+      alert.success('WhatsApp Connected', 'Your business line is now active and monitored 24/7 by Biblio.');
+    }
+  }, [isWhatsAppConnected, pairingCode]);
+
+  // 120-second pairing countdown timer
+  React.useEffect(() => {
+    if (!pairingCode) return;
+    setPairingSecondsLeft(120);
+    const interval = setInterval(() => {
+      setPairingSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [pairingCode]);
 
   const connectedPhoneNumber =
     vendorStatus?.businessLineNumber ||
@@ -127,8 +152,13 @@ export default function MoreScreen() {
 
   const handlePair = async () => {
     if (!phoneToPair) return;
+    const cleanPhone = normalizePhoneNumber(phoneToPair);
+    if (!cleanPhone) {
+      alert.warning('Invalid Phone Number', 'Please enter a valid phone number for WhatsApp pairing.');
+      return;
+    }
     try {
-      const res = await pairMutation.mutateAsync(phoneToPair);
+      const res = await pairMutation.mutateAsync(cleanPhone);
       if (res.code) {
         setPairingCode(res.code);
         queryClient.invalidateQueries({ queryKey: ['vendorStatus', merchantId] });
@@ -139,7 +169,7 @@ export default function MoreScreen() {
   };
 
   const handleWaitlist = (channel: string) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    safeHaptics.notification();
     alert.info(
       `${channel} Waitlist`,
       `Your store is enrolled in the early access beta for ${channel}. We will notify you via push and WhatsApp when automated indexing is active.`
@@ -271,6 +301,26 @@ export default function MoreScreen() {
                   </View>
                 )}
 
+                {/* Live Error Banner if session failed */}
+                {vendorStatus?.lastError && !isWhatsAppConnected && (
+                  <View style={{ backgroundColor: c.dangerSoft, borderColor: c.danger }} className="p-3 rounded-xl border mb-3 flex-row items-center justify-between">
+                    <View className="flex-1 mr-2">
+                      <Text style={{ color: c.danger }} className="font-bold text-xs">
+                        WhatsApp Link Notice
+                      </Text>
+                      <Text style={{ color: c.danger }} className="text-[11px] mt-0.5">
+                        {vendorStatus.lastError}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={handlePair}
+                      className="px-2.5 py-1.5 rounded-lg bg-red-600 active:opacity-70"
+                    >
+                      <Text className="text-white text-[10px] font-bold">Retry</Text>
+                    </Pressable>
+                  </View>
+                )}
+
                 {!pairingCode ? (
                   <>
                     <Text style={{ color: c.textSecondary }} className="text-xs mb-2">
@@ -291,7 +341,7 @@ export default function MoreScreen() {
                       onPress={handlePair}
                       disabled={pairMutation.isPending}
                       style={{ backgroundColor: '#22C55E' }}
-                      className="rounded-xl p-3 items-center flex-row justify-center"
+                      className="rounded-xl p-3 items-center flex-row justify-center active:opacity-80"
                     >
                       {pairMutation.isPending ? (
                         <InlineLoadingDots color="white" />
@@ -307,17 +357,47 @@ export default function MoreScreen() {
                   </>
                 ) : (
                   <View className="items-center py-2">
-                    <Text style={{ color: c.textSecondary }} className="text-sm mb-3 text-center">
+                    <Text style={{ color: c.textSecondary }} className="text-sm mb-2 text-center font-medium">
                       Open WhatsApp → Settings → Linked Devices → Link a Device → Link with Phone Number.
                     </Text>
-                    <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-4 py-4 rounded-2xl border mb-3">
+
+                    <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-5 py-4 rounded-2xl border mb-2 items-center">
                       <Text style={{ color: c.textPrimary, letterSpacing: 8 }} className="text-3xl font-black">
                         {pairingCode}
                       </Text>
+                      <View className="flex-row items-center mt-2">
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pairingSecondsLeft > 20 ? '#22C55E' : '#EF4444', marginRight: 5 }} />
+                        <Text style={{ color: pairingSecondsLeft > 20 ? c.textSecondary : '#EF4444' }} className="text-xs font-semibold">
+                          {pairingSecondsLeft > 0 ? `Code expires in ${Math.floor(pairingSecondsLeft / 60)}:${(pairingSecondsLeft % 60).toString().padStart(2, '0')}` : 'Pairing code expired'}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={{ color: c.textTertiary }} className="text-xs text-center">
-                      Once entered, Biblo will automatically sync and persist in the background.
+
+                    <Text style={{ color: c.textTertiary }} className="text-xs text-center mb-3">
+                      Once entered on your phone, Biblio automatically finalizes the connection and persists credentials.
                     </Text>
+
+                    {/* Action controls so pairing is 100% recoverable without reinstalling */}
+                    <View className="flex-row gap-2 w-full justify-center">
+                      <Pressable
+                        onPress={handlePair}
+                        disabled={pairMutation.isPending}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 active:opacity-80 flex-row items-center"
+                      >
+                        {pairMutation.isPending ? (
+                          <InlineLoadingDots color="white" />
+                        ) : (
+                          <Text className="text-white font-bold text-xs">Regenerate Fresh Code</Text>
+                        )}
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setPairingCode(null)}
+                        style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
+                        className="px-4 py-2 rounded-xl border active:opacity-80"
+                      >
+                        <Text style={{ color: c.textSecondary }} className="font-semibold text-xs">Cancel</Text>
+                      </Pressable>
+                    </View>
                   </View>
                 )}
               </View>

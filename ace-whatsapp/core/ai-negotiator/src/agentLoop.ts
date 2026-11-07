@@ -367,6 +367,9 @@ function extractCustomerPriceOffer(messages: ConversationTurn["messages"]): numb
       text = m.content.text;
     } else if (m.content.type === "audio" && m.content.transcript) {
       text = m.content.transcript;
+    } else if (m.content.type === "interactive") {
+      const p = m.content.payload as any;
+      text = p?.text || p?.title || p?.displayText || "";
     } else {
       continue;
     }
@@ -510,6 +513,19 @@ function buildSystemPrompt(
   const deliveryBlock = merchant.deliveryInfo
     ? `Delivery options you may quote:\n${merchant.deliveryInfo}`
     : "";
+  const hoursBlock = merchant.operatingHours && Object.keys(merchant.operatingHours).length > 0
+    ? `Store operating hours:\n${typeof merchant.operatingHours === 'object' ? JSON.stringify(merchant.operatingHours) : merchant.operatingHours}`
+    : "";
+
+  const softModeBlock = merchant.softMode
+    ? `\n\n══ SOFT MODE ACTIVE ══\nStrictly avoid pushy or aggressive closing tactics. Answer inquiries politely and gently, offer non-binding information, and do not issue invoices unprompted.`
+    : "";
+
+  const friendPricingBlock = merchant.friendPricing
+    ? `\n\n══ FRIEND & FAMILY PRICING ══\nAuthorized friend discount: ${typeof merchant.friendPricing === 'object' && merchant.friendPricing.discount_percent ? merchant.friendPricing.discount_percent : 15}%. When interacting with friends or personal referrals, be exceptionally warm and apply friend rates.`
+    : "";
+
+  const cancelWindowBlock = `\n\n══ ORDER ROLLBACK WINDOW ══\nOrders have an active ${merchant.cancelWindowMinutes ?? 10}-minute cancellation window where the customer or vendor can adjust or rollback the deal.`;
 
   const ragSection = exemplarsBlock ? `\n\n${exemplarsBlock}` : "";
   const banditSection = banditPricingHint
@@ -533,6 +549,7 @@ ${merchant.toneGuide ?? "Warm, professional Nigerian market seller — friendly,
 Language: ${dialectGuidance(merchant.dialect)}
 ${policiesBlock}
 ${deliveryBlock}
+${hoursBlock}${softModeBlock}${friendPricingBlock}${cancelWindowBlock}
 
 ══ CURRENT NEGOTIATION STATE ══
 Stage: ${arc.stage}
@@ -641,9 +658,37 @@ function buildUserContent(turn: ConversationTurn): string | Groq.Chat.ChatComple
 
     // ── Interactive (WA Business orders, button replies) ───────────────────
     else if (c.type === "interactive") {
+      const p = c.payload as any;
+      const desc = p?.text || p?.title || p?.displayText || (typeof p === "object" ? JSON.stringify(p) : String(p));
       parts.push({
         type: "text",
-        text: `[Button reply / order: ${JSON.stringify(c.payload)}]`,
+        text: `[Button / Selection reply: ${desc}]`,
+      });
+    }
+
+    // ── Document ────────────────────────────────────────────────────────────
+    else if (c.type === "document") {
+      parts.push({
+        type: "text",
+        text: `[Document: ${c.filename || "file"}${c.caption ? ` — caption: ${c.caption}` : ""}]`,
+      });
+    }
+
+    // ── Location pin ────────────────────────────────────────────────────────
+    else if (c.type === "location") {
+      const loc = [c.name, c.address, `${c.latitude}, ${c.longitude}`].filter(Boolean).join(" — ");
+      parts.push({
+        type: "text",
+        text: `[Location pin: ${loc}]`,
+      });
+    }
+
+    // ── Shared contact / vCard ──────────────────────────────────────────────
+    else if (c.type === "contact") {
+      const contactList = c.contacts.map((contact) => `${contact.displayName}${contact.phone ? ` (${contact.phone})` : ""}`).join(", ");
+      parts.push({
+        type: "text",
+        text: `[Shared contact(s): ${contactList}]`,
       });
     }
   }
@@ -741,17 +786,28 @@ async function finalizeTurn(
   customerStats?: { ltv: number; orderCount: number },
 ): Promise<void> {
   if (finalOrderState !== turn.orderState && finalOrderState.status !== "no_order") {
+    const rawItems = (finalOrderState as any).items || [];
+    const totalQty = Array.isArray(rawItems) ? rawItems.reduce((s: number, it: any) => s + Number(it.quantity || 1), 0) : 1;
+    const finalPrice = (finalOrderState as any).total ?? (finalOrderState as any).quotedTotal ?? 0;
     await sql`
-      insert into orders (id, merchant_id, customer_id, state, updated_at)
+      insert into orders (id, merchant_id, tenant_id, customer_id, items, qty, total_amount, state, status, updated_at)
       values (
-        ${finalOrderState.orderId},
-        ${turn.merchantId},
+        ${finalOrderState.orderId}::uuid,
+        ${turn.merchantId}::uuid,
+        ${turn.merchantId}::uuid,
         ${turn.customerId},
+        ${jsonb(rawItems)},
+        ${totalQty},
+        ${finalPrice},
         ${jsonb(finalOrderState)},
+        'pending'::order_status,
         now()
       )
-      on conflict (id) do update set state = excluded.state, updated_at = now()
-    `;
+      on conflict (id) do update set 
+        state = excluded.state, 
+        total_amount = excluded.total_amount,
+        updated_at = now()
+    `.catch(e => logger.warn("[agentLoop:finalizeTurn] Order insert warning:", e));
   }
 
   await flushNegotiationTrace(finalArc);
@@ -960,8 +1016,16 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
     business_policies: string | null;
     delivery_info: string | null;
     dialect: string;
+    operating_hours: any;
+    soft_mode: boolean | null;
+    friend_pricing: any;
+    cancel_window_minutes: number | null;
+    allow_list: any;
+    deny_list: any;
   }[]>`
-    select id, name, tone_guide, business_policies, delivery_info, dialect
+    select id, name, tone_guide, business_policies, delivery_info, dialect,
+           operating_hours, soft_mode, friend_pricing, cancel_window_minutes,
+           allow_list, deny_list
     from merchants
     where id = ${merchantId}
     limit 1
@@ -975,6 +1039,12 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
       businessPolicies: null,
       deliveryInfo: null,
       dialect: "pidgin",
+      operatingHours: {},
+      softMode: false,
+      friendPricing: { discount_percent: 15 },
+      cancelWindowMinutes: 10,
+      allowList: [],
+      denyList: [],
     };
   }
   return {
@@ -984,12 +1054,19 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
     businessPolicies: row.business_policies,
     deliveryInfo: row.delivery_info,
     dialect: normalizeDialect(row.dialect),
+    operatingHours: typeof row.operating_hours === 'string' ? JSON.parse(row.operating_hours) : row.operating_hours,
+    softMode: Boolean(row.soft_mode),
+    friendPricing: typeof row.friend_pricing === 'string' ? JSON.parse(row.friend_pricing) : row.friend_pricing,
+    cancelWindowMinutes: row.cancel_window_minutes ?? 10,
+    allowList: typeof row.allow_list === 'string' ? (JSON.parse(row.allow_list) || []) : (Array.isArray(row.allow_list) ? row.allow_list : []),
+    denyList: typeof row.deny_list === 'string' ? (JSON.parse(row.deny_list) || []) : (Array.isArray(row.deny_list) ? row.deny_list : []),
   };
 }
 
-function normalizeDialect(value: string): Dialect {
+function normalizeDialect(value: any): Dialect {
   const allowed: Dialect[] = ["pidgin", "yoruba", "igbo", "hausa", "english"];
-  return (allowed as string[]).includes(value) ? (value as Dialect) : "pidgin";
+  const clean = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (allowed as string[]).includes(clean) ? (clean as Dialect) : "pidgin";
 }
 
 // ─── Merchant Pricing Rules ───────────────────────────────────────────────────

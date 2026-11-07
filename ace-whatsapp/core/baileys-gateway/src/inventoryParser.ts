@@ -27,7 +27,6 @@
 
 import Groq from "groq-sdk";
 import type { WAMessage, WASocket } from "@whiskeysockets/baileys";
-import { downloadMediaMessage } from "@whiskeysockets/baileys";
 import P from "pino";
 import { Queue } from "bullmq";
 import { v2 as cloudinary } from "cloudinary";
@@ -35,6 +34,7 @@ import { sql, redis } from "@ace/shared/clients";
 import { dataIntelligence } from "@ace/shared/data-intelligence/engine";
 import type { VendorConfig } from "./sessionManager.js";
 import { postProductToStatus } from "./statusPoster.js";
+import { downloadBuffer, transcribeBuffer, unwrapWAMessage, isValidImageBuffer } from "./mediaProcessor.js";
 
 // ─── Cloudinary config ────────────────────────────────────────────────────────
 // Configured once at module load. If any credential is absent, uploadImage()
@@ -143,6 +143,7 @@ interface InflightItem {
   text: string;
   imageBuffer: Buffer | null;
   audioTranscript: string | null;
+  hadAudio?: boolean;
 }
 
 interface InflightVendorBuffer {
@@ -154,6 +155,15 @@ interface InflightVendorBuffer {
 const vendorBuffers = new Map<string, InflightVendorBuffer>();
 const VENDOR_DEBOUNCE_MS = 10_000; // 10-second sliding debounce window
 
+/**
+ * Returns true if this vendor has an in-flight debounce buffer collecting
+ * multi-part inventory submission messages (e.g. photo sent first, caption sent second).
+ */
+export function isVendorBuffering(vendorId: string): boolean {
+  const inflight = vendorBuffers.get(vendorId);
+  return !!(inflight && inflight.items.length > 0);
+}
+
 // ─── Main pipeline with 10-second Sliding Debounce ───────────────────────────
 
 export async function parseVendorSubmission(
@@ -161,7 +171,7 @@ export async function parseVendorSubmission(
   vendor: VendorConfig,
   sock: WASocket
 ): Promise<void> {
-  const msgContent = msg.message;
+  const msgContent = unwrapWAMessage(msg.message);
   const senderJid = msg.key.remoteJid || (vendor.business_line_number ? `${vendor.business_line_number}@s.whatsapp.net` : "");
 
   // ── Detect submission type ────────────────────────────────────────────────
@@ -185,21 +195,28 @@ export async function parseVendorSubmission(
 
   if (hasImage) {
     try {
-      imageBuffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+      imageBuffer = await downloadBuffer(msg, sock, 15_000);
+      if (!imageBuffer || !isValidImageBuffer(imageBuffer)) {
+        throw new Error("Image buffer empty, corrupt, or unsupported format");
+      }
     } catch (err) {
-      logger.error({ err, vendorId: vendor.id }, "Failed to download vendor image");
-      await sock.sendMessage(senderJid, {
-        text: "❌ Couldn't download your photo. Please try sending it again.",
-      });
+      logger.error({ err, vendorId: vendor.id }, "Failed to download or validate vendor image");
+      if (senderJid) {
+        await sock.sendMessage(senderJid, {
+          text: "❌ Couldn't process your photo (download failed or corrupt format). Please try sending it again.",
+        });
+      }
       return;
     }
   }
 
   if (hasAudio) {
     try {
-      const audioBuffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
-      const { transcribeBuffer } = await import("./mediaProcessor.js");
-      audioTranscript = await transcribeBuffer(audioBuffer);
+      const audioBuffer = await downloadBuffer(msg, sock, 15_000);
+      if (audioBuffer) {
+        const mimetype = msgContent?.audioMessage?.mimetype;
+        audioTranscript = await transcribeBuffer(audioBuffer, mimetype);
+      }
     } catch (err) {
       logger.warn({ err, vendorId: vendor.id }, "Audio transcription failed — proceeding without it");
     }
@@ -221,6 +238,7 @@ export async function parseVendorSubmission(
     text: rawText.trim(),
     imageBuffer,
     audioTranscript,
+    hadAudio: hasAudio,
   });
 
   // Reset 10-second sliding debounce timer
@@ -289,6 +307,11 @@ async function processGroupedVendorSubmission(
   ].filter(Boolean).join("\n");
 
   if (!imageBuffer && !fullRaw.trim()) {
+    if (senderJid && items.some(i => i.hadAudio)) {
+      await sock.sendMessage(senderJid, {
+        text: "❌ Couldn't transcribe your voice note. Please send a text message with the product name and price, or try again.",
+      });
+    }
     return;
   }
 
@@ -580,6 +603,9 @@ async function parseWithGroq(
       rawContent = response.choices[0]?.message?.content ?? "{}";
     } catch (err: any) {
       if (err?.error?.error?.code === "model_decommissioned" || err?.status === 400 || err?.status === 404) {
+        if (!textContext.trim()) {
+          throw new Error("Vision analysis is unavailable and no caption was provided with the photo. Please include a description with price.");
+        }
         // Groq took their vision models offline. Fallback to text-only extraction using the caption text.
         const textResponse = await client.chat.completions.create({
           model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
@@ -706,6 +732,11 @@ async function uploadImage(
   vendorId: string,
   messageId: string
 ): Promise<string | null> {
+  if (!buffer || buffer.length === 0 || !isValidImageBuffer(buffer)) {
+    logger.warn({ vendorId, messageId }, "Invalid or corrupt image buffer provided for Cloudinary upload");
+    return null;
+  }
+
   if (!ensureCloudinaryConfigured()) {
     logger.warn(
       { vendorId },
@@ -716,6 +747,14 @@ async function uploadImage(
   }
 
   return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const safeResolve = (url: string | null) => {
+      if (!settled) {
+        settled = true;
+        resolve(url);
+      }
+    };
+
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder: `ace/vendors/${vendorId}`,
@@ -730,18 +769,28 @@ async function uploadImage(
             { error, vendorId, messageId },
             "Cloudinary upload failed — product saved without image"
           );
-          resolve(null);
+          safeResolve(null);
         } else {
           logger.info(
             { vendorId, messageId, url: result.secure_url },
             "Image uploaded to Cloudinary"
           );
-          resolve(result.secure_url);
+          safeResolve(result.secure_url);
         }
       }
     );
 
-    uploadStream.end(buffer);
+    uploadStream.on("error", (streamErr) => {
+      logger.error({ streamErr, vendorId, messageId }, "Cloudinary upload stream emitted error");
+      safeResolve(null);
+    });
+
+    try {
+      uploadStream.end(buffer);
+    } catch (writeErr) {
+      logger.error({ writeErr, vendorId, messageId }, "Exception writing to Cloudinary upload stream");
+      safeResolve(null);
+    }
   });
 }
 
