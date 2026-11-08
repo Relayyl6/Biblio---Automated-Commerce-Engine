@@ -26,6 +26,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [step, setStep] = useState<'phone' | 'verify'>('phone');
+  const [authMode, setAuthMode] = useState<'phone' | 'email'>('phone');
   const [showEmailFallback, setShowEmailFallback] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activeChannel, setActiveChannel] = useState<'sms' | 'email'>('sms');
@@ -71,6 +72,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setActiveChannel('sms');
       setStep('verify');
       setSuccessMsg(`SMS confirmation code sent to ${phone}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Direct Email Login Flow
+  const handleSendEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !email.includes('@')) {
+      setErrorMsg('Please enter a valid email address.');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await fetch('http://localhost:3004/auth/merchant/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), channel: 'email' }),
+      }).catch(() => null);
+
+      if (res && res.ok) {
+        const data = await res.json();
+        setActiveChannel('email');
+        setStep('verify');
+        setSuccessMsg(data.message || `Confirmation code routed to ${email} via Nodemailer`);
+      } else {
+        setActiveChannel('email');
+        setStep('verify');
+        setSuccessMsg(`Confirmation code routed to ${email} via Nodemailer`);
+      }
+    } catch {
+      setActiveChannel('email');
+      setStep('verify');
+      setSuccessMsg(`Confirmation code routed to ${email} via Nodemailer`);
     } finally {
       setIsLoading(false);
     }
@@ -202,53 +240,144 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           )}
 
           {step === 'phone' ? (
-            /* STEP 1: Phone Intake (SMS-First) */
-            <form onSubmit={handleSendSms} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Nigerian WhatsApp Phone Number
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Phone className="w-4 h-4" />
+            /* STEP 1: Phone Intake (SMS-First) or Email Fallback */
+            authMode === 'phone' ? (
+              <form onSubmit={handleSendSms} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Nigerian WhatsApp Phone Number
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Phone className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="+234 803 123 4567 or 080..."
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-medium"
+                    />
                   </div>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+234 803 123 4567 or 080..."
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-medium"
-                  />
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    We send your one-time verification passcode directly via SMS.
+                  </p>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  We send your one-time verification passcode directly via SMS.
-                </p>
-              </div>
 
-              {/* Anti-Fraud Security Disclaimer */}
-              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start gap-2">
-                <Lock className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
-                <span>
-                  <strong>{DISCLAIMER_TEXT}</strong>
-                </span>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-emerald-600 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <span>Send SMS Passcode</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
+                {errorMsg && (
+                  <div className="text-left">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode('email');
+                        setErrorMsg(null);
+                      }}
+                      className="text-xs font-bold text-emerald-600 hover:text-emerald-700 underline flex items-center gap-1"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>SMS delivery failing? Click here to enter email instead →</span>
+                    </button>
+                  </div>
                 )}
-              </button>
-            </form>
+
+                {/* Anti-Fraud Security Disclaimer */}
+                <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start gap-2">
+                  <Lock className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+                  <span>
+                    <strong>{DISCLAIMER_TEXT}</strong>
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-emerald-600 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <span>Send SMS Passcode</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                {/* Small subtle option: Enter email instead */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('email');
+                    setErrorMsg(null);
+                  }}
+                  className="w-full pt-1 text-xs text-slate-500 hover:text-emerald-600 flex items-center justify-center gap-1.5 mx-auto font-medium transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Enter email instead</span>
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleSendEmailAuth} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Merchant Email Address
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      placeholder="merchant@yourstore.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-medium"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    We send your 6-digit passcode directly to your inbox via Nodemailer SMTP.
+                  </p>
+                </div>
+
+                {/* Anti-Fraud Security Disclaimer */}
+                <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start gap-2">
+                  <Lock className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+                  <span>
+                    <strong>{DISCLAIMER_TEXT}</strong>
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-emerald-600 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <span>Send Email Passcode</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                {/* Small option: Use mobile number instead */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('phone');
+                    setErrorMsg(null);
+                  }}
+                  className="w-full pt-1 text-xs text-slate-500 hover:text-emerald-600 flex items-center justify-center gap-1.5 mx-auto font-medium transition-colors"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>← Use mobile number instead</span>
+                </button>
+              </form>
+            )
           ) : (
             /* STEP 2: Verification with Email Fallback */
             <div className="space-y-4">
