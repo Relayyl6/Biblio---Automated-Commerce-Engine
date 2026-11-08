@@ -40,3 +40,6 @@ test_negotiator.ts
 data/
 waitlist.json
 */waitlist.json
+
+.vite/
+*/.vite/
