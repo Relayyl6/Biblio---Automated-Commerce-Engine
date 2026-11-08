@@ -35,3 +35,8 @@ temp/
 
 scratch/
 test_negotiator.ts
+
+# Private waitlist storage (developer only - never commit)
+data/
+waitlist.json
+*/waitlist.json

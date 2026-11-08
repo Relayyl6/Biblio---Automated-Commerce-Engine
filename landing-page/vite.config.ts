@@ -7,5 +7,9 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true,
+    proxy: {
+      '/waitlist': 'http://localhost:3004',
+      '/admin': 'http://localhost:3004',
+    },
   },
 });

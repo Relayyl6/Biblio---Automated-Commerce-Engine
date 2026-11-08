@@ -45,11 +45,11 @@ const GroqLogo = () => (
 );
 
 export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
-  const [heroPhone, setHeroPhone] = useState('');
+  const [heroInput, setHeroInput] = useState('');
 
   const handleHeroSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onOpenWaitlist(heroPhone);
+    onOpenWaitlist(heroInput);
   };
 
   return (
@@ -146,10 +146,10 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
             <div className="flex-1 flex items-center w-full px-3.5 py-2.5">
               <Smartphone className="w-4 h-4 text-zinc-500 mr-2.5 flex-shrink-0" />
               <input
-                type="tel"
-                placeholder="Enter WhatsApp number (080...)"
-                value={heroPhone}
-                onChange={(e) => setHeroPhone(e.target.value)}
+                type="text"
+                placeholder="Enter WhatsApp number or email..."
+                value={heroInput}
+                onChange={(e) => setHeroInput(e.target.value)}
                 className="w-full bg-transparent text-sm text-white placeholder-zinc-500 outline-none font-medium"
               />
             </div>

@@ -13,10 +13,10 @@ import { WaitlistModal } from './components/WaitlistModal';
 
 export const App: React.FC = () => {
   const [waitlistOpen, setWaitlistOpen] = useState(false);
-  const [waitlistPhone, setWaitlistPhone] = useState('');
+  const [waitlistSeed, setWaitlistSeed] = useState('');
 
-  const handleOpenWaitlist = (phone?: string) => {
-    if (phone) setWaitlistPhone(phone);
+  const handleOpenWaitlist = (input?: string) => {
+    if (input) setWaitlistSeed(input);
     setWaitlistOpen(true);
   };
 
@@ -43,7 +43,8 @@ export const App: React.FC = () => {
       {/* Early Access Waitlist Modal */}
       <WaitlistModal
         isOpen={waitlistOpen}
-        defaultPhone={waitlistPhone}
+        initialValue={waitlistSeed}
+        defaultPhone={waitlistSeed}
         onClose={() => setWaitlistOpen(false)}
       />
     </div>

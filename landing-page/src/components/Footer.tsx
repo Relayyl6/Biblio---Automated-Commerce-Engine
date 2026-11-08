@@ -49,8 +49,8 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md">
               <div className="relative flex-1">
                 <input
-                  type="tel"
-                  placeholder="+234 WhatsApp phone number"
+                  type="text"
+                  placeholder="Enter WhatsApp number or email..."
                   value={footerPhone}
                   onChange={(e) => setFooterPhone(e.target.value)}
                   className="w-full px-4 py-3 rounded-full bg-black/60 border border-white/15 text-white placeholder-zinc-500 text-xs sm:text-sm font-mono focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors shadow-inner"
@@ -67,7 +67,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
 
             <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-500 font-mono">
               <Lock className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Instant SMS security passcode verification • No setup fee</span>
+              <span>Instant VIP pass delivery via email • No setup fee</span>
             </div>
           </div>
         </div>

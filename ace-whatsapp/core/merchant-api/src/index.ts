@@ -42,6 +42,9 @@ import { getLiveUsdNgnRate } from "@ace/shared/fxService.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import nodemailer from "nodemailer";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 // Baileys gateway management calls — forwarded to the gateway HTTP service
 const BAILEYS_GATEWAY_URL =
   process.env.BAILEYS_GATEWAY_URL ?? "http://localhost:3005";
@@ -3211,81 +3214,389 @@ app.post('/auth/merchant/email-otp', async (req, reply) => {
 });
 
 // ==========================================
-// BIBLIO EARLY ACCESS WAITLIST PIPELINE
+// BIBLIO EARLY ACCESS WAITLIST PIPELINE (FILE-BASED + NODEMAILER + ZERO DB REQUIREMENT)
 // ==========================================
+const ROOT_DIR = process.cwd().includes('merchant-api')
+  ? path.resolve(process.cwd(), '../../../')
+  : process.cwd().includes('ace-whatsapp')
+  ? path.resolve(process.cwd(), '../')
+  : process.cwd();
+const WAITLIST_DIR = path.resolve(ROOT_DIR, 'data');
+const WAITLIST_FILE = path.resolve(WAITLIST_DIR, 'waitlist.json');
+
+function ensureWaitlistFile(): any[] {
+  try {
+    if (!fs.existsSync(WAITLIST_DIR)) {
+      fs.mkdirSync(WAITLIST_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(WAITLIST_FILE)) {
+      fs.writeFileSync(WAITLIST_FILE, JSON.stringify([], null, 2), 'utf-8');
+      return [];
+    }
+    const data = fs.readFileSync(WAITLIST_FILE, 'utf-8');
+    return JSON.parse(data || '[]');
+  } catch (err: any) {
+    app.log.warn({ err: err.message }, '[Waitlist] Error reading waitlist.json, defaulting to empty list');
+    return [];
+  }
+}
+
+function saveWaitlistFile(entries: any[]): void {
+  try {
+    if (!fs.existsSync(WAITLIST_DIR)) {
+      fs.mkdirSync(WAITLIST_DIR, { recursive: true });
+    }
+    fs.writeFileSync(WAITLIST_FILE, JSON.stringify(entries, null, 2), 'utf-8');
+  } catch (err: any) {
+    app.log.error({ err: err.message }, '[Waitlist] Failed to write waitlist.json');
+  }
+}
+
+async function dispatchWaitlistEmails(entry: any, totalCount: number, log: any) {
+  const transporter = getMailTransporter(log);
+  const fromAddress = process.env.SMTP_FROM || '"Biblio Early Access" <noreply@biblio.africa>';
+  const ownerAddress = 'oseghaleleonard39@gmail.com';
+
+  // 1. Email to Developer/Owner (Realtime lead alert)
+  try {
+    const waLink = entry.phone ? `https://wa.me/${entry.phone.replace(/\D/g, '')}` : null;
+    await transporter.sendMail({
+      from: fromAddress,
+      to: ownerAddress,
+      subject: `🔔 New Biblio Waitlist Signup: ${entry.storeName || 'Merchant'} (#${entry.position})`,
+      text: `New Waitlist Signup:
+Store: ${entry.storeName || 'N/A'}
+Phone: ${entry.phone || 'N/A'}
+Email: ${entry.email}
+Position: #${entry.position}
+Date: ${entry.createdAt}
+Total Waitlist: ${totalCount} merchants
+WhatsApp: ${waLink || 'No phone'}`,
+      html: `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:20px auto;background:#0d0f14;color:#f8fafc;padding:32px;border-radius:20px;border:1px solid #1e293b;">
+          <div style="color:#10b981;font-size:12px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">🚀 New Waitlist Signup</div>
+          <h2 style="color:#ffffff;margin-top:0;font-size:24px;">${entry.storeName || 'New Merchant'} reserved a spot!</h2>
+          <div style="background:#161b22;padding:20px;border-radius:14px;border:1px solid #30363d;margin:20px 0;">
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Waitlist Position:</strong> <span style="color:#10b981;font-weight:bold;font-size:16px;">#${entry.position}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Email Address:</strong> <a href="mailto:${entry.email}" style="color:#38bdf8;">${entry.email}</a></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>WhatsApp Phone:</strong> <span style="color:#ffffff;font-family:monospace;">${entry.phone || 'Not provided'}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Store Name:</strong> <span style="color:#ffffff;">${entry.storeName || 'Lagos Social Store'}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Timestamp:</strong> <span style="color:#64748b;font-size:12px;">${entry.createdAt}</span></p>
+          </div>
+          ${waLink ? `
+            <a href="${waLink}" style="display:inline-block;padding:12px 24px;border-radius:10px;background:#25d366;color:#000000;font-weight:bold;text-decoration:none;font-size:13px;">Chat with Merchant on WhatsApp →</a>
+          ` : ''}
+          <div style="margin-top:24px;font-size:12px;color:#64748b;border-top:1px solid #1e293b;padding-top:16px;">
+            Total Registered Merchants: <strong>${totalCount}</strong> | Biblio Commerce Engine
+          </div>
+        </div>
+      `,
+    });
+    log?.info({ email: entry.email }, '[Waitlist-Email] Owner alert dispatched via Nodemailer');
+  } catch (err: any) {
+    log?.warn({ err: err.message }, '[Waitlist-Email] Failed to deliver owner alert email');
+  }
+
+  // 2. Email to Subscriber (VIP Ticket & Access Pass)
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to: entry.email,
+      subject: `🎫 Your Biblio Early Access Pass (#${entry.position}) — Lagos Cohort 1`,
+      text: `Welcome to Biblio VIP Early Access!
+You're #${entry.position} in line for Lagos Batch 1.
+Store: ${entry.storeName || 'Your Store'}
+Referral Link: ${entry.referralLink}
+
+We will notify you the moment your WhatsApp store autopilot engine is ready for onboarding.`,
+      html: `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:580px;margin:20px auto;background:#090a0f;color:#e2e8f0;padding:36px;border-radius:24px;border:1px solid rgba(255,255,255,0.1);">
+          <div style="text-align:center;margin-bottom:24px;">
+            <div style="display:inline-block;padding:6px 16px;border-radius:20px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#10b981;font-size:12px;font-weight:bold;margin-bottom:12px;">
+              ✓ LAGOS BATCH 1 RESERVED
+            </div>
+            <h1 style="color:#ffffff;font-size:26px;margin:0 0 8px 0;letter-spacing:-0.02em;">Welcome to the Future of WhatsApp Selling</h1>
+            <p style="color:#94a3b8;font-size:14px;margin:0;line-height:1.5;">Your autonomous commerce agent is being calibrated.</p>
+          </div>
+
+          <div style="background:#13151c;border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:24px;text-align:center;margin-bottom:24px;">
+            <span style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Your Waitlist Position</span>
+            <div style="font-size:42px;font-weight:900;color:#ffffff;letter-spacing:-0.03em;margin:8px 0;font-family:monospace;">
+              #${entry.position.toLocaleString()}
+            </div>
+            <div style="font-size:12px;color:#10b981;font-weight:bold;">
+              Lagos Early Access Batch 1 (November 2026)
+            </div>
+          </div>
+
+          <div style="background:#111319;border-radius:14px;padding:18px;margin-bottom:24px;font-size:13px;line-height:1.6;color:#cbd5e1;">
+            <strong style="color:#ffffff;">What happens next:</strong>
+            <ul style="margin:8px 0 0 0;padding-left:20px;">
+              <li>Our team rolls out access in cohorts of 100 verified vendors.</li>
+              <li>You will receive your direct WhatsApp pairing code and desktop portal link.</li>
+              <li>You can invite fellow merchants with your VIP link below to skip ahead in line.</li>
+            </ul>
+          </div>
+
+          <div style="text-align:center;margin-bottom:24px;">
+            <a href="https://api.whatsapp.com/send?text=${encodeURIComponent(`I just claimed ticket #${entry.position} for Biblio — an autonomous WhatsApp sales agent that haggles in Pidgin and locks Paystack escrow. Join here: ${entry.referralLink}`)}" style="display:inline-block;width:100%;box-sizing:border-box;padding:14px;background:#25d366;color:#000000;font-weight:bold;border-radius:14px;text-decoration:none;font-size:14px;">
+              Share with Merchants on WhatsApp
+            </a>
+          </div>
+
+          <div style="text-align:center;font-size:11px;color:#64748b;border-top:1px solid rgba(255,255,255,0.06);padding-top:16px;">
+            Biblio Technologies • 🔒 NDPA 2023 Compliant • Operated by Yemuel Oseghale<br>
+            If you did not request early access, simply ignore this email.
+          </div>
+        </div>
+      `,
+    });
+    log?.info({ email: entry.email }, '[Waitlist-Email] Subscriber VIP pass delivered via Nodemailer');
+  } catch (err: any) {
+    log?.warn({ err: err.message }, '[Waitlist-Email] Failed to deliver subscriber pass email');
+  }
+}
+
 app.post('/waitlist', async (req, reply) => {
   const { phone, email, storeName, handle, category, dialect } = (req.body || {}) as {
     phone?: string;
-    email: string;
+    email?: string;
     storeName?: string;
     handle?: string;
     category?: string;
     dialect?: string;
   };
 
-  if (!email || !email.includes('@')) {
-    return reply.code(400).send({ error: 'Valid email address required for waitlist', code: 'INVALID_EMAIL' });
+  const cleanEmail = email ? email.trim().toLowerCase() : null;
+  const cleanPhone = phone ? phone.trim() : null;
+
+  if (!cleanEmail && !cleanPhone) {
+    return reply.code(400).send({
+      error: 'Either a valid email address or WhatsApp phone number is required',
+      code: 'REQUIRED_FIELD_MISSING'
+    });
   }
 
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanPhone = phone ? phone.replace(/\D/g, '') : null;
-  const cleanHandle = handle ? handle.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() : null;
+  // Load existing file entries (zero DB required!)
+  const waitlist = ensureWaitlistFile();
+  const baseQueueOffset = 4218;
 
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS waitlist_entries (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email TEXT UNIQUE NOT NULL,
-        phone TEXT,
-        store_name TEXT,
-        handle TEXT,
-        category TEXT,
-        dialect TEXT,
-        queue_number SERIAL,
-        referred_by TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      )
-    `;
+  // Check if already registered by email or phone
+  let existingIndex = -1;
+  if (cleanEmail) {
+    existingIndex = waitlist.findIndex((e: any) => e.email && e.email.toLowerCase() === cleanEmail);
+  }
+  if (existingIndex === -1 && cleanPhone) {
+    const rawDigits = cleanPhone.replace(/\D/g, '');
+    existingIndex = waitlist.findIndex((e: any) => e.phone && e.phone.replace(/\D/g, '') === rawDigits);
+  }
 
-    const rows = await sql`
-      INSERT INTO waitlist_entries (email, phone, store_name, handle, category, dialect)
-      VALUES (${cleanEmail}, ${cleanPhone}, ${storeName || null}, ${cleanHandle || null}, ${category || 'general'}, ${dialect || 'pidgin_english'})
-      ON CONFLICT (email) DO UPDATE SET
-        phone = COALESCE(EXCLUDED.phone, waitlist_entries.phone),
-        store_name = COALESCE(EXCLUDED.store_name, waitlist_entries.store_name),
-        handle = COALESCE(EXCLUDED.handle, waitlist_entries.handle)
-      RETURNING id, email, queue_number, created_at
-    `;
-
-    const entry = rows[0];
-    const baseQueueOffset = 4218;
-    const queuePos = baseQueueOffset + (entry?.queue_number || 1);
-
-    return reply.send({
-      ok: true,
-      waitlistId: entry.id,
-      email: entry.email,
+  let entry: any;
+  if (existingIndex >= 0) {
+    // Update existing entry
+    entry = waitlist[existingIndex];
+    if (cleanPhone) entry.phone = cleanPhone;
+    if (cleanEmail) entry.email = cleanEmail;
+    if (storeName) entry.storeName = storeName;
+    if (handle) entry.handle = handle;
+    entry.updatedAt = new Date().toISOString();
+  } else {
+    // Create new entry
+    const queueNumber = waitlist.length + 1;
+    const queuePos = baseQueueOffset + queueNumber;
+    entry = {
+      id: randomUUID(),
+      email: cleanEmail || `${cleanPhone?.replace(/\D/g, '') || queuePos}@waitlist.biblio.africa`,
+      phone: cleanPhone || null,
+      storeName: storeName || 'Lagos Social Store',
+      handle: handle ? handle.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() : null,
+      category: category || 'general',
+      dialect: dialect || 'pidgin_english',
+      queueNumber,
       position: queuePos,
-      cohort: 'Lagos Early Access Batch 1 (November 2026)',
       referralCode: `BIBLIO-${queuePos}`,
       referralLink: `https://biblio.africa/join?ref=BIBLIO-${queuePos}`,
-      message: `You're #${queuePos.toLocaleString()} on the Biblio early access waitlist! Check your email for your invitation pass.`,
-      disclaimer: OTP_SECURITY_DISCLAIMER,
-    });
-  } catch (err: any) {
-    app.log.error(err, 'Error adding to waitlist');
-    return reply.code(500).send({ error: 'Could not complete waitlist registration' });
+      createdAt: new Date().toISOString(),
+    };
+    waitlist.push(entry);
   }
+
+  // Persist to local JSON file
+  saveWaitlistFile(waitlist);
+
+  // Background dispatch of Nodemailer emails (non-blocking)
+  if (cleanEmail && cleanEmail.includes('@')) {
+    dispatchWaitlistEmails(entry, waitlist.length, app.log).catch((err) => {
+      app.log.warn({ err: err.message }, '[Waitlist] Error in background email task');
+    });
+  } else {
+    // Even if no subscriber email provided, alert developer with merchant phone!
+    dispatchWaitlistEmails(entry, waitlist.length, app.log).catch(() => {});
+  }
+
+  // Non-blocking background sync to Postgres if database is present
+  (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS waitlist_entries (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          email TEXT UNIQUE NOT NULL,
+          phone TEXT,
+          store_name TEXT,
+          handle TEXT,
+          category TEXT,
+          dialect TEXT,
+          queue_number INT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+      `;
+      await sql`
+        INSERT INTO waitlist_entries (email, phone, store_name, handle, category, dialect, queue_number)
+        VALUES (${entry.email}, ${entry.phone}, ${entry.storeName}, ${entry.handle}, ${entry.category}, ${entry.dialect}, ${entry.queueNumber})
+        ON CONFLICT (email) DO NOTHING
+      `;
+    } catch {
+      // Postgres absent - file storage is the primary source of truth!
+    }
+  })();
+
+  return reply.send({
+    ok: true,
+    waitlistId: entry.id,
+    email: entry.email,
+    phone: entry.phone,
+    position: entry.position,
+    cohort: 'Lagos Early Access Batch 1 (November 2026)',
+    referralCode: entry.referralCode,
+    referralLink: entry.referralLink,
+    message: `You're #${entry.position.toLocaleString()} on the Biblio early access waitlist! Check your email for your invitation pass.`,
+    disclaimer: OTP_SECURITY_DISCLAIMER,
+  });
 });
 
 app.get('/waitlist/stats', async (_req, reply) => {
-  try {
-    const rows = await sql`SELECT COUNT(*) as count FROM waitlist_entries`;
-    const count = 4218 + Number(rows[0]?.count || 0);
-    return reply.send({ ok: true, totalWaitlist: count, spotsLeftInBatch: Math.max(12, 100 - (count % 100)) });
-  } catch {
-    return reply.send({ ok: true, totalWaitlist: 4218, spotsLeftInBatch: 82 });
+  const waitlist = ensureWaitlistFile();
+  const count = 4218 + waitlist.length;
+  return reply.send({
+    ok: true,
+    totalWaitlist: count,
+    spotsLeftInBatch: Math.max(12, 100 - (count % 100)),
+  });
+});
+
+// ==========================================
+// PRIVATE DEVELOPER WAITLIST DASHBOARD & EXPORT (NO DB NEEDED)
+// ==========================================
+app.get('/admin/waitlist', async (req, reply) => {
+  const { key, format } = (req.query || {}) as { key?: string; format?: string };
+  const authKey = req.headers['x-admin-key'] || key;
+  const expectedKey = process.env.ADMIN_SECRET || 'biblio_owner_2026';
+
+  if (authKey !== expectedKey) {
+    return reply.code(404).send({ error: 'Not Found' });
   }
+
+  const waitlist = ensureWaitlistFile();
+
+  if (format === 'json') {
+    return reply.send({ ok: true, count: waitlist.length, waitlist });
+  }
+
+  if (format === 'csv') {
+    const csvHeader = 'Position,Store Name,WhatsApp Phone,Email,Created At,Referral Code\n';
+    const csvRows = waitlist.map((e: any) =>
+      `"${e.position}","${(e.storeName || '').replace(/"/g, '""')}","${e.phone || ''}","${e.email || ''}","${e.createdAt}","${e.referralCode}"`
+    ).join('\n');
+    reply.header('Content-Type', 'text/csv');
+    reply.header('Content-Disposition', 'attachment; filename="biblio-waitlist.csv"');
+    return reply.send(csvHeader + csvRows);
+  }
+
+  // Developer Private HTML Dashboard
+  const rowsHtml = waitlist.map((e: any) => `
+    <tr style="border-bottom:1px solid #1f2937;">
+      <td style="padding:12px 16px;font-family:monospace;font-weight:bold;color:#10b981;">#${e.position}</td>
+      <td style="padding:12px 16px;font-weight:600;color:#ffffff;">${e.storeName || 'Lagos Social Store'}</td>
+      <td style="padding:12px 16px;font-family:monospace;">
+        ${e.phone ? `<a href="https://wa.me/${e.phone.replace(/\D/g, '')}" target="_blank" style="color:#25d366;text-decoration:none;font-weight:bold;">${e.phone} ↗</a>` : '<span style="color:#6b7280;">None</span>'}
+      </td>
+      <td style="padding:12px 16px;"><a href="mailto:${e.email}" style="color:#38bdf8;text-decoration:none;">${e.email}</a></td>
+      <td style="padding:12px 16px;color:#9ca3af;font-size:12px;">${new Date(e.createdAt).toLocaleDateString()}</td>
+      <td style="padding:12px 16px;font-family:monospace;color:#a78bfa;font-size:12px;">${e.referralCode}</td>
+    </tr>
+  `).join('');
+
+  return reply.type('text/html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biblio Waitlist • Dev Dashboard</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #08090c; color: #f3f4f6; margin: 0; padding: 32px 24px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .card { background: #0f1117; border: 1px solid #1f2937; border-radius: 20px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #10b981; color: #000; font-weight: bold; border-radius: 10px; text-decoration: none; font-size: 13px; }
+    .btn-secondary { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .metric { background: #151822; border: 1px solid #1f2937; border-radius: 14px; padding: 16px; }
+    .metric-value { font-size: 28px; font-weight: 900; font-family: monospace; color: #ffffff; }
+    .metric-label { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    th { padding: 12px 16px; background: #151822; color: #9ca3af; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1f2937; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1 style="margin:0;font-size:24px;">Biblio Waitlist Admin</h1>
+        <div style="font-size:12px;color:#9ca3af;margin-top:4px;">Private developer view • Zero DB (Stored in data/waitlist.json)</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <a href="/admin/waitlist?key=${key}&format=csv" class="btn btn-secondary">Download CSV</a>
+        <a href="/admin/waitlist?key=${key}&format=json" class="btn btn-secondary" target="_blank">View JSON</a>
+      </div>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-value">#${4218 + waitlist.length}</div>
+        <div class="metric-label">Total Waitlist Queue Position</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${waitlist.length}</div>
+        <div class="metric-label">Real Signups Accumulated</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">Lagos Batch 1</div>
+        <div class="metric-label">Active Early Access Cohort</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Queue #</th>
+              <th>Store / Brand</th>
+              <th>WhatsApp Phone</th>
+              <th>Email</th>
+              <th>Date</th>
+              <th>Referral Pass</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="6" style="padding:32px;text-align:center;color:#6b7280;">No signups in waitlist.json yet. Submissions from the landing page will appear here instantly!</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`);
 });
 
 app.post('/auth/merchant/verify', async (req, reply) => {
