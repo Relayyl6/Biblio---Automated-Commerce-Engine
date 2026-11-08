@@ -21,12 +21,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#08090C] text-white font-sans antialiased selection:bg-emerald-500 selection:text-black">
+    <div className="min-h-screen flex flex-col bg-[#08090C] text-white font-sans antialiased selection:bg-emerald-500 selection:text-black w-full max-w-[100vw] overflow-x-hidden">
       {/* Floating Dark Frosted Glass Pill Header */}
       <Navbar onOpenWaitlist={() => handleOpenWaitlist()} />
 
       {/* Main Flow */}
-      <main className="flex-1">
+      <main className="flex-1 w-full max-w-[100vw] overflow-x-hidden">
         <Hero onOpenWaitlist={handleOpenWaitlist} />
         <PartnerTicker />
         <BentoFeatures />

@@ -584,31 +584,31 @@ export const WhatsAppSimulator: React.FC = () => {
   );
 
   return (
-    <section id="simulator" className="py-24 sm:py-32 bg-[#060709] text-white relative overflow-hidden border-b border-white/[0.08] apple-subtle-grid">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 relative z-10">
+    <section id="simulator" className="py-16 sm:py-32 bg-[#060709] text-white relative overflow-hidden border-b border-white/[0.08] apple-subtle-grid w-full max-w-[100vw]">
+      <div className="max-w-6xl mx-auto px-3.5 sm:px-6 relative z-10">
         
         {/* Section Header */}
-        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-xs font-medium mb-3 shadow-sm">
+        <div className="text-center max-w-2xl mx-auto mb-6 sm:mb-10">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-[11px] sm:text-xs font-medium mb-2.5 sm:mb-3 shadow-sm">
             <Sparkles className="w-3.5 h-3.5" />
             <span>Interactive Simulator</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">
+          <h2 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2 sm:mb-3">
             Experience the Nigerian AI live
           </h2>
-          <p className="text-zinc-400 text-sm sm:text-base leading-relaxed">
+          <p className="text-zinc-400 text-xs sm:text-base leading-relaxed">
             Haggle in Pidgin, test voice notes, or unfold into native WhatsApp dual-pane view.
           </p>
         </div>
 
         {/* Unified Controls Toolbar: Dialects on Left, Hardware Form Factor Toggle BESIDE it on Right */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 max-w-4xl mx-auto mb-10 p-1.5 rounded-2xl bg-zinc-900/80 border border-white/10 shadow-xl backdrop-blur-xl">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-3 max-w-4xl mx-auto mb-6 sm:mb-10 p-1 sm:p-1.5 rounded-2xl bg-zinc-900/80 border border-white/10 shadow-xl backdrop-blur-xl">
           {/* Dialect Switcher on Left */}
           <div className="flex items-center gap-1 w-full sm:w-auto justify-center sm:justify-start">
             <span className="text-[10px] font-mono uppercase text-zinc-500 px-2 hidden md:inline">Dialect:</span>
             <button
               onClick={() => handleDialectChange('pidgin')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              className={`px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all ${
                 selectedDialect === 'pidgin'
                   ? 'bg-emerald-500 text-black shadow-md font-bold'
                   : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
@@ -618,7 +618,7 @@ export const WhatsAppSimulator: React.FC = () => {
             </button>
             <button
               onClick={() => handleDialectChange('lagos')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              className={`px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all ${
                 selectedDialect === 'lagos'
                   ? 'bg-emerald-500 text-black shadow-md font-bold'
                   : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
@@ -628,7 +628,7 @@ export const WhatsAppSimulator: React.FC = () => {
             </button>
             <button
               onClick={() => handleDialectChange('formal')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              className={`px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all ${
                 selectedDialect === 'formal'
                   ? 'bg-emerald-500 text-black shadow-md font-bold'
                   : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
@@ -639,10 +639,10 @@ export const WhatsAppSimulator: React.FC = () => {
           </div>
 
           {/* Hardware Device Toggle Placed Directly BESIDE it on Right */}
-          <div className="flex items-center gap-1 p-1 bg-black/40 rounded-xl border border-white/5 w-full sm:w-auto justify-center">
+          <div className="flex items-center gap-1 p-0.5 sm:p-1 bg-black/40 rounded-xl border border-white/5 w-full sm:w-auto justify-center">
             <button
               onClick={() => setDeviceMode('iphone')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-all duration-300 ${
                 deviceMode === 'iphone'
                   ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_12px_rgba(16,185,129,0.35)] font-bold'
                   : 'text-zinc-400 hover:text-white'
@@ -654,7 +654,7 @@ export const WhatsAppSimulator: React.FC = () => {
             
             <button
               onClick={() => setDeviceMode('foldable')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-all duration-300 ${
                 deviceMode === 'foldable'
                   ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_12px_rgba(16,185,129,0.35)] font-bold'
                   : 'text-zinc-400 hover:text-white'
@@ -674,18 +674,18 @@ export const WhatsAppSimulator: React.FC = () => {
             <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-5xl mx-auto transition-all duration-700">
               
               {/* Upright iPhone 15 Pro Chassis with Real 19.5:9 Proportions */}
-              <div className="lg:col-span-7 flex justify-center">
-                {/* Slender Titanium Outer Chassis: Wider stance with comfortable margins */}
-                <div className="relative w-[395px] sm:w-[430px] h-[765px] sm:h-[785px] p-[3.5px] rounded-[52px] bg-gradient-to-b from-[#484a51] via-[#242529] to-[#121316] shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_45px_rgba(16,185,129,0.08),inset_0_1px_1px_rgba(255,255,255,0.3)] border border-white/10 flex flex-col flex-shrink-0">
+              <div className="lg:col-span-7 flex justify-center w-full">
+                {/* Slender Titanium Outer Chassis: Responsive stance that fits comfortably on narrow mobile screens */}
+                <div className="relative w-full max-w-[340px] xs:max-w-[370px] sm:max-w-[420px] h-[670px] xs:h-[720px] sm:h-[785px] p-[3px] sm:p-[3.5px] rounded-[42px] sm:rounded-[52px] bg-gradient-to-b from-[#484a51] via-[#242529] to-[#121316] shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_45px_rgba(16,185,129,0.08),inset_0_1px_1px_rgba(255,255,255,0.3)] border border-white/10 flex flex-col mx-auto flex-shrink-0">
                   
                   {/* Subtle Earpiece Speaker Slit on Top Titanium Rim */}
                   <div className="absolute top-[8px] left-1/2 -translate-x-1/2 w-14 h-1 bg-zinc-800 rounded-full z-40" />
 
                   {/* Inner Black Bezel */}
-                  <div className="p-[7px] rounded-[49px] bg-black h-full flex flex-col">
+                  <div className="p-[5px] sm:p-[7px] rounded-[39px] sm:rounded-[49px] bg-black h-full flex flex-col">
                     
                     {/* Screen Viewport with Proper Inner Radius */}
-                    <div className="rounded-[42px] overflow-hidden bg-[#0B141A] relative flex flex-col h-full shadow-inner select-none border border-white/[0.04]">
+                    <div className="rounded-[34px] sm:rounded-[42px] overflow-hidden bg-[#0B141A] relative flex flex-col h-full shadow-inner select-none border border-white/[0.04]">
                       
                       {/* Top Dedicated Status Bar Zone with Centered Dynamic Island */}
                       <div className="relative bg-[#1F2C34] pt-2 px-6 pb-2 z-30 select-none border-b border-white/[0.04] flex-shrink-0">
@@ -1090,16 +1090,16 @@ export const WhatsAppSimulator: React.FC = () => {
             </div>
           ) : (
             /* ================= MODE 2: AUTHENTIC NATIVE WHATSAPP ON A FOLDABLE (TWO-COLUMN SPLIT PANE) ================= */
-            <div className="w-full max-w-5xl mx-auto transition-all duration-700">
+            <div className="w-full max-w-5xl mx-auto transition-all duration-700 overflow-hidden">
               
               {/* Dual-Screen Foldable Hardware Chassis */}
-              <div className="relative rounded-[42px] sm:rounded-[48px] p-3 sm:p-4 bg-gradient-to-b from-[#2E3138] via-[#1B1C20] to-[#0C0D10] border border-white/15 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_60px_rgba(16,185,129,0.12)]">
+              <div className="relative rounded-[32px] sm:rounded-[48px] p-2 sm:p-4 bg-gradient-to-b from-[#2E3138] via-[#1B1C20] to-[#0C0D10] border border-white/15 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_60px_rgba(16,185,129,0.12)] overflow-hidden">
                 
                 {/* Foldable Dual Screen Screenport */}
-                <div className="flex flex-col md:flex-row bg-[#0B141A] rounded-[34px] overflow-hidden border border-white/10 shadow-inner h-[620px]">
+                <div className="flex flex-col md:flex-row bg-[#0B141A] rounded-[26px] sm:rounded-[34px] overflow-hidden border border-white/10 shadow-inner h-[660px] md:h-[620px]">
                   
                   {/* ====== LEFT SCREEN (38% WIDTH): WHATSAPP CHATS LIST OR LINKED DEVICES ====== */}
-                  <div className="w-full md:w-[38%] flex flex-col h-full bg-[#111B21] border-b md:border-b-0 md:border-r border-white/10 flex-shrink-0">
+                  <div className="w-full md:w-[38%] flex flex-col h-[260px] md:h-full bg-[#111B21] border-b md:border-b-0 md:border-r border-white/10 flex-shrink-0">
                     {foldableLeftView === 'linked_devices' ? (
                       renderLinkedDevicesScreen(() => setFoldableLeftView('chats'))
                     ) : (

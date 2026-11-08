@@ -156,14 +156,14 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
       {/* Modal Container: Aspect/Roberta Spatial Architecture */}
-      <div className="relative w-full max-w-md bg-[#0D0F14] rounded-3xl border border-white/10 shadow-[0_25px_70px_-15px_rgba(0,0,0,0.95)] overflow-hidden text-white p-7 sm:p-9">
+      <div className="relative w-full max-w-md bg-[#0D0F14] rounded-2xl sm:rounded-3xl border border-white/10 shadow-[0_25px_70px_-15px_rgba(0,0,0,0.95)] overflow-hidden text-white p-5 sm:p-8 max-h-[94vh] overflow-y-auto">
         
         {/* Top-Right Quiet Dismiss Button */}
         <button
           onClick={onClose}
-          className="absolute top-6 right-6 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+          className="absolute top-4 right-4 sm:top-6 sm:right-6 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />

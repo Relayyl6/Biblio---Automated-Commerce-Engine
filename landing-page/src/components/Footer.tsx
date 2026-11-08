@@ -25,48 +25,48 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
   };
 
   return (
-    <footer className="relative bg-[#050608] text-zinc-400 border-t border-white/[0.08] overflow-hidden">
+    <footer className="relative bg-[#050608] text-zinc-400 border-t border-white/[0.08] overflow-hidden w-full max-w-[100vw]">
       {/* Top ambient aura */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[300px] bg-emerald-500/[0.03] blur-[150px] pointer-events-none rounded-full" />
       <div className="absolute inset-0 apple-subtle-grid opacity-25 pointer-events-none" />
 
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-16 sm:pt-20 pb-12">
+      <div className="relative max-w-7xl mx-auto px-3.5 sm:px-6 pt-10 sm:pt-20 pb-12">
         {/* Top Pre-Footer Callout Card (Apple/Linear Style) */}
-        <div className="rounded-3xl apple-card p-8 sm:p-12 mb-16 sm:mb-20 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
+        <div className="rounded-2xl sm:rounded-3xl apple-card p-5 sm:p-12 mb-10 sm:mb-20 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
           <div className="relative z-10 max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-xs mb-4">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[10px] sm:text-xs mb-3 sm:mb-4">
               <Sparkles className="w-3.5 h-3.5" />
               <span>BATCH 1 NOW OPEN • 80 SPOTS REMAINING</span>
             </div>
-            <h3 className="text-2xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-4">
+            <h3 className="text-xl sm:text-3xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-2.5 sm:mb-4">
               Ready to put your WhatsApp store on autopilot?
             </h3>
-            <p className="text-zinc-400 text-sm sm:text-base leading-relaxed mb-8 max-w-xl">
+            <p className="text-zinc-400 text-xs sm:text-base leading-relaxed mb-6 sm:mb-8 max-w-xl">
               Lock in your store handle before Batch 1 closes. Defend your profit floor and close sales on autopilot.
             </p>
 
             {/* Inline Fast Waitlist Form */}
-            <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md">
+            <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 max-w-md">
               <div className="relative flex-1">
                 <input
                   type="text"
                   placeholder="Enter WhatsApp number or email..."
                   value={footerPhone}
                   onChange={(e) => setFooterPhone(e.target.value)}
-                  className="w-full px-4 py-3 rounded-full bg-black/60 border border-white/15 text-white placeholder-zinc-500 text-xs sm:text-sm font-mono focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors shadow-inner"
+                  className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-full bg-black/60 border border-white/15 text-white placeholder-zinc-500 text-xs sm:text-sm font-mono focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors shadow-inner"
                 />
               </div>
               <button
                 type="submit"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-[1.02] active:scale-[0.98] flex-shrink-0"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 sm:px-6 sm:py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-[1.02] active:scale-[0.98] flex-shrink-0"
               >
                 <span>Claim Handle</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               </button>
             </form>
 
-            <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-500 font-mono">
-              <Lock className="w-3.5 h-3.5 text-emerald-400" />
+            <div className="flex items-center gap-2 mt-3 sm:mt-4 text-[10px] sm:text-[11px] text-zinc-500 font-mono">
+              <Lock className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
               <span>Instant VIP pass delivery via email • No setup fee</span>
             </div>
           </div>

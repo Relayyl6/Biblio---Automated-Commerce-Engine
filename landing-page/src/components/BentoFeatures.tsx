@@ -60,30 +60,30 @@ export const BentoFeatures: React.FC = () => {
   };
 
   return (
-    <section id="features" className="py-24 sm:py-32 relative bg-[#060709] text-white border-y border-white/[0.08] overflow-hidden">
+    <section id="features" className="py-16 sm:py-32 relative bg-[#060709] text-white border-y border-white/[0.08] overflow-hidden w-full max-w-[100vw]">
       {/* Soft atmospheric gradient */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-emerald-500/[0.03] blur-[160px] pointer-events-none rounded-full" />
 
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6">
+      <div className="relative max-w-6xl mx-auto px-3.5 sm:px-6">
         {/* Section Header */}
-        <div className="max-w-2xl mb-16 sm:mb-20">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-xs font-medium mb-4">
+        <div className="max-w-2xl mb-8 sm:mb-20">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-[11px] sm:text-xs font-medium mb-3 sm:mb-4">
             <Sparkles className="w-3.5 h-3.5" />
             <span>Built for Nigerian Social Sellers</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white leading-tight mb-4">
+          <h2 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-tight mb-3 sm:mb-4">
             Everything your store needs to sell on autopilot
           </h2>
-          <p className="text-zinc-400 text-base sm:text-lg leading-relaxed">
+          <p className="text-zinc-400 text-xs sm:text-base leading-relaxed">
             From natural Pidgin haggling to locking escrow payments and booking dispatch riders.
           </p>
         </div>
 
         {/* Bento Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
 
           {/* CARD 1: Pidgin & English Price Bargaining (Span 2 cols on lg) */}
-          <div className="lg:col-span-2 rounded-3xl bg-[#0D0F14] border border-white/[0.08] p-6 sm:p-8 flex flex-col justify-between hover:border-white/15 transition-all duration-300">
+          <div className="lg:col-span-2 rounded-2xl sm:rounded-3xl bg-[#0D0F14] border border-white/[0.08] p-5 sm:p-8 flex flex-col justify-between hover:border-white/15 transition-all duration-300">
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">

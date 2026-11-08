@@ -53,17 +53,17 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
   };
 
   return (
-    <section className="relative min-h-[92vh] pt-36 pb-24 flex flex-col justify-center items-center overflow-hidden bg-[#08090C] apple-bg-mesh apple-subtle-grid">
-      {/* Precision Apple Radar Hairlines (Hardware Schematic Style) */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-[360px] h-[360px] sm:w-[500px] sm:h-[500px] apple-radar-arc" />
-        <div className="w-[640px] h-[640px] sm:w-[820px] sm:h-[820px] apple-radar-dashed" />
-        <div className="w-[960px] h-[960px] sm:w-[1180px] sm:h-[1180px] apple-radar-arc" />
-        <div className="w-[1300px] h-[1300px] sm:w-[1580px] sm:h-[1580px] apple-radar-dashed" />
-        <div className="absolute -top-32 w-[700px] h-[500px] bg-emerald-500/10 rounded-full blur-[130px] -z-10" />
+    <section className="relative min-h-[85vh] sm:min-h-[92vh] pt-28 sm:pt-36 pb-16 sm:pb-24 flex flex-col justify-center items-center overflow-hidden bg-[#08090C] apple-bg-mesh apple-subtle-grid w-full">
+      {/* Precision Apple Radar Hairlines - Strictly Clamped to Prevent Mobile Viewport Bleed */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+        <div className="w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] apple-radar-arc" />
+        <div className="w-[520px] h-[520px] sm:w-[820px] sm:h-[820px] apple-radar-dashed" />
+        <div className="w-[740px] h-[740px] sm:w-[1180px] sm:h-[1180px] apple-radar-arc" />
+        <div className="w-[980px] h-[980px] sm:w-[1580px] sm:h-[1580px] apple-radar-dashed" />
+        <div className="absolute -top-32 w-[550px] sm:w-[700px] h-[350px] sm:h-[500px] bg-emerald-500/10 rounded-full blur-[110px] sm:blur-[130px] -z-10" />
       </div>
 
-      {/* Floating Integration Chips With Actual Vector Logos */}
+      {/* Floating Integration Chips With Actual Vector Logos (Desktop Only) */}
       <div className="absolute inset-0 max-w-6xl mx-auto pointer-events-none hidden md:block">
         {/* WhatsApp Business */}
         <div className="absolute top-36 left-12 lg:left-24 apple-card px-3.5 py-2.5 rounded-2xl flex items-center gap-3 animate-float-slow">
@@ -115,47 +115,47 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
       </div>
 
       {/* Main Hero Copy */}
-      <div className="relative z-10 max-w-3xl mx-auto px-4 sm:px-6 text-center">
-        {/* Cohort Status Pill */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-white/10 shadow-sm text-xs text-zinc-300 font-medium mb-8 backdrop-blur-xl">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+      <div className="relative z-10 w-full max-w-3xl mx-auto px-3.5 sm:px-6 text-center">
+        {/* Cohort Status Pill — Compact & Single-Line on Mobile */}
+        <div className="inline-flex items-center gap-1.5 sm:gap-2 px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full bg-zinc-900/90 border border-white/10 shadow-sm text-[10px] sm:text-xs text-zinc-300 font-medium mb-4 sm:mb-8 backdrop-blur-xl">
+          <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
           <span className="font-semibold text-white">Lagos Batch 1 Early Access</span>
           <span className="text-zinc-600">•</span>
-          <span className="text-emerald-400 font-mono font-bold">82 spots remaining</span>
+          <span className="text-emerald-400 font-mono font-bold">82 spots left</span>
         </div>
 
-        {/* Apple-style Luminous Headline */}
-        <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.08] mb-6">
+        {/* Scaled Responsive Luminous Headline — Proportional on Mobile (Zero Horizontal Overrun) */}
+        <h1 className="text-[26px] xs:text-[29px] sm:text-5xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.12] mb-3 sm:mb-6">
           Never leave money in{' '}
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-200">
             your DMs.
           </span>
         </h1>
 
-        {/* Sub-headline */}
-        <p className="text-base sm:text-lg text-zinc-400 max-w-lg mx-auto font-normal leading-relaxed mb-10">
+        {/* Sub-headline — Compact for phone viewports */}
+        <p className="text-xs sm:text-base text-zinc-400 max-w-xs sm:max-w-lg mx-auto font-normal leading-relaxed mb-6 sm:mb-10">
           An autonomous sales agent for your WhatsApp store. Haggles in Pidgin, locks Paystack escrow, and dispatches riders 24/7.
         </p>
 
         {/* Waitlist Intake Bar */}
-        <div className="max-w-md mx-auto mb-10">
+        <div className="w-full max-w-sm sm:max-w-md mx-auto mb-6 sm:mb-10 px-1 sm:px-0">
           <form
             onSubmit={handleHeroSubmit}
-            className="flex flex-col sm:flex-row items-center gap-2 p-1.5 rounded-2xl bg-zinc-900/80 border border-white/15 shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+            className="flex flex-col sm:flex-row items-center gap-2 p-1 sm:p-1.5 rounded-2xl bg-zinc-900/80 border border-white/15 shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
           >
-            <div className="flex-1 flex items-center w-full px-3.5 py-2.5">
-              <Smartphone className="w-4 h-4 text-zinc-500 mr-2.5 flex-shrink-0" />
+            <div className="flex-1 flex items-center w-full min-w-0 px-3 py-2 sm:px-3.5 sm:py-2.5">
+              <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-zinc-500 mr-2 flex-shrink-0" />
               <input
                 type="text"
                 placeholder="Enter WhatsApp number or email..."
                 value={heroInput}
                 onChange={(e) => setHeroInput(e.target.value)}
-                className="w-full bg-transparent text-sm text-white placeholder-zinc-500 outline-none font-medium"
+                className="w-full min-w-0 bg-transparent text-xs sm:text-sm text-white placeholder-zinc-500 outline-none font-medium"
               />
             </div>
             <button
               type="submit"
-              className="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-1.5 flex-shrink-0 shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)]"
+              className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-1.5 flex-shrink-0 shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] active:scale-98"
             >
               <span>Join Waitlist</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -163,79 +163,79 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
           </form>
 
           {/* Social Proof */}
-          <div className="flex items-center justify-center gap-3 mt-4 text-xs text-zinc-400">
-            <div className="flex -space-x-1.5 overflow-hidden">
-              <span className="inline-block h-6 w-6 rounded-full ring-2 ring-zinc-900 bg-emerald-500 text-zinc-950 text-[10px] font-bold flex items-center justify-center">
+          <div className="flex items-center justify-center gap-2.5 mt-3 sm:mt-4 text-[11px] sm:text-xs text-zinc-400">
+            <div className="flex -space-x-1.5 overflow-hidden flex-shrink-0">
+              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-emerald-500 text-zinc-950 text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
                 TO
               </span>
-              <span className="inline-block h-6 w-6 rounded-full ring-2 ring-zinc-900 bg-teal-500 text-zinc-950 text-[10px] font-bold flex items-center justify-center">
+              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-teal-500 text-zinc-950 text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
                 AM
               </span>
-              <span className="inline-block h-6 w-6 rounded-full ring-2 ring-zinc-900 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-blue-500 text-white text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
                 CH
               </span>
-              <span className="inline-block h-6 w-6 rounded-full ring-2 ring-zinc-900 bg-zinc-800 text-zinc-300 text-[10px] font-bold flex items-center justify-center font-mono">
+              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-zinc-800 text-zinc-300 text-[9px] sm:text-[10px] font-bold flex items-center justify-center font-mono">
                 +4k
               </span>
             </div>
-            <span className="font-medium">
+            <span className="font-medium truncate">
               <strong className="text-white">4,218 Nigerian merchants</strong> already waiting
             </span>
           </div>
         </div>
 
-        {/* Real Activity Notification Stack: iOS Lock Screen Style */}
-        <div className="relative max-w-xl mx-auto px-4 mt-2 select-none group">
-          {/* Stack Layer 3 (Deepest notification card, scaled down & shifted) */}
-          <div className="absolute inset-x-8 -bottom-3.5 h-14 rounded-2xl bg-[#12141A]/60 border border-white/[0.04] backdrop-blur-md transform scale-[0.92] opacity-40 z-10 transition-all duration-300 group-hover:-bottom-4" />
+        {/* Real Activity Notification Stack: iOS Lock Screen Style (Constrained Width to Eliminate Horizontal Overflow) */}
+        <div className="relative w-full max-w-sm sm:max-w-xl mx-auto px-1 sm:px-4 mt-2 select-none group">
+          {/* Stack Layer 3 (Deepest notification card) */}
+          <div className="absolute inset-x-4 sm:inset-x-8 -bottom-3 h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-[#12141A]/60 border border-white/[0.04] backdrop-blur-md transform scale-[0.92] opacity-40 z-10 transition-all duration-300 group-hover:-bottom-3.5" />
 
-          {/* Stack Layer 2 (Middle notification card with preview info) */}
-          <div className="absolute inset-x-6 -bottom-2 h-14 rounded-2xl bg-[#161822]/80 border border-white/[0.07] backdrop-blur-md transform scale-[0.96] opacity-70 z-20 transition-all duration-300 group-hover:-bottom-2.5 flex items-center justify-between px-5 py-2">
-            <div className="flex items-center gap-2.5 opacity-60">
-              <div className="w-5 h-5 rounded-full bg-teal-500/20 text-teal-400 flex items-center justify-center text-[10px] font-bold">₦</div>
-              <span className="text-[11px] text-zinc-300 font-medium truncate">Chidi from @lagosvintage secured #4,218</span>
+          {/* Stack Layer 2 (Middle notification card) */}
+          <div className="absolute inset-x-2 sm:inset-x-6 -bottom-1.5 h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-[#161822]/80 border border-white/[0.07] backdrop-blur-md transform scale-[0.96] opacity-70 z-20 transition-all duration-300 group-hover:-bottom-2 flex items-center justify-between px-3 sm:px-5 py-2">
+            <div className="flex items-center gap-2 opacity-60 min-w-0">
+              <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-teal-500/20 text-teal-400 flex items-center justify-center text-[9px] sm:text-[10px] font-bold flex-shrink-0">₦</div>
+              <span className="text-[10px] sm:text-[11px] text-zinc-300 font-medium truncate">Chidi from @lagosvintage secured #4,218</span>
             </div>
-            <span className="text-[9px] text-zinc-500 font-mono">1m ago</span>
+            <span className="text-[8px] sm:text-[9px] text-zinc-500 font-mono flex-shrink-0 ml-2">1m ago</span>
           </div>
 
-          {/* Stack Layer 1 (Top / Front Active Notification Card) */}
-          <div className="relative apple-card rounded-2xl px-5 py-3.5 border border-white/10 flex items-center justify-between gap-4 text-left shadow-2xl bg-zinc-900/85 backdrop-blur-2xl z-30 transition-all duration-300 group-hover:border-emerald-500/30">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 text-emerald-400 font-bold text-xs shadow-inner">
+          {/* Stack Layer 1 (Top / Front Active Notification Card — Strict Truncation & Compact Padding) */}
+          <div className="relative apple-card rounded-xl sm:rounded-2xl px-3 sm:px-5 py-2.5 sm:py-3.5 border border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 text-left shadow-2xl bg-zinc-900/85 backdrop-blur-2xl z-30 transition-all duration-300 group-hover:border-emerald-500/30">
+            <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 text-emerald-400 font-bold text-[11px] sm:text-xs shadow-inner">
                 ₦
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-white whitespace-nowrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] sm:text-xs font-bold text-white truncate max-w-[130px] xs:max-w-[160px] sm:max-w-none">
                     Tobi from @thesneakerhub
                   </span>
-                  <span className="text-[11px] text-zinc-400 hidden sm:inline">
+                  <span className="text-[10px] sm:text-[11px] text-zinc-400 hidden md:inline">
                     reserved early access
                   </span>
                 </div>
-                <div className="text-[10px] text-zinc-500">
+                <div className="text-[9px] sm:text-[10px] text-zinc-500 truncate">
                   Lagos Early Access • Ticket #4,217
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 flex-shrink-0">
-              <span className="text-[10px] text-zinc-500 font-mono">Just now</span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-[10px] font-mono shadow-sm">
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              <span className="text-[9px] sm:text-[10px] text-zinc-500 font-mono hidden xs:inline">Just now</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-[9px] sm:text-[10px] font-mono shadow-sm">
                 CONFIRMED
               </span>
             </div>
           </div>
         </div>
 
-        {/* Highlights */}
-        <div className="mt-14 flex flex-wrap items-center justify-center gap-6 text-xs text-zinc-400 font-medium">
+        {/* Quick Highlights — Scaled & Proportional on Mobile */}
+        <div className="mt-8 sm:mt-14 flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-[10px] sm:text-xs text-zinc-400 font-medium">
           <div className="flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-emerald-400" />
+            <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
             <span>20s pairing</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
             <span>Zero fake alert losses</span>
           </div>
           <div className="flex items-center gap-1.5">
