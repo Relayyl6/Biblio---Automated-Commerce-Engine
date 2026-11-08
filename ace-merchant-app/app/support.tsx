@@ -540,7 +540,7 @@ export default function SupportScreen() {
             icon={<FileText size={20} color="#3B82F6" />}
             iconBg="#3B82F61A"
             title="Terms of Service"
-            subtitle="6-Layer Veto, risk limits & acceptable use"
+            subtitle="Commercial AI dataset licensing, 6-Layer Veto & acceptable use"
             onPress={() => {
               const base = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.75:3004';
               Linking.openURL(`${base}/legal/terms`);

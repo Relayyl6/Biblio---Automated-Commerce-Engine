@@ -243,8 +243,8 @@ export default function SettingsScreen() {
 
         <Section title="Data & Privacy Controls" icon={Database} delay={300}>
           <ToggleRow
-            title="Federated Data Training"
-            subtitle="Allow anonymized chat data to improve the ACE intelligence network."
+            title="Commercial AI Training & Research"
+            subtitle="Authorizes anonymized commerce data to train frontier AI models and power enterprise market intelligence."
             value={dataConsent}
             onValueChange={setDataConsent}
           />

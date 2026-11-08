@@ -14,6 +14,7 @@ import {
   Smartphone,
   BookOpen,
   ChevronLeft,
+  ChevronRight,
   Plus,
   Camera,
   Mic,
@@ -21,11 +22,17 @@ import {
   Pause,
   Search,
   MoreVertical,
+  Zap,
 } from 'lucide-react';
 import { ChatMessage } from '../types';
 
 export const WhatsAppSimulator: React.FC = () => {
   const [deviceMode, setDeviceMode] = useState<'iphone' | 'foldable'>('iphone');
+  const [iphoneView, setIphoneView] = useState<'chat' | 'chats' | 'linked_devices'>('chat');
+  const [foldableLeftView, setFoldableLeftView] = useState<'chats' | 'linked_devices'>('chats');
+  const [showFoldableMenu, setShowFoldableMenu] = useState(false);
+  const [showIphoneMenu, setShowIphoneMenu] = useState(false);
+  const [pairingStatus, setPairingStatus] = useState<'ready' | 'paired'>('ready');
   const [selectedDialect, setSelectedDialect] = useState<'pidgin' | 'lagos' | 'formal'>('pidgin');
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -290,6 +297,292 @@ export const WhatsAppSimulator: React.FC = () => {
     },
   ];
 
+  // ─── Reusable WhatsApp Linked Devices Pairing Screen ───
+  const renderLinkedDevicesScreen = (onBack: () => void) => (
+    <div className="flex flex-col h-full bg-[#111B21] text-white select-none">
+      {/* Top Header */}
+      <div className="bg-[#202C33] px-3.5 py-3 flex items-center justify-between border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={onBack}
+            className="p-1 -ml-1 rounded-full hover:bg-white/10 text-[#53bdeb] hover:text-[#72cbf0] transition-colors flex items-center gap-0.5"
+            title="Back to Chat"
+          >
+            <ChevronLeft className="w-5 h-5" />
+            <span className="text-xs font-medium">Chats</span>
+          </button>
+          <span className="font-bold text-sm text-white ml-2">Linked devices</span>
+        </div>
+        <button
+          onClick={onBack}
+          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-[11px] font-semibold transition-colors"
+        >
+          Done
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3.5">
+        {/* Device Sync Illustration & Hero */}
+        <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-[#1F2C34]/60 border border-white/5 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400 mb-2 shadow-inner">
+            <Smartphone className="w-6 h-6" />
+          </div>
+          <h3 className="font-bold text-sm text-white">Link Biblio to WhatsApp</h3>
+          <p className="text-[11px] text-zinc-400 mt-1 max-w-[280px] leading-relaxed">
+            Link with your phone number to enable 24/7 autopilot price haggling, escrow locking, and dispatch.
+          </p>
+
+          {/* 8-Character Pairing Code Box */}
+          <div className="w-full mt-3.5 p-3 rounded-xl bg-black/60 border border-emerald-500/30 text-left shadow-lg">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Pairing Code
+              </span>
+              <span className="text-[10px] font-mono text-zinc-400">Expires in 2:45</span>
+            </div>
+            <div className="flex items-center justify-between bg-[#111B21] px-3 py-2 rounded-lg border border-white/10">
+              <span className="font-mono text-base font-black tracking-[0.25em] text-emerald-300">
+                BIBL - 8942
+              </span>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText('BIBL-8942');
+                  setCopiedAccount(true);
+                  setTimeout(() => setCopiedAccount(false), 2000);
+                }}
+                className="px-2.5 py-1 rounded-md bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-bold transition-all"
+              >
+                {copiedAccount ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Numbered Steps */}
+        <div className="space-y-2">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400">
+            Steps to Link Phone Number:
+          </span>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-start gap-2.5 p-2 rounded-xl bg-[#1F2C34]/40 border border-white/5">
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                1
+              </span>
+              <span className="text-zinc-300 text-[11px] leading-tight">
+                Open WhatsApp on your phone &gt; tap <strong>Menu (⋮)</strong> or <strong>Settings</strong>.
+              </span>
+            </div>
+
+            <div className="flex items-start gap-2.5 p-2 rounded-xl bg-[#1F2C34]/40 border border-white/5">
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                2
+              </span>
+              <span className="text-zinc-300 text-[11px] leading-tight">
+                Select <strong>Linked Devices</strong> &gt; tap <strong>Link with phone number instead</strong>.
+              </span>
+            </div>
+
+            <div className="flex items-start gap-2.5 p-2 rounded-xl bg-[#1F2C34]/40 border border-white/5">
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                3
+              </span>
+              <span className="text-zinc-300 text-[11px] leading-tight">
+                Enter code <code className="text-emerald-400 font-mono font-bold">BIBL-8942</code> on your phone to complete link.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Device Status Card */}
+        <div className="p-2.5 rounded-xl bg-[#1F2C34]/60 border border-emerald-500/25 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center flex-shrink-0">
+              <Zap className="w-4 h-4 fill-emerald-400" />
+            </div>
+            <div>
+              <div className="font-bold text-xs text-white">Biblio Autopilot Engine</div>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>
+                  {pairingStatus === 'ready'
+                    ? 'Handshake Ready • Cloud Baileys Gateway'
+                    : 'Linked & Online • Autopilot Active'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setPairingStatus(pairingStatus === 'ready' ? 'paired' : 'ready')}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+              pairingStatus === 'paired'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                : 'bg-emerald-500 text-black hover:bg-emerald-400 shadow-sm'
+            }`}
+          >
+            {pairingStatus === 'paired' ? 'Linked ✓' : 'Pair Device'}
+          </button>
+        </div>
+
+        {/* Back to Live Autopilot Chat button */}
+        <button
+          onClick={onBack}
+          className="mt-1 w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-[0.99]"
+        >
+          <span>← Back to Live Autopilot Chat</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  // ─── Reusable WhatsApp Chats List Screen ───
+  const renderChatsList = (onSelectChat: (id: string) => void) => (
+    <div className="flex flex-col h-full bg-[#111B21] select-none">
+      {/* Top Header */}
+      <div className="bg-[#202C33] px-3.5 py-3 flex items-center justify-between border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-sm text-white tracking-wide">WhatsApp Business</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+        </div>
+        <div className="flex items-center gap-3 text-zinc-300">
+          <Camera className="w-4 h-4 cursor-pointer hover:text-white" />
+          <Search className="w-4 h-4 cursor-pointer hover:text-white" />
+
+          {/* Three dots ellipsis with blinking indicator beacon */}
+          <div className="relative">
+            <button
+              onClick={() => setShowFoldableMenu(!showFoldableMenu)}
+              className="relative p-1 rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors"
+              title="WhatsApp Menu (Link Device)"
+            >
+              <MoreVertical className="w-4 h-4" />
+              {/* Pulsing indicator ring */}
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-90" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border border-black text-[7px] text-black font-black items-center justify-center shadow-sm">
+                  !
+                </span>
+              </span>
+            </button>
+
+            {/* WhatsApp Dropdown Menu */}
+            {showFoldableMenu && (
+              <div className="absolute right-0 top-8 w-48 bg-[#233138] rounded-xl shadow-2xl border border-white/10 py-1.5 z-50 text-xs text-zinc-200">
+                <div className="px-3 py-1.5 text-zinc-400 text-[10px] uppercase font-mono tracking-wider border-b border-white/5">
+                  WhatsApp Business
+                </div>
+                <button
+                  onClick={() => {
+                    setShowFoldableMenu(false);
+                    if (deviceMode === 'foldable') {
+                      setFoldableLeftView('linked_devices');
+                    } else {
+                      setIphoneView('linked_devices');
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-[#182229] flex items-center justify-between text-emerald-400 font-bold bg-emerald-500/10 transition-colors"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>Linked devices</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  </span>
+                  <span className="text-[9px] font-mono bg-emerald-500/20 px-1.5 py-0.5 rounded text-emerald-300 font-bold">
+                    Link
+                  </span>
+                </button>
+                <button className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60">
+                  Business tools
+                </button>
+                <button className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60">
+                  New broadcast
+                </button>
+                <button className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60">
+                  Starred messages
+                </button>
+                <button className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60">
+                  Settings
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Pills */}
+      <div className="px-3 py-2 bg-[#111B21] flex items-center gap-1.5 border-b border-white/[0.04] text-[11px] overflow-x-auto">
+        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">
+          All
+        </span>
+        <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium hover:text-white cursor-pointer">
+          Unread (1)
+        </span>
+        <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium hover:text-white cursor-pointer">
+          Escrow Orders (3)
+        </span>
+      </div>
+
+      {/* Chat items */}
+      <div className="flex-1 overflow-y-auto divide-y divide-white/[0.03]">
+        {foldableConversations.map((conv) => {
+          const isSelected = selectedDialect === conv.id;
+          return (
+            <div
+              key={conv.id}
+              onClick={() => onSelectChat(conv.id)}
+              className={`px-3.5 py-3 flex items-center gap-3 cursor-pointer transition-colors ${
+                isSelected
+                  ? 'bg-[#2A3942]/60 border-l-4 border-emerald-400'
+                  : 'hover:bg-[#202C33]/50'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-full ${conv.avatarBg} flex items-center justify-center text-base flex-shrink-0 shadow-sm border border-white/10`}>
+                {conv.avatar}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-white truncate">{conv.title}</span>
+                  <span className={`text-[10px] font-mono ${isSelected ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    {conv.time}
+                  </span>
+                </div>
+                <div className="text-[11px] text-zinc-400 truncate mt-0.5">
+                  {conv.subtitle}
+                </div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border ${conv.badgeColor}`}>
+                    {conv.badge}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Autopilot Active Footer with Link Devices Shortcut */}
+      <div className="p-3 bg-[#182229] border-t border-white/[0.06] text-xs flex items-center justify-between text-zinc-400">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[11px] text-white font-medium">Autopilot Active</span>
+        </div>
+        <button
+          onClick={() => {
+            if (deviceMode === 'foldable') {
+              setFoldableLeftView('linked_devices');
+            } else {
+              setIphoneView('linked_devices');
+            }
+          }}
+          className="text-[10px] font-mono text-emerald-400 hover:underline flex items-center gap-1"
+        >
+          <span>Link Devices</span>
+          <span>→</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <section id="simulator" className="py-24 sm:py-32 bg-[#060709] text-white relative overflow-hidden border-b border-white/[0.08] apple-subtle-grid">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 relative z-10">
@@ -382,8 +675,8 @@ export const WhatsAppSimulator: React.FC = () => {
               
               {/* Upright iPhone 15 Pro Chassis with Real 19.5:9 Proportions */}
               <div className="lg:col-span-7 flex justify-center">
-                {/* Slender Titanium Outer Chassis: 380px wide x 760px tall = exact 1:2 slender iPhone stance */}
-                <div className="relative w-[370px] sm:w-[385px] h-[750px] sm:h-[765px] p-[3.5px] rounded-[52px] bg-gradient-to-b from-[#484a51] via-[#242529] to-[#121316] shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_45px_rgba(16,185,129,0.08),inset_0_1px_1px_rgba(255,255,255,0.3)] border border-white/10 flex flex-col flex-shrink-0">
+                {/* Slender Titanium Outer Chassis: Wider stance with comfortable margins */}
+                <div className="relative w-[395px] sm:w-[430px] h-[765px] sm:h-[785px] p-[3.5px] rounded-[52px] bg-gradient-to-b from-[#484a51] via-[#242529] to-[#121316] shadow-[0_30px_90px_-20px_rgba(0,0,0,0.98),0_0_45px_rgba(16,185,129,0.08),inset_0_1px_1px_rgba(255,255,255,0.3)] border border-white/10 flex flex-col flex-shrink-0">
                   
                   {/* Subtle Earpiece Speaker Slit on Top Titanium Rim */}
                   <div className="absolute top-[8px] left-1/2 -translate-x-1/2 w-14 h-1 bg-zinc-800 rounded-full z-40" />
@@ -427,50 +720,153 @@ export const WhatsAppSimulator: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* WhatsApp iOS Header (Cleanly Positioned BELOW Status Bar with Adequate Spacing) */}
-                      <div className="bg-[#1F2C34] px-3.5 py-2.5 flex items-center justify-between border-b border-white/[0.06] flex-shrink-0 z-20">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <button className="flex items-center text-[#53bdeb] hover:text-[#72cbf0] -ml-1">
-                            <ChevronLeft className="w-5 h-5" />
-                            <span className="text-xs font-medium">12</span>
-                          </button>
-                          
-                          <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-600 flex items-center justify-center flex-shrink-0 border border-white/10 shadow-sm">
-                            <img src="/biblio-logo.png" alt="Biblio Bot" className="w-full h-full object-cover" />
+                      {/* View Router: Linked Devices Screen vs Chats List vs Active Chat */}
+                      {iphoneView === 'linked_devices' ? (
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                          {renderLinkedDevicesScreen(() => setIphoneView('chat'))}
+                        </div>
+                      ) : iphoneView === 'chats' ? (
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                          {renderChatsList((id) => {
+                            if (id === 'pidgin' || id === 'lagos' || id === 'formal') {
+                              handleDialectChange(id);
+                            }
+                            setIphoneView('chat');
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                          {/* WhatsApp iOS Header (Cleanly Positioned BELOW Status Bar with Adequate Spacing) */}
+                          <div className="bg-[#1F2C34] px-3.5 py-2.5 flex items-center justify-between border-b border-white/[0.06] flex-shrink-0 z-20">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <button
+                                onClick={() => setIphoneView('chats')}
+                                className="flex items-center text-[#53bdeb] hover:text-[#72cbf0] -ml-1 transition-colors"
+                                title="Back to All Chats"
+                              >
+                                <ChevronLeft className="w-5 h-5" />
+                                <span className="text-xs font-medium">12</span>
+                              </button>
+                              
+                              <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-600 flex items-center justify-center flex-shrink-0 border border-white/10 shadow-sm">
+                                <img src="/biblio-logo.png" alt="Biblio Bot" className="w-full h-full object-cover" />
+                              </div>
+
+                              <div className="min-w-0 truncate">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-bold text-xs text-white truncate">Biblio Agent (Nike Hub)</span>
+                                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                                </div>
+                                <div className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span>Live Autopilot • 1.8s reply</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 text-zinc-300">
+                              <Video className="w-4 h-4 cursor-pointer hover:text-white" />
+                              <Phone className="w-3.5 h-3.5 cursor-pointer hover:text-white" />
+                              
+                              {/* Three dots ellipsis with blinking indicator beacon */}
+                              <div className="relative">
+                                <button
+                                  onClick={() => setShowIphoneMenu(!showIphoneMenu)}
+                                  className="relative p-1 rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors"
+                                  title="WhatsApp Menu (Link Device)"
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                  {/* Pulsing indicator ring */}
+                                  <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-[#1F2C34]" />
+                                  </span>
+                                </button>
+
+                                {/* Dropdown Menu */}
+                                {showIphoneMenu && (
+                                  <div className="absolute right-0 top-full mt-1.5 w-48 rounded-xl bg-[#233138] border border-white/10 shadow-2xl py-1 z-50 text-xs">
+                                    <button
+                                      onClick={() => {
+                                        setShowIphoneMenu(false);
+                                        setIphoneView('linked_devices');
+                                      }}
+                                      className="w-full text-left px-3 py-2 hover:bg-[#182229] flex items-center justify-between text-emerald-400 font-bold bg-emerald-500/10 transition-colors"
+                                    >
+                                      <span className="flex items-center gap-1.5">
+                                        <span>Linked devices</span>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                      </span>
+                                      <span className="text-[9px] font-mono bg-emerald-500/20 px-1.5 py-0.5 rounded text-emerald-300 font-bold">
+                                        Link
+                                      </span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setShowIphoneMenu(false);
+                                        setIphoneView('chats');
+                                      }}
+                                      className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 transition-colors"
+                                    >
+                                      All Chats
+                                    </button>
+                                    <button
+                                      onClick={() => setShowIphoneMenu(false)}
+                                      className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60"
+                                    >
+                                      Business tools
+                                    </button>
+                                    <button
+                                      onClick={() => setShowIphoneMenu(false)}
+                                      className="w-full text-left px-3 py-2 hover:bg-[#182229] text-zinc-300 opacity-60"
+                                    >
+                                      Settings
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
 
-                          <div className="min-w-0 truncate">
-                            <div className="flex items-center gap-1">
-                              <span className="font-bold text-xs text-white truncate">Biblio Agent (Nike Hub)</span>
-                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                          {/* WhatsApp Message Stream with Slender Proportions */}
+                          <div
+                            className="flex-1 p-3.5 overflow-y-auto space-y-3 bg-[#0B141A]"
+                            style={{
+                              backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 0)`,
+                              backgroundSize: '24px 24px',
+                            }}
+                          >
+                            {/* NDPA E2E Security Chip */}
+                            <div className="text-center my-0.5">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#182229]/80 border border-white/5 text-[9px] text-amber-300/80 font-mono">
+                                🔒 Encrypted with NDPA 2023 compliance
+                              </span>
                             </div>
-                            <div className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                              <span>Live Autopilot • 1.8s reply</span>
+
+                            {/* In-Chat Device Linking Guidance Banner */}
+                            <div className="p-2.5 rounded-xl bg-[#182229]/95 border border-emerald-500/30 shadow-md flex items-center justify-between gap-2.5 my-1">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                                  <Smartphone className="w-3.5 h-3.5" />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-bold text-white flex items-center gap-1.5">
+                                    <span>Link Autopilot Device</span>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                  </div>
+                                  <div className="text-[10px] text-zinc-400 truncate">
+                                    Tap <span className="text-white font-mono font-semibold">⋮</span> &gt; <span className="text-emerald-300 font-semibold">Linked devices</span> or tap to pair
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setIphoneView('linked_devices')}
+                                className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-bold flex items-center gap-1 flex-shrink-0 shadow-sm transition-all active:scale-95"
+                              >
+                                <span>Link</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
                             </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 text-zinc-300">
-                          <Video className="w-4 h-4 cursor-pointer hover:text-white" />
-                          <Phone className="w-3.5 h-3.5 cursor-pointer hover:text-white" />
-                        </div>
-                      </div>
-
-                      {/* WhatsApp Message Stream with Slender Proportions */}
-                      <div
-                        className="flex-1 p-3.5 overflow-y-auto space-y-3 bg-[#0B141A]"
-                        style={{
-                          backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 0)`,
-                          backgroundSize: '24px 24px',
-                        }}
-                      >
-                        {/* NDPA E2E Security Chip */}
-                        <div className="text-center my-1">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#182229]/80 border border-white/5 text-[9px] text-amber-300/80 font-mono">
-                            🔒 Encrypted with NDPA 2023 compliance
-                          </span>
-                        </div>
 
                         {messages.map((msg) => (
                           <div
@@ -605,6 +1001,8 @@ export const WhatsAppSimulator: React.FC = () => {
                       <div className="bg-[#202C33] pt-1 pb-2 flex justify-center flex-shrink-0">
                         <div className="w-32 h-1 bg-white/40 rounded-full" />
                       </div>
+                    </div>
+                  )}
 
                     </div>
                   </div>
@@ -700,89 +1098,17 @@ export const WhatsAppSimulator: React.FC = () => {
                 {/* Foldable Dual Screen Screenport */}
                 <div className="flex flex-col md:flex-row bg-[#0B141A] rounded-[34px] overflow-hidden border border-white/10 shadow-inner h-[620px]">
                   
-                  {/* ====== LEFT SCREEN (38% WIDTH): WHATSAPP CHATS LIST / INBOX ====== */}
+                  {/* ====== LEFT SCREEN (38% WIDTH): WHATSAPP CHATS LIST OR LINKED DEVICES ====== */}
                   <div className="w-full md:w-[38%] flex flex-col h-full bg-[#111B21] border-b md:border-b-0 md:border-r border-white/10 flex-shrink-0">
-                    
-                    {/* WhatsApp Top Header Bar */}
-                    <div className="bg-[#202C33] px-4 py-3 flex items-center justify-between border-b border-white/[0.06] flex-shrink-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-white tracking-wide">WhatsApp Business</span>
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      </div>
-                      <div className="flex items-center gap-3 text-zinc-300">
-                        <Camera className="w-4 h-4 cursor-pointer hover:text-white" />
-                        <Search className="w-4 h-4 cursor-pointer hover:text-white" />
-                        <MoreVertical className="w-4 h-4 cursor-pointer hover:text-white" />
-                      </div>
-                    </div>
-
-                    {/* WhatsApp Filter Pills: All, Unread, Orders, Groups */}
-                    <div className="px-3 py-2 bg-[#111B21] flex items-center gap-1.5 border-b border-white/[0.04] text-[11px] overflow-x-auto">
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">
-                        All
-                      </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium hover:text-white cursor-pointer">
-                        Unread (1)
-                      </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium hover:text-white cursor-pointer">
-                        Escrow Orders (3)
-                      </span>
-                    </div>
-
-                    {/* WhatsApp Conversation List (Interactive: Clicking switches dialect & chat) */}
-                    <div className="flex-1 overflow-y-auto divide-y divide-white/[0.03]">
-                      {foldableConversations.map((conv) => {
-                        const isSelected = selectedDialect === conv.id;
-                        return (
-                          <div
-                            key={conv.id}
-                            onClick={() => {
-                              if (conv.id === 'pidgin' || conv.id === 'lagos' || conv.id === 'formal') {
-                                handleDialectChange(conv.id);
-                              }
-                            }}
-                            className={`px-3.5 py-3 flex items-center gap-3 cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-[#2A3942]/60 border-l-4 border-emerald-400'
-                                : 'hover:bg-[#202C33]/50'
-                            }`}
-                          >
-                            {/* Avatar */}
-                            <div className={`w-10 h-10 rounded-full ${conv.avatarBg} flex items-center justify-center text-base flex-shrink-0 shadow-sm border border-white/10`}>
-                              {conv.avatar}
-                            </div>
-
-                            {/* Info */}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-xs text-white truncate">{conv.title}</span>
-                                <span className={`text-[10px] font-mono ${isSelected ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                                  {conv.time}
-                                </span>
-                              </div>
-                              <div className="text-[11px] text-zinc-400 truncate mt-0.5">
-                                {conv.subtitle}
-                              </div>
-                              <div className="mt-1 flex items-center gap-1.5">
-                                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border ${conv.badgeColor}`}>
-                                  {conv.badge}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Left Pane Autopilot Summary Footer */}
-                    <div className="p-3 bg-[#182229] border-t border-white/[0.06] text-xs flex items-center justify-between text-zinc-400">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-[11px] text-white font-medium">Autopilot Active</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-emerald-400">3 Deals Closed Today</span>
-                    </div>
-
+                    {foldableLeftView === 'linked_devices' ? (
+                      renderLinkedDevicesScreen(() => setFoldableLeftView('chats'))
+                    ) : (
+                      renderChatsList((id) => {
+                        if (id === 'pidgin' || id === 'lagos' || id === 'formal') {
+                          handleDialectChange(id);
+                        }
+                      })
+                    )}
                   </div>
 
                   {/* ====== CENTRAL MECHANICAL HINGE (Hardware Spine) ====== */}
@@ -818,7 +1144,20 @@ export const WhatsAppSimulator: React.FC = () => {
                       <div className="flex items-center gap-3 text-zinc-300">
                         <Video className="w-4 h-4 cursor-pointer hover:text-white" />
                         <Phone className="w-3.5 h-3.5 cursor-pointer hover:text-white" />
-                        <MoreVertical className="w-4 h-4 cursor-pointer hover:text-white" />
+                        {/* Three dots ellipsis with blinking indicator beacon for Linked Devices */}
+                        <div className="relative">
+                          <button
+                            onClick={() => setFoldableLeftView(foldableLeftView === 'linked_devices' ? 'chats' : 'linked_devices')}
+                            className="relative p-1 rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors"
+                            title="Toggle Linked Devices (Left Pane)"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-[#1F2C34]" />
+                            </span>
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -831,10 +1170,35 @@ export const WhatsAppSimulator: React.FC = () => {
                       }}
                     >
                       {/* Security notice */}
-                      <div className="text-center">
+                      <div className="text-center my-0.5">
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#182229]/80 border border-white/5 text-[9px] text-amber-300/80 font-mono">
                           🔒 Messages are end-to-end encrypted with NDPA 2023 compliance
                         </span>
+                      </div>
+
+                      {/* In-Chat Device Linking Guidance Banner */}
+                      <div className="p-2.5 rounded-xl bg-[#182229]/95 border border-emerald-500/30 shadow-md flex items-center justify-between gap-2.5 my-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                            <Smartphone className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-bold text-white flex items-center gap-1.5">
+                              <span>Link Autopilot Device</span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                            </div>
+                            <div className="text-[10px] text-zinc-400 truncate">
+                              Tap <span className="text-white font-mono font-semibold">⋮</span> &gt; <span className="text-emerald-300 font-semibold">Linked devices</span> or tap to pair
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setFoldableLeftView('linked_devices')}
+                          className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-bold flex items-center gap-1 flex-shrink-0 shadow-sm transition-all active:scale-95"
+                        >
+                          <span>Link</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
                       </div>
 
                       {messages.map((msg) => (

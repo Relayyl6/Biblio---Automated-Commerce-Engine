@@ -4375,7 +4375,10 @@ app.get("/legal/privacy", async (_req, reply) => {
       <li><strong>Telecommunications & SMS:</strong> Africa's Talking & Termii (carrier SMS notifications and vendor escalation dispatch).</li>
     </ul>
 
-    <h2>5. Account & Data Deletion (Apple Guideline 5.1.1(v))</h2>
+    <h2>5. De-Identified Data Commercialization & Machine Learning Research</h2>
+    <p>Under Section 24 and Part V of the Nigeria Data Protection Act (NDPA) 2023, data that has been irrevocably de-identified and anonymized such that it can no longer identify a natural person ceases to be personal data. Biblio compiles, formats, and licenses anonymized conversational corpora, multilingual speech patterns (including African dialects and Nigerian Pidgin), and commercial transaction patterns to third-party artificial intelligence research organizations, technology corporations, and foundation model developers. All such datasets undergo rigorous automated PII scrubbing (masking names, phone numbers, BVNs, NINs, bank accounts, and addresses) before commercial transfer.</p>
+
+    <h2>6. Account & Data Deletion (Apple Guideline 5.1.1(v))</h2>
     <p>Merchants and customers possess an absolute right to immediate, complete data deletion under the Nigeria Data Protection Act (NDPA) 2023 and Apple App Store Review Guidelines:</p>
     <ul>
       <li><strong>In-App Deletion:</strong> Accessible directly in <em>Settings → Account & Data Deletion</em>.</li>
@@ -4428,7 +4431,16 @@ app.get("/legal/terms", async (_req, reply) => {
     <h2>5. In-App Purchases & Tokens</h2>
     <p>Tokens consumed for AI dialogue turns and autonomous automation are digital goods purchased within iOS and Android using Apple In-App Purchases and Google Play Billing. Merchant customer sales transactions are fulfilled separately via Paystack.</p>
 
-    <h2>6. Contact & Support</h2>
+    <h2>6. Commercial Dataset Licensing, Enterprise AI Model Training & Data Monetization Rights</h2>
+    <p>In consideration of the provision of Biblio's autonomous commerce infrastructure, automated order reconciliation, and multi-dialect conversational engine, the merchant and any participating user explicitly agree to the following commercial data rights:</p>
+    <ul>
+      <li><strong>Commercial Data License Grant:</strong> Merchants and users grant Biblio (operated by Yemuel Oseghale), its affiliates, successors, assigns, and commercial partners an irrevocable, perpetual, worldwide, transferable, sublicensable, and fully paid-up license to collect, process, synthesize, tokenize, format, compile, license, lease, assign, and commercially sell de-identified conversational transcripts, audio recordings, negotiation dialogue graphs, multi-dialect linguistic structures (including Nigerian Pidgin, Yoruba, Igbo, Hausa commerce terminology, and regional West African marketplace idioms), transaction metadata, and catalog demand vectors ("Commerce AI Datasets").</li>
+      <li><strong>Commercial Transfer & Big Tech / Frontier Lab Licensing:</strong> Biblio retains the full, unrestricted legal right to sell, monetize, transfer, or license aggregated, de-identified Commerce AI Datasets and derived artificial intelligence model weights, embeddings, or fine-tuning datasets to third parties, including but not limited to commercial technology corporations, frontier artificial intelligence laboratories, enterprise cloud providers, financial intelligence institutions, and academic research bodies.</li>
+      <li><strong>Statutory De-Identification & Privacy Standards (NDPA 2023 & GDPR):</strong> All commercialized datasets are strictly de-identified in compliance with the Nigeria Data Protection Act (NDPA) 2023. Personally Identifiable Information (PII)—including Bank Verification Numbers (BVN), National Identification Numbers (NIN), personal bank account numbers, specific residential addresses, customer legal names, and private authentication secrets—shall be scrubbed, masked, or replaced with synthetic pseudonyms prior to external transfer. Under Section 2 of our Privacy Policy, personal communications segregated by our dual-inbox classifier are permanently excluded from commercial training datasets.</li>
+      <li><strong>No Royalty or Profit-Sharing Obligation:</strong> Access to and usage of the Biblio autonomous business application constitutes complete and sufficient consideration. Neither merchants nor end-consumers are entitled to royalties, profit-sharing, licensing fees, equity, or proceeds arising from the commercialization, licensing, or sale of anonymized datasets or derived machine learning models.</li>
+    </ul>
+
+    <h2>7. Contact & Support</h2>
     <p>For questions or operational support: <a href="mailto:oseghaleleonard39@gmail.com">oseghaleleonard39@gmail.com</a>.</p>
   </div>
 </body>
