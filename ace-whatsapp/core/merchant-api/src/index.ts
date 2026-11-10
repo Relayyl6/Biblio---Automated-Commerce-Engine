@@ -3388,7 +3388,7 @@ app.post('/waitlist', async (req, reply) => {
 
   // Load existing file entries (zero DB required!)
   const waitlist = ensureWaitlistFile();
-  const baseQueueOffset = 4218;
+  const baseQueueOffset = parseInt(process.env.WAITLIST_OFFSET || '0', 10);
 
   // Check if already registered by email or phone
   let existingIndex = -1;
@@ -3415,7 +3415,7 @@ app.post('/waitlist', async (req, reply) => {
   } else {
     // Create new entry
     const queueNumber = waitlist.length + 1;
-    const queuePos = baseQueueOffset + queueNumber;
+    const queuePos = baseQueueOffset > 0 ? (baseQueueOffset + queueNumber) : queueNumber;
     entry = {
       id: randomUUID(),
       email: cleanEmail || `${cleanPhone?.replace(/\D/g, '') || queuePos}@waitlist.biblio.africa`,

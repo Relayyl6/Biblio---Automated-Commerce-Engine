@@ -6,15 +6,8 @@ import {
   Share2,
   Copy,
   Check,
-  RefreshCw,
-  AlertTriangle,
-  MessageSquare,
-  Mail,
-  Smartphone,
-  Store,
-  Sparkles,
-  Tag,
-  TrendingUp,
+  AlertCircle,
+  ChevronDown,
 } from 'lucide-react';
 
 export type PlanType = 'starter' | 'professional' | 'enterprise';
@@ -28,12 +21,12 @@ interface WaitlistModalProps {
 }
 
 const CATEGORIES = [
-  { id: 'fashion', label: 'Fashion & Apparel', icon: '👗' },
-  { id: 'hair', label: 'Hair, Wigs & Beauty', icon: '💇‍♀️' },
-  { id: 'footwear', label: 'Sneakers & Shoes', icon: '👟' },
-  { id: 'electronics', label: 'Electronics & Gadgets', icon: '📱' },
-  { id: 'jewelry', label: 'Jewelry & Accessories', icon: '💍' },
-  { id: 'wholesale', label: 'Wholesale & General', icon: '📦' },
+  { id: 'fashion', label: '👗 Fashion & Apparel' },
+  { id: 'hair', label: '💇‍♀️ Hair, Wigs & Beauty' },
+  { id: 'footwear', label: '👟 Sneakers & Shoes' },
+  { id: 'electronics', label: '📱 Electronics & Gadgets' },
+  { id: 'jewelry', label: '💍 Jewelry & Accessories' },
+  { id: 'wholesale', label: '📦 Wholesale & General Merchandise' },
 ];
 
 const ORDER_VOLUMES = [
@@ -121,7 +114,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
           body: JSON.stringify(payload),
         });
       } catch {
-        // fallback
+        // fallback to backend
       }
 
       if (!response || !response.ok) {
@@ -143,15 +136,15 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
       if (response && response.ok) {
         const data = await response.json();
         setWaitlistData({
-          position: data.position || 4219,
+          position: data.position || 1,
           cohort: data.cohort || 'Lagos Early Access Batch 1',
-          referralCode: data.referralCode || `BIBLIO-${data.position || 4219}`,
-          referralLink: data.referralLink || `https://biblio.africa?ref=${data.referralCode || 'BIB-4219'}`,
+          referralCode: data.referralCode || `BIBLIO-${data.position || 1}`,
+          referralLink: data.referralLink || `https://biblio.africa?ref=${data.referralCode || 'BIB-1'}`,
           plan: selectedPlan,
         });
       } else {
-        // Optimistic fallback so user is never blocked
-        const fallbackPos = 4219;
+        // Fallback so user is never blocked
+        const fallbackPos = 1;
         setWaitlistData({
           position: fallbackPos,
           cohort: 'Lagos Early Access Batch 1',
@@ -162,7 +155,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
       }
       setStep('success');
     } catch {
-      const fallbackPos = 4219;
+      const fallbackPos = 1;
       setWaitlistData({
         position: fallbackPos,
         cohort: 'Lagos Early Access Batch 1',
@@ -192,44 +185,20 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
         ? 'Starter Plan'
         : 'Professional Plan';
     const text = encodeURIComponent(
-      `Hey! I just claimed ticket #${waitlistData?.position || 4219} for the ${planName} on Biblio — an autonomous WhatsApp sales agent that haggles in Pidgin, stops fake transfer alerts, and auto-dispatches riders. Join Lagos Batch 1 here: ${waitlistData?.referralLink || 'https://biblio.africa'}`
+      `Hey! I just claimed ticket #${waitlistData?.position || 1} for the ${planName} on Biblio — an autonomous WhatsApp sales agent that haggles in Pidgin, stops fake transfer alerts, and auto-dispatches riders. Join Lagos Batch 1 here: ${waitlistData?.referralLink || 'https://biblio.africa'}`
     );
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
 
-  const planConfig = {
-    starter: {
-      badge: 'COMMUNITY TIER • 100% FREE',
-      badgeColor: 'text-zinc-300 bg-white/[0.06] border-white/10',
-      title: 'Join Free Starter Waitlist',
-      subtitle: 'Free forever for vendors testing autonomous sales. Up to 50 automated orders/mo.',
-      buttonText: 'Join Free Waitlist',
-    },
-    professional: {
-      badge: '🔥 LAGOS BATCH 1 PRIORITY ADMISSION • ₦15,000/MO',
-      badgeColor: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
-      title: 'Reserve Professional Early Pass',
-      subtitle: 'Priority onboarding for boutiques, hair vendors, and social stores. Unlimited orders & voice notes.',
-      buttonText: 'Claim Priority Access Pass',
-    },
-    enterprise: {
-      badge: '⚡ WHOLESALE & MERCHANT NETWORK COHORT • ₦50,000/MO',
-      badgeColor: 'text-teal-300 bg-teal-500/10 border-teal-500/30',
-      title: 'Reserve Enterprise Cohort Seat',
-      subtitle: 'Dedicated Lagos account manager, custom inventory & ERP sync, and team swarm.',
-      buttonText: 'Join Enterprise Cohort',
-    },
-  }[selectedPlan];
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-      {/* Modal Container */}
-      <div className="relative w-full max-w-lg bg-[#0D0F14] rounded-2xl sm:rounded-3xl border border-white/10 shadow-[0_25px_70px_-15px_rgba(0,0,0,0.95)] overflow-hidden text-white p-5 sm:p-8 max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+      {/* Modal Card - Clean, spacious, Apple/Linear aesthetic */}
+      <div className="relative w-full max-w-[460px] bg-[#0E1117] rounded-3xl border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden text-white p-6 sm:p-8 max-h-[92vh] overflow-y-auto">
         
         {/* Top-Right Quiet Dismiss Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 sm:top-6 sm:right-6 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors z-20"
+          className="absolute top-5 right-5 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-colors z-20"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />
@@ -238,50 +207,55 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
         {/* ================= STEP 1: INTAKE FORM ================= */}
         {step === 'form' && (
           <div className="flex flex-col text-left">
-            {/* Visual Anchor: Connected Dual Compact App Icons */}
-            <div className="flex items-center justify-center gap-2.5 mb-4 pt-1">
-              <div className="w-9 h-9 rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center shadow-md p-1.5 overflow-hidden flex-shrink-0">
-                <img src="/biblio-logo.png" alt="Biblio" className="w-full h-full object-contain" />
+            {/* Header: Clean Brand Icon & Title */}
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 mx-auto mb-3.5 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center p-2.5 shadow-sm">
+                <img
+                  src="/biblio-logo.png"
+                  alt="Biblio Logo"
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    // Fallback to green dot icon if logo asset isn't present
+                    (e.currentTarget as HTMLElement).style.display = 'none';
+                  }}
+                />
               </div>
-              <div className="w-4 h-0.5 bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full flex-shrink-0" />
-              <div className="w-9 h-9 rounded-xl bg-[#005C4B]/30 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-md flex-shrink-0">
-                <MessageSquare className="w-4 h-4 text-emerald-400" />
-              </div>
+
+              <h2 className="text-2xl sm:text-[26px] font-extrabold tracking-tight text-white mb-2">
+                Reserve your store handle
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                Join 4,200+ Nigerian merchants closing sales automatically on WhatsApp without losing profit.
+              </p>
             </div>
 
-            {/* Interactive 3-Way Plan Switcher */}
-            <div className="mb-4">
-              <div className="flex items-center justify-between text-[11px] font-mono uppercase text-zinc-400 mb-1.5">
-                <span>Select Early Access Tier</span>
-                <span className="text-emerald-400 font-bold">Lagos Batch 1</span>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-black/50 rounded-xl border border-white/10">
+            {/* Clean Segmented Tier Switcher */}
+            <div className="mb-5">
+              <div className="grid grid-cols-3 p-1 bg-[#141822] rounded-xl border border-white/[0.08]">
                 <button
                   type="button"
                   onClick={() => setSelectedPlan('starter')}
-                  className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all text-center flex flex-col items-center ${
+                  className={`py-2 px-1 rounded-lg text-xs font-medium transition-all text-center flex flex-col items-center justify-center ${
                     selectedPlan === 'starter'
-                      ? 'bg-zinc-800 text-white shadow-sm border border-white/20 font-bold'
-                      : 'text-zinc-400 hover:text-white'
+                      ? 'bg-zinc-800 text-white font-semibold shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  <span className="text-[11px] truncate">Starter</span>
-                  <span className="text-[9px] font-mono text-zinc-400">₦0 free</span>
+                  <span>Starter</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">₦0 free</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setSelectedPlan('professional')}
-                  className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all text-center flex flex-col items-center relative ${
+                  className={`py-2 px-1 rounded-lg text-xs font-medium transition-all text-center flex flex-col items-center justify-center ${
                     selectedPlan === 'professional'
-                      ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/25 font-bold'
-                      : 'text-zinc-400 hover:text-white'
+                      ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20'
+                      : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  <span className="text-[11px] flex items-center gap-0.5">
-                    <span>Professional</span>
-                  </span>
-                  <span className={`text-[9px] font-mono ${selectedPlan === 'professional' ? 'text-black/80 font-bold' : 'text-emerald-400'}`}>
+                  <span>Professional</span>
+                  <span className={`text-[10px] font-mono ${selectedPlan === 'professional' ? 'text-black/80 font-semibold' : 'text-emerald-400'}`}>
                     ₦15,000/mo
                   </span>
                 </button>
@@ -289,132 +263,109 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedPlan('enterprise')}
-                  className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all text-center flex flex-col items-center ${
+                  className={`py-2 px-1 rounded-lg text-xs font-medium transition-all text-center flex flex-col items-center justify-center ${
                     selectedPlan === 'enterprise'
-                      ? 'bg-teal-500 text-black shadow-md shadow-teal-500/25 font-bold'
-                      : 'text-zinc-400 hover:text-white'
+                      ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20'
+                      : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
-                  <span className="text-[11px] truncate">Enterprise</span>
-                  <span className={`text-[9px] font-mono ${selectedPlan === 'enterprise' ? 'text-black/80 font-bold' : 'text-teal-400'}`}>
+                  <span>Enterprise</span>
+                  <span className={`text-[10px] font-mono ${selectedPlan === 'enterprise' ? 'text-black/80 font-semibold' : 'text-zinc-400'}`}>
                     ₦50,000/mo
                   </span>
                 </button>
               </div>
             </div>
 
-            {/* Dynamic Plan Header & Context */}
-            <div className="text-center mb-5">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold mb-2 border shadow-sm ${planConfig.badgeColor}">
-                <Sparkles className="w-3 h-3 text-emerald-400" />
-                <span>{planConfig.badge}</span>
-              </div>
-              <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-white mb-1">
-                {planConfig.title}
-              </h3>
-              <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
-                {planConfig.subtitle}
-              </p>
-            </div>
-
             {errorMsg && (
-              <div className="w-full mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <div className="w-full mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{errorMsg}</span>
               </div>
             )}
 
-            {/* Form Inputs */}
-            <form onSubmit={handleSubmit} className="w-full space-y-3.5">
-              {/* Store Name */}
+            {/* Spacious, Single-Column Form */}
+            <form onSubmit={handleSubmit} className="w-full space-y-4">
+              {/* Store or Brand Name */}
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
-                  <Store className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Store or Brand Name</span>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Store or Brand Name (Optional)
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. The Sneaker Hub, Glam Hair Studio"
+                  placeholder="e.g. The Sneaker Hub, Glam Hair"
                   value={storeName}
                   onChange={(e) => setStoreName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#141720] border border-white/10 text-white placeholder-zinc-500 text-xs sm:text-sm focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#141822] border border-white/10 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-emerald-500/80 transition-colors"
                 />
               </div>
 
-              {/* Product Category Chips */}
+              {/* WhatsApp Phone Number */}
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5 flex items-center gap-1.5">
-                  <Tag className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>What do you sell on WhatsApp?</span>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  WhatsApp Phone Number <span className="text-emerald-400">*</span>
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                  {CATEGORIES.map((cat) => (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => setCategory(cat.id)}
-                      className={`px-2.5 py-2 rounded-xl text-[11px] font-medium border text-left flex items-center gap-1.5 transition-all ${
-                        category === cat.id
-                          ? 'bg-emerald-500/15 border-emerald-500/50 text-white font-semibold shadow-sm'
-                          : 'bg-[#141720]/60 border-white/[0.06] text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      <span>{cat.icon}</span>
-                      <span className="truncate">{cat.label}</span>
-                    </button>
-                  ))}
+                <input
+                  type="tel"
+                  required
+                  placeholder="+234 803 123 4567"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#141822] border border-white/10 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-emerald-500/80 transition-colors font-mono"
+                />
+              </div>
+
+              {/* Business Email */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Business Email Address <span className="text-emerald-400">*</span>
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="founder@yourstore.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#141822] border border-white/10 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-emerald-500/80 transition-colors"
+                />
+              </div>
+
+              {/* Clean Styled Category Select Dropdown */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  What do you sell on WhatsApp?
+                </label>
+                <div className="relative">
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full h-11 px-3.5 pr-10 rounded-xl bg-[#141822] border border-white/10 text-white text-sm focus:outline-none focus:border-emerald-500/80 transition-colors appearance-none cursor-pointer"
+                  >
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat.id} value={cat.id} className="bg-[#141822] text-white py-1">
+                        {cat.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 
-              {/* Phone & Email Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>WhatsApp Number</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+234 803 123 4567"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#141720] border border-white/10 text-white placeholder-zinc-500 text-xs sm:text-sm font-mono focus:outline-none focus:border-emerald-500 transition-colors"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Business Email</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="founder@yourstore.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#141720] border border-white/10 text-white placeholder-zinc-500 text-xs sm:text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Monthly Sales Volume */}
+              {/* Order Volume Minimal Radio Pills */}
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
-                  <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Estimated Monthly Orders</span>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Estimated Monthly Orders
                 </label>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-3 gap-2">
                   {ORDER_VOLUMES.map((vol) => (
                     <button
                       key={vol.id}
                       type="button"
                       onClick={() => setOrderVolume(vol.id)}
-                      className={`py-1.5 px-2 rounded-xl text-[11px] border text-center transition-all ${
+                      className={`py-2 px-1 rounded-xl text-xs font-medium border text-center transition-all ${
                         orderVolume === vol.id
-                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 font-semibold'
-                          : 'bg-[#141720]/60 border-white/[0.06] text-zinc-400 hover:text-zinc-200'
+                          ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-400 font-semibold'
+                          : 'bg-[#141822] border-white/[0.08] text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
                       {vol.label}
@@ -423,27 +374,38 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                 </div>
               </div>
 
-              {/* Dominant Primary Action */}
+              {/* Submit CTA */}
               <div className="pt-2">
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3.5 rounded-xl font-bold text-xs sm:text-sm text-black bg-emerald-400 hover:bg-emerald-300 transition-all flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(16,185,129,0.35)] disabled:opacity-50 active:scale-98"
+                  className="w-full h-12 rounded-xl font-bold text-sm text-black bg-[#10B981] hover:bg-[#059669] transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
                 >
                   {isLoading ? (
-                    <RefreshCw className="w-4 h-4 animate-spin text-black" />
+                    <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
                   ) : (
                     <>
-                      <span>{planConfig.buttonText}</span>
+                      <span>Claim Early Access Pass</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
                 </button>
               </div>
 
-              <div className="flex items-center justify-center gap-2 pt-1 text-[11px] text-zinc-500">
-                <Lock className="w-3 h-3 text-emerald-400" />
-                <span>Instant reservation • VIP pass dispatched directly to your email</span>
+              {/* Quiet Not Now button & Disclaimer */}
+              <div className="text-center pt-1 space-y-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  Not now
+                </button>
+
+                <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+                  <Lock className="w-3 h-3 text-emerald-500/70" />
+                  <span>Instant reservation • Invitation pass dispatched to your email</span>
+                </div>
               </div>
             </form>
           </div>
@@ -453,26 +415,25 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
         {step === 'success' && waitlistData && (
           <div className="flex flex-col items-center text-center py-2 animate-fadeIn">
             {/* VIP Access Badge */}
-            <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold mb-4 shadow-sm">
-              <Sparkles className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold mb-4">
               <span>LAGOS BATCH 1 RESERVED</span>
             </div>
 
-            {/* Huge Queue Number */}
-            <div className="text-5xl sm:text-6xl font-black text-white tracking-tight mb-2 font-mono">
+            {/* Queue Number */}
+            <div className="text-5xl font-black text-white tracking-tight mb-2 font-mono">
               #{waitlistData.position.toLocaleString()}
             </div>
 
-            <h3 className="text-xl font-bold text-white mb-1">
+            <h3 className="text-xl font-bold text-white mb-1.5">
               You're officially on the waitlist!
             </h3>
-            <p className="text-xs text-zinc-400 max-w-xs mb-6">
-              Your VIP onboarding ticket has been dispatched to{' '}
+            <p className="text-xs text-zinc-400 max-w-xs mb-6 leading-relaxed">
+              Your VIP onboarding pass has been dispatched to{' '}
               <strong className="text-zinc-200">{email}</strong>.
             </p>
 
             {/* Ticket Card Details */}
-            <div className="w-full bg-[#141720] rounded-2xl border border-white/10 p-4 mb-6 text-left space-y-2.5 text-xs">
+            <div className="w-full bg-[#141822] rounded-2xl border border-white/10 p-4 mb-5 text-left space-y-2.5 text-xs">
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
                 <span className="text-zinc-400">Reserved Tier:</span>
                 <span className="font-bold text-emerald-400 uppercase font-mono">
@@ -487,7 +448,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
               </div>
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
                 <span className="text-zinc-400">Product Category:</span>
-                <span className="capitalize text-zinc-300 font-medium">
+                <span className="text-zinc-300 font-medium">
                   {CATEGORIES.find((c) => c.id === category)?.label || category}
                 </span>
               </div>
@@ -497,8 +458,8 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
               </div>
             </div>
 
-            {/* Referral / Skip-the-line Link Box */}
-            <div className="w-full bg-[#08090C] rounded-2xl border border-white/10 p-3.5 mb-5 text-left">
+            {/* Referral Code Box */}
+            <div className="w-full bg-[#090B0F] rounded-2xl border border-white/10 p-3.5 mb-5 text-left">
               <div className="text-[10px] text-zinc-400 font-mono uppercase mb-1.5 flex items-center justify-between">
                 <span>Skip 50 spots per merchant referral:</span>
                 <span className="text-emerald-400 font-bold">{waitlistData.referralCode}</span>
@@ -532,7 +493,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
             {/* Share to WhatsApp Button */}
             <button
               onClick={handleShareWhatsApp}
-              className="w-full py-3.5 rounded-xl font-bold text-xs sm:text-sm text-black bg-[#25D366] hover:bg-[#20ba59] transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-98"
+              className="w-full h-12 rounded-xl font-bold text-xs sm:text-sm text-black bg-[#25D366] hover:bg-[#20ba59] transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.99] cursor-pointer"
             >
               <Share2 className="w-4 h-4 text-black" />
               <span>Share Pass with Merchants on WhatsApp</span>

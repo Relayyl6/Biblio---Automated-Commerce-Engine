@@ -277,7 +277,7 @@ export async function makeVendorProxyCall(params: OutboundVoiceCallRequest): Pro
   logger.log(`[VoiceService] Initiating proxy call on behalf of ${params.merchantName} to ${normalizedPhone} (Purpose: ${params.purpose})`);
 
   // 1. Check for Africa's Talking API key
-  const atApiKey = await getMerchantApiKey(params.merchantId, "africas_talking").catch(() => null);
+  const atApiKey = (await getMerchantApiKey(params.merchantId, "africas_talking").catch(() => null)) || process.env.AT_API_KEY;
   const atUsername = process.env.AT_USERNAME || "sandbox";
 
   // 2. Check for Twilio Credentials

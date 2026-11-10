@@ -6,7 +6,7 @@ export async function sendEscalationSms(toPhone: string, message: string, mercha
   try {
     logger.log(`[AfricasTalking] Preparing SMS to ${toPhone} for merchant ${merchantId || "default"}`);
 
-    const apiKey = await getMerchantApiKey(merchantId, "africas_talking");
+    const apiKey = (await getMerchantApiKey(merchantId, "africas_talking").catch(() => null)) || process.env.AT_API_KEY;
     const username = process.env.AT_USERNAME || "sandbox";
 
     if (!apiKey || apiKey === "dummy_key") {

@@ -43,7 +43,8 @@ export default async function handler(req: any, res: any) {
     },
   });
 
-  const position = 4218 + Math.floor(Math.random() * 30) + 1;
+  const baseOffset = parseInt(process.env.WAITLIST_OFFSET || '0', 10);
+  const position = baseOffset > 0 ? (baseOffset + 1) : 1;
   const referralCode = `BIBLIO-${position}`;
   const referralLink = `https://biblio.africa/join?ref=${referralCode}`;
 
