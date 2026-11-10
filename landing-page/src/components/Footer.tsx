@@ -3,7 +3,6 @@ import {
   ArrowRight,
   Sparkles,
   MessageCircle,
-  Zap,
 } from 'lucide-react';
 
 interface FooterProps {
@@ -61,8 +60,8 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             <div>
               {/* Brand Lockup */}
               <a href="#" className="flex items-center gap-2 group mb-3">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 flex items-center justify-center shadow-md shadow-emerald-500/25 border border-emerald-300/30 flex-shrink-0">
-                  <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-black fill-black" />
+                <div className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center flex-shrink-0">
+                  <img src="/biblio-logo.png" alt="Biblio Logo" className="w-full h-full object-contain" />
                 </div>
                 <div className="flex flex-col">
                   <div className="flex items-center">

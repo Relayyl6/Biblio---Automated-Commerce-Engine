@@ -293,7 +293,7 @@ export async function makeVendorProxyCall(params: OutboundVoiceCallRequest): Pro
         username: atUsername,
       });
 
-      const virtualNumber = process.env.AT_VIRTUAL_NUMBER || '+234700BIBLIO';
+      const virtualNumber = process.env.AT_VIRTUAL_NUMBER || '+254711082300';
       const response = await atClient.VOICE.call({
         callFrom: virtualNumber,
         callTo: [normalizedPhone],

@@ -1254,6 +1254,7 @@ export function VoiceCallSettingsPanel({ onSave }: { onSave: () => void }) {
 
   const [previewPurpose, setPreviewPurpose] = useState<'order_confirmation' | 'payment_reminder' | 'delivery_coordination'>('order_confirmation');
   const [previewScript, setPreviewScript] = useState<string>('');
+  const [testPhone, setTestPhone] = useState('09064982841');
   const [simulating, setSimulating] = useState(false);
 
   useEffect(() => {
@@ -1304,25 +1305,33 @@ export function VoiceCallSettingsPanel({ onSave }: { onSave: () => void }) {
     }
   };
 
-  const handleSimulateCall = async () => {
+  const handleLiveVoiceTestCall = async () => {
+    const cleanNumber = testPhone.trim();
+    if (!cleanNumber) {
+      alert.error('Phone Required', 'Please enter a destination phone number for the test call.');
+      return;
+    }
     setSimulating(true);
     try {
       const res = await triggerCall.mutateAsync({
         merchantId,
-        toPhone: '08012345678',
+        toPhone: cleanNumber,
         purpose: previewPurpose,
         orderTotal: 25000,
         deliveryAddress: 'Victoria Island, Lagos',
-        forceImmediate: approvalMode === 'fully_autonomous',
+        forceImmediate: true,
       });
-      if (res?.action === 'queued_for_approval') {
-        alert.info('Call Queued with Script Preview', 'A call draft has been placed in your approval queue. Review the exact speech below and tap "Approve & Call"!');
+      if (res?.action === 'dialed_immediately' || res?.callRecord) {
+        const prov = res.callRecord?.provider === 'africas_talking' ? "Africa's Talking Voice" : res.callRecord?.provider || 'Voice';
+        alert.success('Real Call Dispatched', `Outbound voice call placed to ${cleanNumber} via ${prov}. Call ID: ${res.callRecord?.callId || 'active'}`);
+      } else if (res?.action === 'queued_for_approval') {
+        alert.info('Call Queued with Script Preview', 'A call draft has been placed in your approval queue.');
         refetchQueue();
       } else {
-        alert.success('Call Dialed (Simulator)', 'Outbound voice call placed. Customer hears speech prompt.');
+        alert.success('Call Dispatched', `Outbound voice call placed to ${cleanNumber}.`);
       }
     } catch (e: any) {
-      alert.error('Call Error', e.message);
+      alert.error('Call Error', e.message || 'Failed to place real test call.');
     } finally {
       setSimulating(false);
     }
@@ -1558,27 +1567,48 @@ export function VoiceCallSettingsPanel({ onSave }: { onSave: () => void }) {
             </View>
           </View>
 
-          <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed italic">
+          <Text style={{ color: c.textSecondary }} className="text-xs leading-relaxed italic mb-3">
             &ldquo;{previewScript || 'Loading spoken prompt preview...'}&rdquo;
           </Text>
 
-          <Pressable
-            onPress={handleSimulateCall}
-            disabled={simulating}
-            style={{ backgroundColor: c.accent }}
-            className="mt-3 py-2 rounded-lg flex-row items-center justify-center active:opacity-85"
-          >
-            {simulating ? (
-              <InlineLoadingDots color="#FFFFFF" />
-            ) : (
-              <>
-                <Play size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text className="text-white text-xs font-bold">
-                  {approvalMode === 'require_approval' ? 'Test Call (Queue Draft)' : 'Test Call (Simulate Live Dial)'}
-                </Text>
-              </>
-            )}
-          </Pressable>
+          {/* Real Phone Input for Live Voice Testing */}
+          <View className="pt-2 border-t" style={{ borderColor: c.border }}>
+            <Text style={{ color: c.textSecondary }} className="text-[11px] font-semibold mb-1">
+              Destination Phone for Real Outbound Call:
+            </Text>
+            <View
+              style={{ backgroundColor: isDark ? '#141A18' : '#FFFFFF', borderColor: c.border }}
+              className="px-3 py-2 rounded-xl border flex-row items-center mb-2.5"
+            >
+              <PhoneOutgoing size={14} color="#10B981" style={{ marginRight: 8 }} />
+              <TextInput
+                value={testPhone}
+                onChangeText={setTestPhone}
+                placeholder="09064982841"
+                placeholderTextColor={c.textTertiary}
+                keyboardType="phone-pad"
+                style={{ color: c.textPrimary, flex: 1, fontSize: 13, padding: 0 }}
+              />
+            </View>
+
+            <Pressable
+              onPress={handleLiveVoiceTestCall}
+              disabled={simulating}
+              style={{ backgroundColor: '#10B981' }}
+              className="py-2.5 rounded-xl flex-row items-center justify-center active:opacity-85 shadow-sm"
+            >
+              {simulating ? (
+                <InlineLoadingDots color="#FFFFFF" />
+              ) : (
+                <>
+                  <PhoneCall size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text className="text-white text-xs font-bold">
+                    Place Real Test Call (Africa's Talking Voice)
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
 

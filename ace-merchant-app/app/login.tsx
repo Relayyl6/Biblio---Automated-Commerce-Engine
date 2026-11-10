@@ -407,10 +407,10 @@ export default function LoginScreen() {
             className="items-center mb-6"
           >
             <Animated.View
-              style={[pulseStyle, { backgroundColor: c.accentSoft, borderColor: c.accent }]}
-              className="w-16 h-16 rounded-2xl items-center justify-center mb-3 border shadow-sm"
+              style={[pulseStyle]}
+              className="w-20 h-20 items-center justify-center mb-2.5"
             >
-              <MessageCircle color={c.accent} size={32} strokeWidth={2.2} />
+              <Image source={require('../assets/logo.png')} style={{ width: 68, height: 68 }} resizeMode="contain" />
             </Animated.View>
             <Text style={{ color: c.textPrimary }} className="text-2xl font-black tracking-tight">
               Biblio

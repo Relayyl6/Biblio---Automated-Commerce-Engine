@@ -565,11 +565,8 @@ export default function BiblioAssistantScreen() {
             </Pressable>
 
             <View className="flex-row items-center gap-2.5">
-              <View
-                style={{ backgroundColor: c.accent }}
-                className="w-9 h-9 rounded-full items-center justify-center shadow-sm"
-              >
-                <Bot size={18} color="#FFFFFF" />
+              <View className="w-9 h-9 rounded-full items-center justify-center overflow-hidden">
+                <Image source={require('../assets/logo.png')} style={{ width: 34, height: 34 }} resizeMode="contain" />
               </View>
               <View>
                 <View className="flex-row items-center gap-1.5">
@@ -1036,11 +1033,8 @@ export default function BiblioAssistantScreen() {
               >
                 {/* Agent Avatar */}
                 {isAgent && (
-                  <View
-                    style={{ backgroundColor: c.accent }}
-                    className="w-8 h-8 rounded-full items-center justify-center mr-2 self-start mt-1 shadow-sm"
-                  >
-                    <Bot size={16} color="#FFFFFF" />
+                  <View className="w-8 h-8 rounded-full items-center justify-center mr-2 self-start mt-1 overflow-hidden">
+                    <Image source={require('../assets/logo.png')} style={{ width: 28, height: 28 }} resizeMode="contain" />
                   </View>
                 )}
 

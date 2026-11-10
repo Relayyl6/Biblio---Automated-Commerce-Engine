@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Menu, X, ArrowRight, ChevronRight, Zap } from 'lucide-react';
+import { Menu, X, ArrowRight, ChevronRight } from 'lucide-react';
 
 interface NavbarProps {
   onOpenWaitlist: () => void;
@@ -23,8 +23,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenWaitlist }) => {
         <nav className="w-full bg-[#0C0E14]/95 backdrop-blur-2xl border border-white/10 shadow-[0_12px_40px_rgba(0,0,0,0.7)] rounded-full px-3.5 sm:px-6 py-2 sm:py-2.5 flex items-center justify-between">
           {/* Brand Mark */}
           <a href="#" className="flex items-center gap-2 group flex-shrink-0">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 flex items-center justify-center shadow-md shadow-emerald-500/25 border border-emerald-300/30 flex-shrink-0">
-              <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-black fill-black" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center flex-shrink-0">
+              <img src="/biblio-logo.png" alt="Biblio Logo" className="w-full h-full object-contain" />
             </div>
             <div className="flex flex-col">
               <div className="flex items-center">
