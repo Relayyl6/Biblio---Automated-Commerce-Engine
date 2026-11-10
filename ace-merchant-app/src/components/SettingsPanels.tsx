@@ -1321,9 +1321,15 @@ export function VoiceCallSettingsPanel({ onSave }: { onSave: () => void }) {
         deliveryAddress: 'Victoria Island, Lagos',
         forceImmediate: true,
       });
-      if (res?.action === 'dialed_immediately' || res?.callRecord) {
-        const prov = res.callRecord?.provider === 'africas_talking' ? "Africa's Talking Voice" : res.callRecord?.provider || 'Voice';
-        alert.success('Real Call Dispatched', `Outbound voice call placed to ${cleanNumber} via ${prov}. Call ID: ${res.callRecord?.callId || 'active'}`);
+      const callRec = res?.call || res?.callRecord;
+      if (res?.action === 'dialed_immediately' || callRec) {
+        if (callRec?.provider === 'africas_talking') {
+          alert.success('Real Outbound Call Dispatched', `Africa's Talking Voice placed live call to ${cleanNumber}. Status: ${callRec?.status || 'in-progress'}`);
+        } else if (callRec?.provider === 'sandbox_simulator') {
+          alert.info('Voice Call Simulated', `Autonomous voice call simulated for ${cleanNumber}. Note: To enable live carrier phone ringing in Nigeria, configure a virtual phone number under Voice -> Phone Numbers in your Africa's Talking dashboard.`);
+        } else {
+          alert.success('Call Dispatched', `Outbound voice call placed to ${cleanNumber} via ${callRec?.provider || 'Voice'}.`);
+        }
       } else if (res?.action === 'queued_for_approval') {
         alert.info('Call Queued with Script Preview', 'A call draft has been placed in your approval queue.');
         refetchQueue();

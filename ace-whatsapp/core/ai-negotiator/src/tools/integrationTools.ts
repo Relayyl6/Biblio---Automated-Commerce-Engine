@@ -219,7 +219,8 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
       
       const response = await sms.send({
         to: [formattedPhone],
-        message: message
+        message: message,
+        enqueue: true
       });
       
       await logger.log(`SMS fallback sent via AT`, { response });

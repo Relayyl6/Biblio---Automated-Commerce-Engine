@@ -161,7 +161,8 @@ export class VendorCommuniqueEngine {
       
       const response = await sms.send({
         to: [formattedPhone],
-        message: text
+        message: text,
+        enqueue: true
       });
       
       await logger.log(`[VendorCommunique] SMS sent successfully:`, { merchantId, response });

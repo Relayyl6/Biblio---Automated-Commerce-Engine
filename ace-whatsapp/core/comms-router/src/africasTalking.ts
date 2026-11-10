@@ -26,6 +26,7 @@ export async function sendEscalationSms(toPhone: string, message: string, mercha
     const options = {
       to: [toPhone],
       message,
+      enqueue: true,
     };
 
     const response = await atClient.SMS.send(options);

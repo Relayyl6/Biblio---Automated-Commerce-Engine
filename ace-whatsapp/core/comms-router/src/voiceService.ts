@@ -300,6 +300,9 @@ export async function makeVendorProxyCall(params: OutboundVoiceCallRequest): Pro
       });
 
       logger.log(`[VoiceService] Africa's Talking Voice call dispatched:`, response);
+      if (response && response.errorMessage && response.errorMessage !== "None") {
+        throw new Error(`Africa's Talking Voice error: ${response.errorMessage}`);
+      }
 
       const record: VoiceCallRecord = {
         callId,
