@@ -402,23 +402,25 @@ export default function LoginScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View className="flex-1 px-6 pt-2 pb-8">
-          {/* Logo Brand Header */}
+          {/* Logo Brand Header - Side by Side with text-start */}
           <Animated.View
             entering={FadeInDown.duration(400).springify()}
-            className="items-center mb-6"
+            className="flex-row items-center justify-center mb-6"
           >
             <Animated.View
               style={[pulseStyle]}
-              className="w-20 h-20 items-center justify-center mb-2.5"
+              className="w-16 h-16 items-center justify-center mr-3.5"
             >
-              <Image source={require('../assets/logo.png')} style={{ width: 68, height: 68 }} resizeMode="contain" />
+              <Image source={require('../assets/logo.png')} style={{ width: 56, height: 56 }} resizeMode="contain" />
             </Animated.View>
-            <Text style={{ color: c.textPrimary }} className="text-2xl font-black tracking-tight">
-              Biblio
-            </Text>
-            <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
-              Autonomous Commerce Engine
-            </Text>
+            <View className="items-start">
+              <Text style={{ color: c.textPrimary }} className="text-2xl font-black tracking-tight text-left">
+                Biblio
+              </Text>
+              <Text style={{ color: c.textSecondary }} className="text-xs font-semibold mt-0.5 text-left">
+                Autonomous Commerce Engine
+              </Text>
+            </View>
           </Animated.View>
 
           {/* ── Main Form Card ── */}

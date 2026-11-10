@@ -1,3 +1,4 @@
+import React, { useState } from 'react';
 import { ClerkProvider } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
 import '../global.css';
@@ -15,6 +16,7 @@ import { useThemeSync } from '../src/hooks/useThemeSync';
 import { useAuthGate } from '../src/hooks/useAuthGate';
 import { GlobalAlertModal } from '../src/components/GlobalAlertModal';
 import { BentoGridSkeleton } from '../src/components/PulsingSkeleton';
+import { AnimatedSplashScreen } from '../src/components/AnimatedSplashScreen';
 import { colors } from '../theme';
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || "pk_test_placeholder_key_for_offline_runtime";
@@ -65,13 +67,13 @@ function RootNavigator() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
-
-  if (!isReady) return <BootSplash />;
+  const [splashFinished, setSplashFinished] = useState(false);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <Stack
+      {isReady && (
+        <Stack
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: c.bg },
@@ -95,6 +97,13 @@ function RootNavigator() {
         <Stack.Screen name="tokens" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack>
+      )}
+      {!splashFinished && (
+        <AnimatedSplashScreen
+          isReady={isReady}
+          onAnimationFinish={() => setSplashFinished(true)}
+        />
+      )}
       <GlobalAlertModal />
     </View>
   );
