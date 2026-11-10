@@ -2,17 +2,27 @@ import React, { useState } from 'react';
 import { Check, ArrowRight, Sparkles } from 'lucide-react';
 
 interface PricingProps {
-  onOpenWaitlist: () => void;
+  onOpenWaitlist: (planId?: 'starter' | 'professional' | 'enterprise') => void;
 }
 
 export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
 
-  const plans = [
+  const plans: {
+    id: 'starter' | 'professional' | 'enterprise';
+    name: string;
+    tagline: string;
+    price: number;
+    isPopular?: boolean;
+    badge?: string;
+    features: string[];
+    ctaText: string;
+  }[] = [
     {
+      id: 'starter',
       name: 'Starter Plan',
       tagline: 'For vendors testing automated sales.',
-      price: billingCycle === 'monthly' ? 0 : 0,
+      price: 0,
       features: [
         '50 automated orders/mo',
         'Pidgin & English negotiation',
@@ -23,6 +33,7 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
       ctaText: 'Join Free Waitlist',
     },
     {
+      id: 'professional',
       name: 'Professional Plan',
       tagline: 'For boutiques, hair vendors, and fashion brands.',
       price: billingCycle === 'monthly' ? 15000 : 12000,
@@ -39,6 +50,7 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
       ctaText: 'Reserve Priority Spot',
     },
     {
+      id: 'enterprise',
       name: 'Enterprise Plan',
       tagline: 'For wholesalers and merchant networks.',
       price: billingCycle === 'monthly' ? 50000 : 40000,
@@ -105,9 +117,9 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
 
         {/* Pricing Cards */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-stretch">
-          {plans.map((plan, idx) => (
+          {plans.map((plan) => (
             <div
-              key={idx}
+              key={plan.id}
               className={`rounded-2xl sm:rounded-3xl p-5 sm:p-8 flex flex-col justify-between transition-all duration-200 relative ${
                 plan.isPopular
                   ? 'bg-gradient-to-b from-[#141822] to-[#0D1017] text-white border-2 border-emerald-500/50 shadow-2xl z-10'
@@ -139,14 +151,10 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
                   </div>
                 </div>
 
-                <div className="space-y-2.5 pt-6 border-t border-white/[0.08] mb-8">
+                <div className="space-y-3 mb-8 text-xs border-t border-white/[0.06] pt-6">
                   {plan.features.map((feat, fIdx) => (
-                    <div key={fIdx} className="flex items-center gap-2.5 text-xs">
-                      <div
-                        className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${
-                          plan.isPopular ? 'bg-emerald-400 text-black' : 'bg-white/10 text-emerald-400'
-                        }`}
-                      >
+                    <div key={fIdx} className="flex items-start gap-2.5">
+                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0 mt-0.5">
                         <Check className="w-2.5 h-2.5" />
                       </div>
                       <span className="text-zinc-300">
@@ -158,10 +166,10 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
               </div>
 
               <button
-                onClick={onOpenWaitlist}
-                className={`w-full py-3.5 rounded-full font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
+                onClick={() => onOpenWaitlist(plan.id)}
+                className={`w-full py-3.5 rounded-full font-bold text-xs transition-all flex items-center justify-center gap-1.5 active:scale-98 ${
                   plan.isPopular
-                    ? 'bg-emerald-400 hover:bg-emerald-300 text-black shadow-md'
+                    ? 'bg-emerald-400 hover:bg-emerald-300 text-black shadow-md shadow-emerald-400/20'
                     : 'bg-white/[0.06] hover:bg-white/[0.1] text-white border border-white/10'
                 }`}
               >

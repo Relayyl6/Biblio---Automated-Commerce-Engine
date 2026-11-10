@@ -3260,12 +3260,16 @@ async function dispatchWaitlistEmails(entry: any, totalCount: number, log: any) 
   // 1. Email to Developer/Owner (Realtime lead alert)
   try {
     const waLink = entry.phone ? `https://wa.me/${entry.phone.replace(/\D/g, '')}` : null;
+    const planDisplay = (entry.plan || 'PROFESSIONAL').toUpperCase();
     await transporter.sendMail({
       from: fromAddress,
       to: ownerAddress,
-      subject: `🔔 New Biblio Waitlist Signup: ${entry.storeName || 'Merchant'} (#${entry.position})`,
+      subject: `🔔 New Biblio Waitlist Signup: ${entry.storeName || 'Merchant'} [${planDisplay} PLAN] (#${entry.position})`,
       text: `New Waitlist Signup:
+Plan: ${planDisplay}
 Store: ${entry.storeName || 'N/A'}
+Category: ${entry.category || 'N/A'}
+Volume: ${entry.volume || 'N/A'}
 Phone: ${entry.phone || 'N/A'}
 Email: ${entry.email}
 Position: #${entry.position}
@@ -3274,13 +3278,16 @@ Total Waitlist: ${totalCount} merchants
 WhatsApp: ${waLink || 'No phone'}`,
       html: `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:20px auto;background:#0d0f14;color:#f8fafc;padding:32px;border-radius:20px;border:1px solid #1e293b;">
-          <div style="color:#10b981;font-size:12px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">🚀 New Waitlist Signup</div>
+          <div style="color:#10b981;font-size:12px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">🚀 New Waitlist Signup • ${planDisplay} PLAN</div>
           <h2 style="color:#ffffff;margin-top:0;font-size:24px;">${entry.storeName || 'New Merchant'} reserved a spot!</h2>
           <div style="background:#161b22;padding:20px;border-radius:14px;border:1px solid #30363d;margin:20px 0;">
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Waitlist Position:</strong> <span style="color:#10b981;font-weight:bold;font-size:16px;">#${entry.position}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Selected Plan:</strong> <span style="color:#10b981;font-weight:bold;">${planDisplay} PLAN</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Store / Brand:</strong> <span style="color:#ffffff;">${entry.storeName || 'Lagos Social Store'}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Category:</strong> <span style="color:#ffffff;">${entry.category || 'General'}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Monthly Orders:</strong> <span style="color:#ffffff;">${entry.volume || 'N/A'}</span></p>
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Email Address:</strong> <a href="mailto:${entry.email}" style="color:#38bdf8;">${entry.email}</a></p>
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>WhatsApp Phone:</strong> <span style="color:#ffffff;font-family:monospace;">${entry.phone || 'Not provided'}</span></p>
-            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Store Name:</strong> <span style="color:#ffffff;">${entry.storeName || 'Lagos Social Store'}</span></p>
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Timestamp:</strong> <span style="color:#64748b;font-size:12px;">${entry.createdAt}</span></p>
           </div>
           ${waLink ? `
@@ -3358,13 +3365,15 @@ We will notify you the moment your WhatsApp store autopilot engine is ready for 
 }
 
 app.post('/waitlist', async (req, reply) => {
-  const { phone, email, storeName, handle, category, dialect } = (req.body || {}) as {
+  const { phone, email, storeName, handle, category, dialect, plan, volume } = (req.body || {}) as {
     phone?: string;
     email?: string;
     storeName?: string;
     handle?: string;
     category?: string;
     dialect?: string;
+    plan?: string;
+    volume?: string;
   };
 
   const cleanEmail = email ? email.trim().toLowerCase() : null;
@@ -3399,6 +3408,9 @@ app.post('/waitlist', async (req, reply) => {
     if (cleanEmail) entry.email = cleanEmail;
     if (storeName) entry.storeName = storeName;
     if (handle) entry.handle = handle;
+    if (plan) entry.plan = plan;
+    if (category) entry.category = category;
+    if (volume) entry.volume = volume;
     entry.updatedAt = new Date().toISOString();
   } else {
     // Create new entry
@@ -3410,7 +3422,9 @@ app.post('/waitlist', async (req, reply) => {
       phone: cleanPhone || null,
       storeName: storeName || 'Lagos Social Store',
       handle: handle ? handle.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() : null,
+      plan: plan || 'professional',
       category: category || 'general',
+      volume: volume || null,
       dialect: dialect || 'pidgin_english',
       queueNumber,
       position: queuePos,

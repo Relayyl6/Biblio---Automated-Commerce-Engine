@@ -1,13 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  ShieldCheck,
   ArrowRight,
   Sparkles,
-  Lock,
-  Globe,
-  Radio,
-  ExternalLink,
   MessageCircle,
+  Zap,
 } from 'lucide-react';
 
 interface FooterProps {
@@ -15,310 +11,209 @@ interface FooterProps {
 }
 
 export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
-  const [footerPhone, setFooterPhone] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (onOpenWaitlist) {
-      onOpenWaitlist(footerPhone);
-    }
-  };
-
   return (
     <footer className="relative bg-[#050608] text-zinc-400 border-t border-white/[0.08] overflow-hidden w-full max-w-[100vw]">
-      {/* Top ambient aura */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[300px] bg-emerald-500/[0.03] blur-[150px] pointer-events-none rounded-full" />
-      <div className="absolute inset-0 apple-subtle-grid opacity-25 pointer-events-none" />
+      {/* Top subtle ambient glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[250px] bg-emerald-500/[0.04] blur-[140px] pointer-events-none rounded-full" />
+      <div className="absolute inset-0 apple-subtle-grid opacity-20 pointer-events-none" />
 
-      <div className="relative max-w-7xl mx-auto px-3.5 sm:px-6 pt-10 sm:pt-20 pb-12">
-        {/* Top Pre-Footer Callout Card (Apple/Linear Style) */}
-        <div className="rounded-2xl sm:rounded-3xl apple-card p-5 sm:p-12 mb-10 sm:mb-20 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
-          <div className="relative z-10 max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[10px] sm:text-xs mb-3 sm:mb-4">
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-12 sm:pt-20 pb-12">
+        {/* Pre-Footer Callout Card: Minimalist Linear / Apple High-Craft Aesthetic */}
+        <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-12 mb-12 sm:mb-16 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
+          <div className="relative z-10 max-w-2xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[11px] mb-3 sm:mb-4">
               <Sparkles className="w-3.5 h-3.5" />
               <span>BATCH 1 NOW OPEN • 80 SPOTS REMAINING</span>
             </div>
-            <h3 className="text-xl sm:text-3xl lg:text-5xl font-black text-white tracking-tight leading-tight mb-2.5 sm:mb-4">
-              Ready to put your WhatsApp store on autopilot?
+
+            <h3 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight mb-3">
+              Ready to automate your WhatsApp sales?
             </h3>
-            <p className="text-zinc-400 text-xs sm:text-base leading-relaxed mb-6 sm:mb-8 max-w-xl">
-              Lock in your store handle before Batch 1 closes. Defend your profit floor and close sales on autopilot.
+            
+            <p className="text-zinc-400 text-xs sm:text-base leading-relaxed mb-6 sm:mb-8 max-w-lg">
+              Join 4,200+ Nigerian merchants closing deals 24/7 without fake transfer alerts, haggling stress, or missed DMs.
             </p>
 
-            {/* Inline Fast Waitlist Form */}
-            <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 max-w-md">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Enter WhatsApp number or email..."
-                  value={footerPhone}
-                  onChange={(e) => setFooterPhone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-full bg-black/60 border border-white/15 text-white placeholder-zinc-500 text-xs sm:text-sm font-mono focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors shadow-inner"
-                />
-              </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <button
-                type="submit"
-                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 sm:px-6 sm:py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-[1.02] active:scale-[0.98] flex-shrink-0"
+                type="button"
+                onClick={() => onOpenWaitlist && onOpenWaitlist()}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-black font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-400/25 active:scale-98"
               >
-                <span>Claim Handle</span>
-                <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span>Join Batch 1 Waitlist</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
-            </form>
 
-            <div className="flex items-center gap-2 mt-3 sm:mt-4 text-[10px] sm:text-[11px] text-zinc-500 font-mono">
-              <Lock className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-              <span>Instant VIP pass delivery via email • No setup fee</span>
+              <a
+                href="#simulator"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-white/[0.05] hover:bg-white/10 text-white font-semibold text-xs sm:text-sm border border-white/10 transition-colors"
+              >
+                <span>Try Interactive Demo</span>
+              </a>
             </div>
           </div>
         </div>
 
-        {/* 5-Column Navigation Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-8 sm:gap-10 pb-16 border-b border-white/[0.08]">
-          
-          {/* Col 1: Product */}
-          <div>
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-4">
-              Product & Agent
+        {/* Clean, Human 4-Column Navigation Layout */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08]">
+          {/* Brand & Location Column (Span 5 on Desktop) */}
+          <div className="md:col-span-5 flex flex-col justify-between">
+            <div>
+              {/* Brand Lockup */}
+              <a href="#" className="flex items-center gap-2 group mb-3">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 flex items-center justify-center shadow-md shadow-emerald-500/25 border border-emerald-300/30 flex-shrink-0">
+                  <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-black fill-black" />
+                </div>
+                <div className="flex flex-col">
+                  <div className="flex items-center">
+                    <span className="font-extrabold text-base tracking-tight text-white leading-none">
+                      Biblio
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-400 align-super ml-0.5 leading-none">
+                      ™
+                    </span>
+                  </div>
+                  <span className="text-[9px] font-mono font-medium text-emerald-400/80 tracking-wide uppercase mt-0.5">
+                    Live-in Business Agent
+                  </span>
+                </div>
+              </a>
+
+              <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed max-w-sm mb-5">
+                Autonomous commerce infrastructure built for Nigerian social sellers. Negotiates in natural Pidgin, locks Paystack escrow, and coordinates riders.
+              </p>
+
+              {/* Direct WhatsApp Contact Button */}
+              <div className="mb-4">
+                <a
+                  href="https://wa.me/2349064982841"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs text-emerald-400 hover:text-emerald-300 transition-all group"
+                >
+                  <MessageCircle className="w-4 h-4 text-emerald-400 group-hover:scale-105 transition-transform" />
+                  <span className="font-medium">Chat directly with our team on WhatsApp</span>
+                  <span className="text-zinc-500 group-hover:translate-x-0.5 transition-transform">→</span>
+                </a>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-zinc-500 font-mono">
+              Yaba, Lagos, Nigeria
+            </div>
+          </div>
+
+          {/* Col 2: Product (Span 2) */}
+          <div className="md:col-span-2 col-span-1">
+            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+              Product
             </h4>
-            <ul className="space-y-2.5 text-xs">
+            <ul className="space-y-2 text-xs">
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Autonomous Negotiator
+                  Pidgin Haggling
                 </a>
               </li>
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Whisper Voice Parser
+                  Voice Note Orders
                 </a>
               </li>
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Paystack VAN Escrow
+                  Paystack Escrow
                 </a>
               </li>
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Kwik & Gokada Dispatch
+                  Rider Dispatch
                 </a>
               </li>
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  WhatsApp Status Stories
+                  Status Stories
                 </a>
               </li>
               <li>
-                <a href="#simulator" className="hover:text-emerald-400 transition-colors flex items-center gap-1 text-emerald-400 font-medium">
-                  <span>Interactive Simulator</span>
-                  <ArrowRight className="w-3 h-3" />
+                <a href="#simulator" className="hover:text-emerald-400 transition-colors text-emerald-400 font-medium">
+                  Interactive Demo →
                 </a>
               </li>
             </ul>
           </div>
 
-          {/* Col 2: Platform & Engine */}
-          <div>
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-4">
-              Platform & Arch
+          {/* Col 3: Platform (Span 2) */}
+          <div className="md:col-span-2 col-span-1">
+            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+              Platform
             </h4>
-            <ul className="space-y-2.5 text-xs">
+            <ul className="space-y-2 text-xs">
               <li>
                 <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                  Groq Llama-3 70B Engine
+                  How It Works
                 </a>
               </li>
-              <li>
-                <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                  Multi-Dialect Pidgin NLP
-                </a>
-              </li>
-              <li>
-                <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                  6-Layer Safety Veto
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Floor Margin Guardrail
-                </a>
-              </li>
-              <li>
-                <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                  Multi-Agent Team Swarm
-                </a>
-              </li>
-              <li>
-                <span className="text-zinc-600 font-mono text-[11px] block pt-1">
-                  API & SDK (Coming Q1)
-                </span>
-              </li>
-            </ul>
-          </div>
-
-          {/* Col 3: Integrations */}
-          <div>
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-4">
-              Integrations
-            </h4>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <a href="https://paystack.com" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  Paystack Dynamic VAN
-                  <ExternalLink className="w-2.5 h-2.5 text-zinc-600" />
-                </a>
-              </li>
-              <li>
-                <a href="https://business.whatsapp.com" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  Meta WhatsApp Cloud
-                  <ExternalLink className="w-2.5 h-2.5 text-zinc-600" />
-                </a>
-              </li>
-              <li>
-                <a href="https://kwik.delivery" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  Kwik Delivery Fleet
-                  <ExternalLink className="w-2.5 h-2.5 text-zinc-600" />
-                </a>
-              </li>
-              <li>
-                <a href="https://gokada.ng" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  Gokada Dispatch
-                  <ExternalLink className="w-2.5 h-2.5 text-zinc-600" />
-                </a>
-              </li>
-              <li>
-                <a href="https://groq.com" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  Groq Inference Engine
-                  <ExternalLink className="w-2.5 h-2.5 text-zinc-600" />
-                </a>
-              </li>
-              <li>
-                <span className="text-zinc-600">Wema Bank NIBSS</span>
-              </li>
-            </ul>
-          </div>
-
-          {/* Col 4: Trust & Compliance */}
-          <div>
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-4">
-              Trust & Regulatory
-            </h4>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Privacy Policy (NDPA 2023)
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Merchant Terms of Service
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Apple App Store 5.1.1(v) Notice
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Anti-Fraud Security Policy
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Escrow Settlement SLA
-                </a>
-              </li>
-              <li>
-                <span className="text-[11px] font-mono text-zinc-500 block pt-1">
-                  DPO: compliance@biblio.africa
-                </span>
-              </li>
-            </ul>
-          </div>
-
-          {/* Col 5: Company & Lagos Hub */}
-          <div className="col-span-2 md:col-span-1">
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-4">
-              Company & Lagos Hub
-            </h4>
-            <ul className="space-y-2.5 text-xs">
               <li>
                 <a href="#pricing" className="hover:text-emerald-400 transition-colors">
-                  About Biblio Technologies
+                  Pricing & Plans
                 </a>
               </li>
               <li>
-                <span className="text-zinc-400">
-                  Yaba Innovation Hub, Lagos, Nigeria
-                </span>
-              </li>
-              <li>
-                <a href="#pricing" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1">
-                  <span>Careers</span>
-                  <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold">
-                    WE'RE HIRING
-                  </span>
+                <a href="#features" className="hover:text-emerald-400 transition-colors">
+                  Margin Protection
                 </a>
               </li>
               <li>
-                <a href="https://wa.me/2348000000000" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors inline-flex items-center gap-1 text-emerald-400 font-semibold">
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  <span>Chat With Founder on WhatsApp</span>
+                <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                  Merchant FAQ
                 </a>
               </li>
             </ul>
           </div>
 
+          {/* Col 4: Trust & Support (Span 3) */}
+          <div className="md:col-span-3 col-span-1">
+            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+              Trust & Support
+            </h4>
+            <ul className="space-y-2 text-xs">
+              <li>
+                <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                  Privacy Policy
+                </a>
+              </li>
+              <li>
+                <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                  Terms of Service
+                </a>
+              </li>
+              <li>
+                <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                  Escrow Guarantee
+                </a>
+              </li>
+              <li>
+                <a href="mailto:support@biblio.africa" className="hover:text-emerald-400 transition-colors">
+                  support@biblio.africa
+                </a>
+              </li>
+            </ul>
+          </div>
         </div>
 
-        {/* Telemetry Status Ribbon & Statutory Bar */}
-        <div className="py-8 border-b border-white/[0.08] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs font-mono">
-          {/* Live Telemetry Indicator */}
-          <div className="flex items-center gap-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
-              <Radio className="w-3 h-3 animate-pulse" />
-              <span>99.98% ALL SYSTEMS OPERATIONAL</span>
-            </div>
-            <span className="text-zinc-600 hidden sm:inline">•</span>
-            <span className="text-zinc-500 hidden sm:inline">
-              Groq Llama-3 (380ms) • Paystack Webhook (Active)
-            </span>
-          </div>
-
-          {/* Country & Currency Selector */}
-          <div className="flex items-center gap-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-zinc-300 text-xs">
-              <Globe className="w-3.5 h-3.5 text-zinc-400" />
-              <span>🇳🇬 Nigeria • NGN (₦)</span>
-            </div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-zinc-400 text-xs">
-              <span>WAT (UTC+1)</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Statutory & Brand Strip */}
-        <div className="pt-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 text-xs text-zinc-500">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl overflow-hidden bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-              <img src="/biblio-logo.png" alt="Biblio" className="w-full h-full object-cover" />
-            </div>
-            <div>
-              <div className="text-zinc-300 font-bold">
-                Biblio Technologies Ltd. <span className="text-zinc-600 text-[11px] font-mono font-normal">RC: 1984210</span>
-              </div>
-              <div className="text-[11px] text-zinc-500">
-                Automate. Sell. Grow. Designed with pride for African Commerce.
-              </div>
-            </div>
-          </div>
-
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900/80 border border-white/[0.08] text-[11px] text-emerald-400 font-mono">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            <span>NDPA 2023 Statutory Registered Data Controller</span>
-          </div>
-
-          <div className="text-zinc-500 text-[11px] font-mono">
+        {/* Minimalist Bottom Bar */}
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
+          <div>
             © {new Date().getFullYear()} Biblio Technologies Ltd. All rights reserved.
+          </div>
+
+          <div className="text-[11px] text-zinc-500">
+            Built with pride in Lagos, Nigeria 🇳🇬
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-[11px] font-mono text-zinc-400">All Systems Operational</span>
           </div>
         </div>
       </div>

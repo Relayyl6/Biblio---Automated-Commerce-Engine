@@ -18,9 +18,12 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const { email, phone, storeName } = req.body || {};
+  const { email, phone, storeName, plan, category, volume } = req.body || {};
   const cleanEmail = email ? String(email).trim().toLowerCase() : null;
   const cleanPhone = phone ? String(phone).trim() : null;
+  const cleanPlan = plan ? String(plan).toUpperCase() : 'PROFESSIONAL';
+  const cleanCategory = category ? String(category) : 'General';
+  const cleanVolume = volume ? String(volume) : '50 - 200';
 
   if (!cleanEmail && !cleanPhone) {
     return res.status(400).json({ error: 'Email or phone required' });
@@ -51,16 +54,19 @@ export default async function handler(req: any, res: any) {
     await transporter.sendMail({
       from: `"Biblio Waitlist" <${smtpUser}>`,
       to: ownerEmail,
-      subject: `🔔 New Biblio Waitlist Signup: ${storeName || 'Merchant'} (#${position})`,
+      subject: `🔔 New Biblio Waitlist Signup: ${storeName || 'Merchant'} [${cleanPlan} PLAN] (#${position})`,
       html: `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:20px auto;background:#0d0f14;color:#f8fafc;padding:32px;border-radius:20px;border:1px solid #1e293b;">
-          <div style="color:#10b981;font-size:12px;font-weight:bold;text-transform:uppercase;margin-bottom:8px;">🚀 New Waitlist Signup</div>
+          <div style="color:#10b981;font-size:12px;font-weight:bold;text-transform:uppercase;margin-bottom:8px;">🚀 New Waitlist Signup • ${cleanPlan} PLAN</div>
           <h2 style="color:#ffffff;margin-top:0;font-size:24px;">${storeName || 'New Merchant'} reserved a spot!</h2>
           <div style="background:#161b22;padding:20px;border-radius:14px;border:1px solid #30363d;margin:20px 0;">
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Waitlist Position:</strong> <span style="color:#10b981;font-weight:bold;font-size:16px;">#${position}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Selected Plan:</strong> <span style="color:#10b981;font-weight:bold;">${cleanPlan} PLAN</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Store Name:</strong> <span style="color:#ffffff;">${storeName || 'Lagos Social Store'}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Product Category:</strong> <span style="color:#ffffff;">${cleanCategory}</span></p>
+            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Monthly Volume:</strong> <span style="color:#ffffff;">${cleanVolume}</span></p>
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Email Address:</strong> <a href="mailto:${cleanEmail}" style="color:#38bdf8;">${cleanEmail || 'None'}</a></p>
             <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>WhatsApp Phone:</strong> <span style="color:#ffffff;font-family:monospace;">${cleanPhone || 'Not provided'}</span></p>
-            <p style="margin:6px 0;font-size:14px;color:#94a3b8;"><strong>Store Name:</strong> <span style="color:#ffffff;">${storeName || 'Lagos Social Store'}</span></p>
           </div>
           ${waLink ? `<a href="${waLink}" style="display:inline-block;padding:12px 24px;border-radius:10px;background:#25d366;color:#000000;font-weight:bold;text-decoration:none;font-size:13px;">Chat with Merchant on WhatsApp →</a>` : ''}
         </div>
@@ -72,14 +78,15 @@ export default async function handler(req: any, res: any) {
       await transporter.sendMail({
         from: `"Biblio Early Access" <${smtpUser}>`,
         to: cleanEmail,
-        subject: `🎫 Your Biblio Early Access Pass (#${position}) — Lagos Cohort 1`,
+        subject: `🎫 Your Biblio Early Access Pass (#${position}) — ${cleanPlan} PLAN`,
         html: `
           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:580px;margin:20px auto;background:#090a0f;color:#e2e8f0;padding:36px;border-radius:24px;border:1px solid rgba(255,255,255,0.1);">
             <div style="text-align:center;margin-bottom:24px;">
               <div style="display:inline-block;padding:6px 16px;border-radius:20px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#10b981;font-size:12px;font-weight:bold;margin-bottom:12px;">
-                ✓ LAGOS BATCH 1 RESERVED
+                ✓ LAGOS BATCH 1 • ${cleanPlan} PLAN RESERVED
               </div>
               <h1 style="color:#ffffff;font-size:26px;margin:0 0 8px 0;">Welcome to Biblio VIP Early Access</h1>
+              <p style="color:#94a3b8;font-size:14px;margin:0;">Your store spot for ${storeName || 'your business'} has been secured.</p>
             </div>
             <div style="background:#13151c;border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:24px;text-align:center;margin-bottom:24px;">
               <span style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Your Waitlist Position</span>
@@ -87,11 +94,11 @@ export default async function handler(req: any, res: any) {
                 #${position.toLocaleString()}
               </div>
               <div style="font-size:12px;color:#10b981;font-weight:bold;">
-                Lagos Early Access Batch 1 (November 2026)
+                Tier: ${cleanPlan} Plan • Lagos Batch 1
               </div>
             </div>
             <div style="text-align:center;font-size:11px;color:#64748b;border-top:1px solid rgba(255,255,255,0.06);padding-top:16px;">
-              Biblio Technologies • 🔒 NDPA 2023 Compliant • Operated by Yemuel Oseghale
+              Biblio Technologies • Built for African Commerce • Yaba, Lagos
             </div>
           </div>
         `,
@@ -101,20 +108,22 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       ok: true,
       position,
-      cohort: 'Lagos Early Access Batch 1 (November 2026)',
+      cohort: 'Lagos Early Access Batch 1',
       referralCode,
       referralLink,
-      message: `You're #${position.toLocaleString()} on the Biblio early access waitlist! Check your email for your invitation pass.`,
+      plan: cleanPlan,
+      message: `You're #${position.toLocaleString()} on the Biblio early access waitlist for ${cleanPlan} Plan! Check your email for your invitation pass.`,
     });
   } catch (err: any) {
     console.error('Nodemailer error on Vercel:', err);
     return res.status(200).json({
       ok: true,
       position,
-      cohort: 'Lagos Early Access Batch 1 (November 2026)',
+      cohort: 'Lagos Early Access Batch 1',
       referralCode,
       referralLink,
-      message: `You're #${position.toLocaleString()} on the Biblio early access waitlist! Check your email for your invitation pass.`,
+      plan: cleanPlan,
+      message: `You're #${position.toLocaleString()} on the Biblio early access waitlist for ${cleanPlan} Plan! Check your email for your invitation pass.`,
     });
   }
 }
