@@ -6,6 +6,7 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  Image,
   ScrollView,
   Modal,
   Linking,
