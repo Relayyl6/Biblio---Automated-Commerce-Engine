@@ -2973,17 +2973,32 @@ app.delete("/merchants/:id/suppliers/:supplierId", async (req, reply) => {
 const OTP_SECURITY_DISCLAIMER = "DISCLAIMER: Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.";
 
 async function dispatchConfirmationSMS(phone: string, code: string, log: any): Promise<{ sent: boolean; provider: string; error?: string }> {
-  const cleanPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`;
+  const rawDigits = phone.replace(/\D/g, "");
+  const cleanPhone = rawDigits.startsWith("234")
+    ? `+${rawDigits}`
+    : rawDigits.startsWith("0")
+    ? `+234${rawDigits.slice(1)}`
+    : `+${rawDigits}`;
+
   const messageText = `[Biblio] Your verification code is ${code}. Valid for 5 minutes. ${OTP_SECURITY_DISCLAIMER}`;
   
-  // 1. Try Clerk API if CLERK_SECRET_KEY is configured
-  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
-  if (clerkSecretKey) {
+  // 1. Primary: Africa's Talking Live SMS Gateway
+  const atApiKey = process.env.AT_API_KEY;
+  const atUsername = process.env.AT_USERNAME || "sandbox";
+
+  if (atApiKey && atApiKey !== "dummy_key") {
     try {
-      log.info({ phone: cleanPhone }, "[Auth-SMS] Dispatched via Clerk phone verification gateway");
-      return { sent: true, provider: 'clerk' };
+      const africastalking = (await import("africastalking")).default;
+      const at = africastalking({ apiKey: atApiKey, username: atUsername });
+      const response = await at.SMS.send({
+        to: [cleanPhone],
+        message: messageText,
+        enqueue: true,
+      });
+      log.info({ phone: cleanPhone, response }, "[Auth-SMS] Dispatched via Africa's Talking Live SMS");
+      return { sent: true, provider: "africas_talking" };
     } catch (e: any) {
-      log.warn({ err: e.message }, "[Auth-SMS] Clerk gateway failed, falling back to system SMS");
+      log.warn({ err: e.message }, "[Auth-SMS] Africa's Talking failed, trying fallback...");
     }
   }
 
@@ -2995,17 +3010,28 @@ async function dispatchConfirmationSMS(phone: string, code: string, log: any): P
       await client.messages.create({
         body: messageText,
         to: cleanPhone,
-        from: process.env.TWILIO_PHONE_NUMBER || 'Biblio'
+        from: process.env.TWILIO_PHONE_NUMBER || "Biblio"
       });
       log.info({ phone: cleanPhone }, "[Auth-SMS] Dispatched via Twilio SMS");
-      return { sent: true, provider: 'twilio' };
+      return { sent: true, provider: "twilio" };
     } catch (e: any) {
       log.warn({ err: e.message }, "[Auth-SMS] Twilio dispatch skipped");
     }
   }
 
+  // 3. Try Clerk API if CLERK_SECRET_KEY is configured
+  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+  if (clerkSecretKey) {
+    try {
+      log.info({ phone: cleanPhone }, "[Auth-SMS] Dispatched via Clerk phone verification gateway");
+      return { sent: true, provider: "clerk" };
+    } catch (e: any) {
+      log.warn({ err: e.message }, "[Auth-SMS] Clerk gateway failed");
+    }
+  }
+
   log.info({ phone: cleanPhone }, `[Auth-SMS] SMS queued for delivery to ${cleanPhone}`);
-  return { sent: true, provider: 'system-sms' };
+  return { sent: true, provider: "system-sms" };
 }
 
 // Nodemailer Transport Initializer for Security OTP Dispatches
@@ -3360,6 +3386,35 @@ We will notify you the moment your WhatsApp store autopilot engine is ready for 
     });
     log?.info({ email: entry.email }, '[Waitlist-Email] Subscriber VIP pass delivered via Nodemailer');
   } catch (err: any) {
+
+  // 3. SMS VIP Ticket & Access Confirmation via Africa's Talking
+  if (entry.phone) {
+    try {
+      const rawDigits = entry.phone.replace(/\D/g, "");
+      const cleanPhone = rawDigits.startsWith("234")
+        ? `+${rawDigits}`
+        : rawDigits.startsWith("0")
+        ? `+234${rawDigits.slice(1)}`
+        : `+${rawDigits}`;
+
+      const atApiKey = process.env.AT_API_KEY;
+      const atUsername = process.env.AT_USERNAME || "sandbox";
+
+      if (atApiKey && atApiKey !== "dummy_key") {
+        const africastalking = (await import("africastalking")).default;
+        const at = africastalking({ apiKey: atApiKey, username: atUsername });
+        const waitlistSms = `[Biblio] VIP Early Access Confirmed! Spot #${entry.position} reserved for ${entry.storeName || "your store"}. We will notify you once onboarding begins.`;
+        const atRes = await at.SMS.send({
+          to: [cleanPhone],
+          message: waitlistSms,
+          enqueue: true,
+        });
+        log?.info({ phone: cleanPhone, response: atRes }, "[Waitlist-SMS] Africa's Talking confirmation SMS dispatched");
+      }
+    } catch (smsErr: any) {
+      log?.warn({ err: smsErr.message }, "[Waitlist-SMS] Africa's Talking SMS failed to send");
+    }
+  }
     log?.warn({ err: err.message }, '[Waitlist-Email] Failed to deliver subscriber pass email');
   }
 }

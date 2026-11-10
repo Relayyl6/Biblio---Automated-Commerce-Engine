@@ -106,6 +106,40 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // 3. Dispatch VIP confirmation SMS via Africa's Talking
+    if (cleanPhone) {
+      try {
+        const rawDigits = cleanPhone.replace(/\D/g, '');
+        const normalizedPhone = rawDigits.startsWith('234')
+          ? `+${rawDigits}`
+          : rawDigits.startsWith('0')
+          ? `+234${rawDigits.slice(1)}`
+          : `+${rawDigits}`;
+
+        const atApiKey = process.env.AT_API_KEY || 'atsk_e5185c17abbdf071740745499af2e601b8064f90c4f0d5df4b9b6f082bb1203f80433439';
+        const atUsername = process.env.AT_USERNAME || 'yemuel123';
+
+        const postBody = new URLSearchParams({
+          username: atUsername,
+          to: normalizedPhone,
+          message: `[Biblio] VIP Early Access Confirmed! Spot #${position} reserved for ${storeName || 'your store'}. We will notify you once onboarding begins.`,
+          enqueue: '1',
+        }).toString();
+
+        await fetch('https://api.africastalking.com/version1/messaging', {
+          method: 'POST',
+          headers: {
+            'apiKey': atApiKey,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+          },
+          body: postBody,
+        });
+      } catch (smsErr) {
+        console.warn('Waitlist SMS dispatch notice:', smsErr);
+      }
+    }
+
     return res.status(200).json({
       ok: true,
       position,
