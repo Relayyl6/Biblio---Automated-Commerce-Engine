@@ -1,12 +1,17 @@
 import axios from 'axios';
+import Constants from 'expo-constants';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/authStore';
 
-// Production API endpoint with environment override
+// Dynamically extract the Metro packager host IP that the mobile device is connected to
+const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest?.debuggerHost || (Constants as any).manifest2?.extra?.expoClient?.hostUri;
+const packagerIp = hostUri ? hostUri.split(':')[0] : '10.182.87.107';
+
+// Production API endpoint with dynamic local packager override
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   (__DEV__
-    ? (typeof window !== 'undefined' && window.location ? `http://${window.location.hostname}:3004` : 'http://10.86.227.253:3004')
+    ? `http://${packagerIp}:3004`
     : 'https://api.biblio.africa');
 
 export const api = axios.create({
