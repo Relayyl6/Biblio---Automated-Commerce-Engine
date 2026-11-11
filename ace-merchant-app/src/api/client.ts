@@ -4,26 +4,47 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/authStore';
 
 // Dynamically extract the Metro packager host IP that the mobile device is connected to
-const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest?.debuggerHost || (Constants as any).manifest2?.extra?.expoClient?.hostUri;
-const packagerIp = hostUri ? hostUri.split(':')[0] : '10.182.87.107';
+function resolveApiUrl(): string {
+  if (__DEV__) {
+    const hostUri =
+      Constants.expoConfig?.hostUri ||
+      (Constants as any).manifest?.debuggerHost ||
+      (Constants as any).manifest2?.extra?.expoClient?.hostUri;
 
-// Production API endpoint with dynamic local packager override
-const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  (__DEV__
-    ? `http://${packagerIp}:3004`
-    : 'https://api.biblio.africa');
+    if (hostUri) {
+      const ip = hostUri.split(':')[0];
+      if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
+        return `http://${ip}:3004`;
+      }
+    }
+
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      return process.env.EXPO_PUBLIC_API_URL;
+    }
+
+    return 'http://192.168.1.149:3004';
+  }
+
+  return process.env.EXPO_PUBLIC_API_URL || 'https://api.biblio.africa';
+}
+
+export const API_URL = resolveApiUrl();
+console.log('====================================================');
+console.log('[Biblio-API] Target Backend Base URL:', API_URL);
+console.log('====================================================');
 
 export const api = axios.create({
   baseURL: API_URL,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
     'ngrok-skip-browser-warning': 'true',
   },
 });
 
-// Intercept requests to dynamically inject the active auth token
+// Intercept requests to dynamically inject the active auth token and log traffic
 api.interceptors.request.use((config) => {
+  console.log(`[Biblio-API-Req] -> ${config.method?.toUpperCase()} ${config.baseURL || ''}${config.url}`, config.data ? JSON.stringify(config.data) : '');
   const { token } = useAuthStore.getState();
   if (token) {
     config.headers['Authorization'] = `Bearer ${token}`;
@@ -31,13 +52,22 @@ api.interceptors.request.use((config) => {
     config.headers['x-admin-key'] = token; 
   }
   return config;
+}, (error) => {
+  console.error('[Biblio-API-Req-Error]', error);
+  return Promise.reject(error);
 });
 
-// Intercept responses to handle 401 Unauthorized session invalidation
+// Intercept responses to handle 401 Unauthorized session invalidation and log responses
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(`[Biblio-API-Res] <- ${response.status} ${response.config.url}`, response.data);
+    return response;
+  },
   (error) => {
-    if (error?.response?.status === 401) {
+    const status = error?.response?.status;
+    const errorData = error?.response?.data || error?.message;
+    console.error(`[Biblio-API-Res-Error] <- ${status || 'ERR'} ${error.config?.url}:`, errorData);
+    if (status === 401) {
       const { token, logout } = useAuthStore.getState();
       if (token) {
         logout();

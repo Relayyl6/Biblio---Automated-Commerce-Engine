@@ -135,6 +135,12 @@ export default function LoginScreen() {
 
   const formatPhoneDisplay = (value: string) => {
     const digits = value.replace(/\D/g, '');
+    if (digits.startsWith('234')) {
+      if (digits.length <= 3) return `+${digits}`;
+      if (digits.length <= 6) return `+${digits.slice(0, 3)} ${digits.slice(3)}`;
+      if (digits.length <= 9) return `+${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+      return `+${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9, 13)}`;
+    }
     if (digits.length <= 4) return digits;
     if (digits.length <= 7) return `${digits.slice(0, 4)} ${digits.slice(4)}`;
     return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 11)}`;
@@ -151,10 +157,12 @@ export default function LoginScreen() {
     setIsLoading(true);
     try {
       const cleanPhone = normalizePhoneNumber(phone);
+      console.log('[LoginScreen] Dispatching SMS OTP to:', cleanPhone);
       const res = await api.post('/auth/merchant/login', {
         phone: cleanPhone,
         channel: 'sms',
       });
+      console.log('[LoginScreen] SMS OTP response:', res.data);
       setActiveChannel('sms');
       if (res.data?.pushOtp) {
         setPushBannerCode(res.data.pushOtp);
@@ -169,7 +177,9 @@ export default function LoginScreen() {
       setResendCooldown(30);
       setTimeout(() => otpRefs.current[0]?.focus(), 350);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Could not send SMS code. Please check number or enter email instead.');
+      console.error('[LoginScreen] SMS OTP Error:', err);
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+      setError(msg || 'Could not send SMS code. Please check number or enter email instead.');
     } finally {
       setIsLoading(false);
     }
@@ -186,10 +196,12 @@ export default function LoginScreen() {
     setIsLoading(true);
     try {
       const cleanEmail = email.trim().toLowerCase();
+      console.log('[LoginScreen] Dispatching Email OTP to:', cleanEmail);
       const res = await api.post('/auth/merchant/login', {
         email: cleanEmail,
         channel: 'email',
       });
+      console.log('[LoginScreen] Email OTP response:', res.data);
       setActiveChannel('email');
       setChannelMessage(res.data?.message || `Passcode sent to ${cleanEmail} via Nodemailer`);
       safeHaptics.notification();
@@ -197,7 +209,9 @@ export default function LoginScreen() {
       setResendCooldown(30);
       setTimeout(() => otpRefs.current[0]?.focus(), 350);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Could not send code to email. Please check your address.');
+      console.error('[LoginScreen] Email OTP Error:', err);
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message;
+      setError(msg || 'Could not send code to email. Please check your address.');
     } finally {
       setIsLoading(false);
     }
@@ -458,16 +472,16 @@ export default function LoginScreen() {
                       <TextInput
                         style={{ color: c.textPrimary }}
                         className="flex-1 text-base ml-3 font-semibold"
-                        placeholder="0812 345 6789"
+                        placeholder="0812 345 6789 or +234..."
                         placeholderTextColor={c.textTertiary}
                         keyboardType="phone-pad"
                         autoComplete="tel"
-                        value={formatPhoneDisplay(phone)}
+                        value={phone}
                         onChangeText={(t) => {
                           setPhone(t);
                           if (error) setError(null);
                         }}
-                        maxLength={13}
+                        maxLength={20}
                         returnKeyType="done"
                         onSubmitEditing={handleSendOTP}
                       />
@@ -541,9 +555,9 @@ export default function LoginScreen() {
 
                     <Pressable
                       onPress={handleSendOTP}
-                      disabled={isLoading || !isPhoneValid}
+                      disabled={isLoading}
                       style={{
-                        backgroundColor: isLoading || !isPhoneValid ? c.border : c.accent,
+                        backgroundColor: isLoading ? c.border : c.accent,
                       }}
                       className="h-14 rounded-2xl items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
                     >
@@ -662,9 +676,9 @@ export default function LoginScreen() {
 
                     <Pressable
                       onPress={handleSendEmailAuth}
-                      disabled={isLoading || !isEmailValid}
+                      disabled={isLoading}
                       style={{
-                        backgroundColor: isLoading || !isEmailValid ? c.border : c.accent,
+                        backgroundColor: isLoading ? c.border : c.accent,
                       }}
                       className="h-14 rounded-2xl items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
                     >
