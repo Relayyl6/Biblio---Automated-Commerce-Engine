@@ -15,7 +15,12 @@ import { spawn, ChildProcess, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import dns from 'dns';
 import { startRedisBridge } from './redis-bridge.js';
+
+// Force Google DNS to fix EAI_AGAIN / ENOTFOUND on Windows (WSL bridge DNS is unreliable)
+dns.setDefaultResultOrder('ipv4first');
+dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 
 const require = createRequire(import.meta.url);
 const TSX_CLI = require.resolve('tsx/cli');
@@ -177,7 +182,7 @@ function startService(service: ServiceConfig) {
     env: { 
       ...process.env, 
       REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6381',
-      NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=2048',
+      NODE_OPTIONS: '--max-old-space-size=2048 --dns-result-order=ipv4first',
       FORCE_COLOR: '1' 
     },
     stdio: ['ignore', 'pipe', 'pipe']

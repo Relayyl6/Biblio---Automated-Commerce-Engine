@@ -4,6 +4,12 @@ import dns from "node:dns";
 if (typeof dns.setDefaultResultOrder === "function") {
   dns.setDefaultResultOrder("ipv4first");
 }
+// Override DNS servers to use Google DNS — the WSL bridge (172.x.x.x) used by
+// Windows as its default DNS resolver intermittently fails to resolve external
+// hostnames like Neon DB pooler. Google DNS resolves them reliably.
+if (typeof dns.setServers === "function") {
+  try { dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']); } catch {}
+}
 
 import postgres from "postgres";
 import { Redis } from "ioredis";
