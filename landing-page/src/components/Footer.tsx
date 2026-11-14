@@ -57,9 +57,9 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
       {/* 2. Full-Width Edge-to-Edge Navigation & Legal Surface (User requested: max-w-full) */}
       <div className="w-full px-4 sm:px-8 lg:px-14 pb-12 pt-8 sm:pt-12 border-t border-white/[0.08] relative z-10">
         {/* Clean, Human 4-Column Navigation Layout - Full Width Across All Monitors */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08] w-full">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08] w-full">
           {/* Brand & Location Column (Span 5 on Desktop) */}
-          <div className="col-span-1 sm:col-span-2 lg:col-span-5 flex flex-col justify-between">
+          <div className="lg:col-span-5 flex flex-col justify-between">
             <div>
               {/* Brand Lockup */}
               <a href="#" className="flex items-center gap-2 group mb-3">
@@ -105,101 +105,104 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             </div>
           </div>
 
-          {/* Col 2: Product */}
-          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
-              Product
-            </h4>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Pidgin Haggling
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Voice Note Orders
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Paystack Escrow
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Rider Dispatch
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Status Stories
-                </a>
-              </li>
-              <li>
-                <a href="#simulator" className="hover:text-emerald-400 transition-colors text-emerald-400 font-medium">
-                  Interactive Demo →
-                </a>
-              </li>
-            </ul>
-          </div>
+          {/* Navigation Links: grid-cols-2 on mobile, grid-cols-3 on tab, normal way on desktop (lg:col-span-7) */}
+          <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-3 gap-8 sm:gap-8 lg:gap-10">
+            {/* Col 1: Product */}
+            <div>
+              <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+                Product
+              </h4>
+              <ul className="space-y-2.5 text-xs">
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Pidgin Haggling
+                  </a>
+                </li>
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Voice Note Orders
+                  </a>
+                </li>
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Paystack Escrow
+                  </a>
+                </li>
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Rider Dispatch
+                  </a>
+                </li>
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Status Stories
+                  </a>
+                </li>
+                <li>
+                  <a href="#simulator" className="hover:text-emerald-400 transition-colors text-emerald-400 font-medium">
+                    Interactive Demo →
+                  </a>
+                </li>
+              </ul>
+            </div>
 
-          {/* Col 3: Platform */}
-          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
-              Platform
-            </h4>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                  How It Works
-                </a>
-              </li>
-              <li>
-                <a href="#pricing" className="hover:text-emerald-400 transition-colors">
-                  Pricing & Plans
-                </a>
-              </li>
-              <li>
-                <a href="#features" className="hover:text-emerald-400 transition-colors">
-                  Margin Protection
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Merchant FAQ
-                </a>
-              </li>
-            </ul>
-          </div>
+            {/* Col 2: Platform */}
+            <div>
+              <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+                Platform
+              </h4>
+              <ul className="space-y-2.5 text-xs">
+                <li>
+                  <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
+                    How It Works
+                  </a>
+                </li>
+                <li>
+                  <a href="#pricing" className="hover:text-emerald-400 transition-colors">
+                    Pricing & Plans
+                  </a>
+                </li>
+                <li>
+                  <a href="#features" className="hover:text-emerald-400 transition-colors">
+                    Margin Protection
+                  </a>
+                </li>
+                <li>
+                  <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                    Merchant FAQ
+                  </a>
+                </li>
+              </ul>
+            </div>
 
-          {/* Col 4: Trust & Support */}
-          <div className="col-span-1 sm:col-span-2 lg:col-span-3">
-            <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
-              Trust & Support
-            </h4>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Privacy Policy
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Terms of Service
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                  Escrow Guarantee
-                </a>
-              </li>
-              <li>
-                <a href="mailto:support@biblio.africa" className="hover:text-emerald-400 transition-colors">
-                  support@biblio.africa
-                </a>
-              </li>
-            </ul>
+            {/* Col 3: Trust & Support */}
+            <div>
+              <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
+                Trust & Support
+              </h4>
+              <ul className="space-y-2.5 text-xs">
+                <li>
+                  <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                    Privacy Policy
+                  </a>
+                </li>
+                <li>
+                  <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                    Terms of Service
+                  </a>
+                </li>
+                <li>
+                  <a href="#faq" className="hover:text-emerald-400 transition-colors">
+                    Escrow Guarantee
+                  </a>
+                </li>
+                <li>
+                  <a href="mailto:support@biblio.africa" className="hover:text-emerald-400 transition-colors break-all sm:break-normal">
+                    support@biblio.africa
+                  </a>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 
