@@ -3,16 +3,18 @@ import { View, Text, Switch, Pressable, TextInput } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { ChevronRight, LucideIcon } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { colors } from '../../theme';
+import { colors, radius, typography } from '../../theme';
 
 function useThemeColors() {
   const { colorScheme } = useColorScheme();
   return colorScheme === 'dark' ? colors.dark : colors.light;
 }
 
-/** Groups rows under a labeled card — the pattern your Settings screen
- *  already used; pulled out so any screen (Finance, CRM) can use the
- *  same "icon + label + bordered card" section shell. */
+/**
+ * Section
+ * Follows DESIGN.md Section 3.2, 3.4 & 9:
+ * Groups rows under a clean elevated card with radius-md (16px) or radius-lg (24px)
+ */
 export function Section({
   title,
   icon: Icon,
@@ -33,7 +35,14 @@ export function Section({
           {title}
         </Text>
       </View>
-      <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="mx-4 px-4 rounded-[24px] border">
+      <View
+        style={{
+          backgroundColor: c.surface,
+          borderColor: c.border,
+          borderRadius: radius.lg,
+        }}
+        className="mx-4 px-4 border"
+      >
         {children}
       </View>
     </Animated.View>
@@ -55,7 +64,10 @@ export function ToggleRow({
 }) {
   const c = useThemeColors();
   return (
-    <View style={{ borderBottomWidth: isLast ? 0 : 1, borderBottomColor: c.border }} className="py-4 flex-row justify-between items-center">
+    <View
+      style={{ borderBottomWidth: isLast ? 0 : 1, borderBottomColor: c.border }}
+      className="py-4 flex-row justify-between items-center"
+    >
       <View className="flex-1 pr-4">
         <Text style={{ color: c.textPrimary }} className="font-semibold text-base mb-1">
           {title}
@@ -64,11 +76,21 @@ export function ToggleRow({
           {subtitle}
         </Text>
       </View>
-      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: c.border, true: c.accent }} thumbColor={c.surface} />
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: c.border, true: c.accent }}
+        thumbColor={c.surface}
+      />
     </View>
   );
 }
 
+/**
+ * InputRow
+ * Follows DESIGN.md Section 9.5:
+ * Height 52px, radius-sm (10px), wellBg fill, 1px border.
+ */
 export function InputRow({
   title,
   subtitle,
@@ -87,11 +109,9 @@ export function InputRow({
   isLast?: boolean;
 }) {
   const c = useThemeColors();
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === 'dark';
   return (
     <View style={{ borderBottomWidth: isLast ? 0 : 1, borderBottomColor: c.border }} className="py-4">
-      <View className="mb-3">
+      <View className="mb-2.5">
         <Text style={{ color: c.textPrimary }} className="font-semibold text-base mb-1">
           {title}
         </Text>
@@ -99,14 +119,25 @@ export function InputRow({
           {subtitle}
         </Text>
       </View>
-      <View style={{ backgroundColor: isDark ? '#1F2937' : '#F1F5F9', borderColor: c.border }} className="flex-row items-center border rounded-xl px-4 h-12">
+      <View
+        style={{
+          backgroundColor: c.wellBg,
+          borderColor: c.border,
+          borderRadius: radius.sm,
+          height: 52,
+        }}
+        className="flex-row items-center border px-4"
+      >
         {!!prefix && (
-          <Text style={{ color: c.textTertiary }} className="mr-2 font-bold">
+          <Text style={{ color: c.textTertiary }} className="mr-2 font-bold text-base">
             {prefix}
           </Text>
         )}
         <TextInput
-          style={{ color: c.textPrimary }}
+          style={{
+            color: c.textPrimary,
+            ...typography.tabularNums,
+          }}
           className="flex-1 font-semibold text-base"
           value={value}
           onChangeText={onChangeText}

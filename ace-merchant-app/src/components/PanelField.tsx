@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
-import { colors } from '../../theme';
+import { colors, radius } from '../../theme';
 
 type Props = {
   label: string;
@@ -14,8 +14,11 @@ type Props = {
   multiline?: boolean;
 };
 
-/** Freeform labeled text field for panel content (API keys, addresses, policies) —
- *  supports secret toggling as well as multiline text areas. */
+/**
+ * Freeform labeled text field for panel content (API keys, addresses, policies)
+ * Strictly follows DESIGN.md Section 9.5:
+ * Height 52px, radius-sm, wellBg fill, clean border.
+ */
 export function PanelField({ label, value, onChangeText, placeholder, secure, helper, multiline }: Props) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -28,12 +31,16 @@ export function PanelField({ label, value, onChangeText, placeholder, secure, he
         {label}
       </Text>
       <View
-        style={{ backgroundColor: isDark ? '#1F2937' : '#F1F5F9', borderColor: c.border }}
-        className={`flex-row border rounded-xl px-4 ${multiline ? 'min-h-[88px] py-3 items-start' : 'h-12 items-center'}`}
+        style={{
+          backgroundColor: c.wellBg,
+          borderColor: c.border,
+          borderRadius: radius.sm,
+        }}
+        className={`flex-row border px-4 ${multiline ? 'min-h-[88px] py-3 items-start' : 'h-[52px] items-center'}`}
       >
         <TextInput
           style={[{ color: c.textPrimary }, multiline ? { textAlignVertical: 'top' } : undefined]}
-          className="flex-1 text-base"
+          className="flex-1 text-base font-medium"
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}

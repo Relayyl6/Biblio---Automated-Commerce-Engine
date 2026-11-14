@@ -3,7 +3,6 @@ import { View, Text, StatusBar, Pressable, ScrollView, TextInput } from 'react-n
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  MessageCircle,
   CreditCard,
   Users,
   ChevronRight,
@@ -21,12 +20,14 @@ import {
   RefreshCw,
   Coins,
   ShieldAlert,
+  Camera,
+  Video,
+  Tv,
 } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { colors } from '../../theme';
-import { Camera, Video, Tv } from 'lucide-react-native';
+import { colors, radius, shadows } from '../../theme';
 import { usePairWhatsApp, useMerchantConfig, useStatusSettings, useVendorStatus } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/authStore';
 import { useAlert } from '../../src/store/alertStore';
@@ -39,25 +40,34 @@ type MenuItem = {
   subtitle: string;
   icon: any;
   route: string;
-  tint: string;
+  semantic: 'signal' | 'accent' | 'review' | 'settled' | 'textSecondary';
 };
 
 const WORKSPACE_ITEMS: MenuItem[] = [
-  { id: 'biblio-assistant', title: 'Biblio Assistant', subtitle: 'Live autonomous AI chat & WhatsApp parity', icon: Bot, route: '/biblio-assistant', tint: '#10B981' },
-  { id: 'tokens', title: 'Tokens & Spend Caps', subtitle: 'Compute balance, burn velocity & top-ups', icon: Coins, route: '/tokens', tint: '#F59E0B' },
-  { id: 'veto', title: 'Veto & Operator Override', subtitle: 'Six-layer safety guardrails & hold queue', icon: ShieldAlert, route: '/veto', tint: '#EF4444' },
-  { id: 'finance', title: 'Finance & Margins', subtitle: 'Real-time revenue, escrow & payment follow-ups', icon: CreditCard, route: '/finance', tint: '#059669' },
-  { id: 'crm', title: 'CRM & Inventory', subtitle: 'Stock levels, floor pricing & product sync', icon: Package, route: '/crm', tint: '#8B5CF6' },
-  { id: 'suppliers', title: 'Suppliers & Restock', subtitle: 'Automated procurement channels & groups', icon: Users, route: '/suppliers', tint: '#F59E0B' },
-  { id: 'notifications', title: 'Notifications', subtitle: 'Push alerts, channels & quiet hours', icon: Bell, route: '/notifications', tint: '#EC4899' },
-  { id: 'notification-history', title: 'Carrier Logs', subtitle: 'WhatsApp & SMS delivery audit trail', icon: History, route: '/notification-history', tint: '#06B6D4' },
-  { id: 'settings', title: 'Store & Brain Settings', subtitle: 'Store profile, warehouse, autonomy & policies', icon: Settings, route: '/settings', tint: '#6366F1' },
-  { id: 'support', title: 'Help & Support', subtitle: 'Knowledge base, status & live tickets', icon: HelpCircle, route: '/support', tint: '#14B8A6' },
+  { id: 'biblio-assistant', title: 'Biblio Assistant', subtitle: 'Live autonomous AI chat & WhatsApp parity', icon: Bot, route: '/biblio-assistant', semantic: 'signal' },
+  { id: 'tokens', title: 'Tokens & Spend Caps', subtitle: 'Compute balance, burn velocity & top-ups', icon: Coins, route: '/tokens', semantic: 'accent' },
+  { id: 'veto', title: 'Veto & Operator Override', subtitle: 'Six-layer safety guardrails & hold queue', icon: ShieldAlert, route: '/veto', semantic: 'review' },
+  { id: 'finance', title: 'Finance & Margins', subtitle: 'Real-time revenue, escrow & payment follow-ups', icon: CreditCard, route: '/finance', semantic: 'settled' },
+  { id: 'crm', title: 'CRM & Inventory', subtitle: 'Stock levels, floor pricing & product sync', icon: Package, route: '/crm', semantic: 'accent' },
+  { id: 'suppliers', title: 'Suppliers & Restock', subtitle: 'Automated procurement channels & groups', icon: Users, route: '/suppliers', semantic: 'accent' },
+  { id: 'notifications', title: 'Notifications', subtitle: 'Push alerts, channels & quiet hours', icon: Bell, route: '/notifications', semantic: 'signal' },
+  { id: 'notification-history', title: 'Carrier Logs', subtitle: 'WhatsApp & SMS delivery audit trail', icon: History, route: '/notification-history', semantic: 'textSecondary' },
+  { id: 'settings', title: 'Store & Brain Settings', subtitle: 'Store profile, warehouse, autonomy & policies', icon: Settings, route: '/settings', semantic: 'accent' },
+  { id: 'support', title: 'Help & Support', subtitle: 'Knowledge base, status & live tickets', icon: HelpCircle, route: '/support', semantic: 'settled' },
 ];
 
 function MenuRow({ item, index, c }: { item: MenuItem; index: number; c: typeof colors.light }) {
   const router = useRouter();
   const Icon = item.icon;
+  const colorMap = {
+    signal: c.signal,
+    accent: c.accent,
+    review: c.review,
+    settled: c.settled,
+    textSecondary: c.textSecondary,
+  };
+  const tint = colorMap[item.semantic] || c.accent;
+
   return (
     <Animated.View entering={FadeInDown.delay(130 + index * 40).springify()}>
       <Pressable
@@ -65,14 +75,19 @@ function MenuRow({ item, index, c }: { item: MenuItem; index: number; c: typeof 
           safeHaptics.impact();
           router.push(item.route as any);
         }}
-        style={{ backgroundColor: c.surface, borderColor: c.border }}
-        className="p-4 rounded-3xl mb-3 border flex-row items-center active:opacity-70"
+        style={{
+          backgroundColor: c.surface,
+          borderColor: c.border,
+          borderRadius: radius.md,
+          ...shadows.sm,
+        }}
+        className="p-4 mb-3 border flex-row items-center active:opacity-70"
       >
         <View
-          style={{ backgroundColor: item.tint + '1A' }}
+          style={{ backgroundColor: tint + '1A' }}
           className="w-12 h-12 rounded-2xl items-center justify-center mr-4"
         >
-          <Icon size={22} color={item.tint} />
+          <Icon size={22} color={tint} />
         </View>
         <View className="flex-1">
           <Text style={{ color: c.textPrimary }} className="font-bold text-base mb-0.5">
@@ -91,7 +106,8 @@ function MenuRow({ item, index, c }: { item: MenuItem; index: number; c: typeof 
 export default function MoreScreen() {
   const router = useRouter();
   const { colorScheme } = useColorScheme();
-  const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const isDark = colorScheme === 'dark';
+  const c = isDark ? colors.dark : colors.light;
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const alert = useAlert();
@@ -100,7 +116,7 @@ export default function MoreScreen() {
   const { data: merchantConfig } = useMerchantConfig();
   const { data: statusSettings } = useStatusSettings();
   const { data: vendorStatus } = useVendorStatus();
-  
+
   const [showPairing, setShowPairing] = useState(false);
   const [phoneToPair, setPhoneToPair] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
@@ -179,7 +195,7 @@ export default function MoreScreen() {
   const handleSignOut = () => {
     alert.showConfirm({
       title: 'Sign Out',
-      message: 'Are you sure you want to sign out? You will need to log in again to manage your store.',
+      message: 'Are you sure you want to disconnect this device from your Biblio merchant account?',
       confirmLabel: 'Sign Out',
       destructive: true,
       onConfirm: () => {
@@ -190,19 +206,24 @@ export default function MoreScreen() {
   };
 
   return (
-    <View style={{ backgroundColor: c.bg, paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,}} className="flex-1">
-      <Animated.View entering={FadeInDown.delay(50).springify()} className="px-4 mb-1.5 flex-row items-center justify-between">
-        <Text style={{ color: c.textPrimary }} className="text-2xl font-bold tracking-tight">
-          Menu
-        </Text>
-      </Animated.View>
-
+    <View
+      style={{
+        backgroundColor: c.bg,
+        paddingTop: Math.max(insets.top, StatusBar.currentHeight || 0) + 2,
+      }}
+      className="flex-1"
+    >
       {/* Merchant Profile Header */}
       <Animated.View entering={FadeInDown.delay(100).springify()} className="px-4 mb-3">
         <Pressable
           onPress={() => router.push('/settings')}
-          style={{ backgroundColor: c.surface, borderColor: c.border }}
-          className="p-4 rounded-3xl border flex-row items-center active:opacity-70"
+          style={{
+            backgroundColor: c.surface,
+            borderColor: c.border,
+            borderRadius: radius.md,
+            ...shadows.sm,
+          }}
+          className="p-4 border flex-row items-center active:opacity-70"
         >
           <View
             style={{ backgroundColor: c.accentSoft }}
@@ -217,7 +238,7 @@ export default function MoreScreen() {
               <Text style={{ color: c.textPrimary }} className="font-bold text-base mr-1.5" numberOfLines={1}>
                 {storeName}
               </Text>
-              <CheckCircle2 size={15} color="#22C55E" />
+              <CheckCircle2 size={15} color={c.settled} />
             </View>
             <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
               {storeDialect} • Tap to edit store profile & settings
@@ -228,7 +249,6 @@ export default function MoreScreen() {
       </Animated.View>
 
       <ScrollView className="flex-1 px-4" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-        
         <Text style={{ color: c.textTertiary }} className="px-2 text-xs font-bold uppercase tracking-wider mb-3">
           Connections
         </Text>
@@ -236,8 +256,12 @@ export default function MoreScreen() {
         <Animated.View entering={FadeInDown.delay(115).springify()} className="mb-4">
           <Pressable
             onPress={() => setShowPairing(!showPairing)}
-            style={{ backgroundColor: isWhatsAppConnected ? '#22C55E12' : '#22C55E1A', borderColor: '#22C55E33' }}
-            className="p-4 rounded-3xl border active:opacity-70"
+            style={{
+              backgroundColor: isWhatsAppConnected ? c.settledTint : c.accentTint,
+              borderColor: isWhatsAppConnected ? c.settled : c.accent,
+              borderRadius: radius.md,
+            }}
+            className="p-4 border active:opacity-70"
           >
             <View className="flex-row items-center">
               <View className="flex-1">
@@ -245,7 +269,7 @@ export default function MoreScreen() {
                   <Text style={{ color: c.textPrimary }} className="font-bold text-sm mr-2">
                     WhatsApp Companion Linking
                   </Text>
-                  {isWhatsAppConnected && <ShieldCheck size={14} color="#22C55E" />}
+                  {isWhatsAppConnected && <ShieldCheck size={14} color={c.settled} />}
                 </View>
                 <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">
                   {isWhatsAppConnected
@@ -256,19 +280,12 @@ export default function MoreScreen() {
               {!showPairing && (
                 <View
                   style={{
-                    backgroundColor: isWhatsAppConnected ? '#22C55E22' : '#22C55E',
-                    borderColor: isWhatsAppConnected ? '#22C55E' : 'transparent',
-                    borderWidth: isWhatsAppConnected ? 1 : 0,
+                    backgroundColor: isWhatsAppConnected ? c.settled : c.accent,
+                    borderRadius: radius.pill,
                   }}
-                  className="px-3 py-1.5 rounded-full flex-row items-center"
+                  className="px-3 py-1.5 flex-row items-center"
                 >
-                  {isWhatsAppConnected && (
-                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E', marginRight: 5 }} />
-                  )}
-                  <Text
-                    style={{ color: isWhatsAppConnected ? '#22C55E' : '#FFFFFF' }}
-                    className="font-bold text-xs"
-                  >
+                  <Text style={{ color: '#FFFFFF' }} className="font-bold text-xs">
                     {isWhatsAppConnected ? 'Live & Persistent' : 'Link Phone'}
                   </Text>
                 </View>
@@ -276,16 +293,16 @@ export default function MoreScreen() {
             </View>
 
             {showPairing && (
-              <View className="mt-4 pt-4 border-t" style={{ borderColor: '#22C55E33' }}>
+              <View className="mt-4 pt-4 border-t" style={{ borderColor: c.border }}>
                 {isWhatsAppConnected && (
-                  <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="p-3.5 rounded-2xl border mb-3">
+                  <View style={{ backgroundColor: c.surface, borderColor: c.border, borderRadius: radius.sm }} className="p-3.5 border mb-3">
                     <View className="flex-row items-center justify-between mb-1.5">
                       <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
                         Persistent Background Session
                       </Text>
                       <View className="flex-row items-center">
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E', marginRight: 4 }} />
-                        <Text style={{ color: '#22C55E' }} className="font-bold text-[10px] uppercase">
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.settled, marginRight: 4 }} />
+                        <Text style={{ color: c.settled }} className="font-bold text-[10px] uppercase">
                           Durable (PostgreSQL)
                         </Text>
                       </View>
@@ -303,18 +320,19 @@ export default function MoreScreen() {
 
                 {/* Live Error Banner if session failed */}
                 {vendorStatus?.lastError && !isWhatsAppConnected && (
-                  <View style={{ backgroundColor: c.dangerSoft, borderColor: c.danger }} className="p-3 rounded-xl border mb-3 flex-row items-center justify-between">
+                  <View style={{ backgroundColor: c.alertTint, borderColor: c.alert, borderRadius: radius.sm }} className="p-3 border mb-3 flex-row items-center justify-between">
                     <View className="flex-1 mr-2">
-                      <Text style={{ color: c.danger }} className="font-bold text-xs">
+                      <Text style={{ color: c.alert }} className="font-bold text-xs">
                         WhatsApp Link Notice
                       </Text>
-                      <Text style={{ color: c.danger }} className="text-[11px] mt-0.5">
+                      <Text style={{ color: c.alert }} className="text-[11px] mt-0.5">
                         {vendorStatus.lastError}
                       </Text>
                     </View>
                     <Pressable
                       onPress={handlePair}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-600 active:opacity-70"
+                      style={{ backgroundColor: c.alert, borderRadius: radius.sm }}
+                      className="px-2.5 py-1.5 active:opacity-70"
                     >
                       <Text className="text-white text-[10px] font-bold">Retry</Text>
                     </Pressable>
@@ -329,8 +347,8 @@ export default function MoreScreen() {
                         : 'Enter the phone number active on your WhatsApp (e.g. 2348012345678):'}
                     </Text>
                     <TextInput
-                      style={{ backgroundColor: c.surface, color: c.textPrimary, borderColor: c.border }}
-                      className="border rounded-xl p-3 mb-3 font-semibold"
+                      style={{ backgroundColor: c.wellBg, color: c.textPrimary, borderColor: c.border, borderRadius: radius.sm }}
+                      className="border p-3 mb-3 font-semibold"
                       placeholder="234..."
                       placeholderTextColor={c.textTertiary}
                       value={phoneToPair}
@@ -340,8 +358,8 @@ export default function MoreScreen() {
                     <Pressable
                       onPress={handlePair}
                       disabled={pairMutation.isPending}
-                      style={{ backgroundColor: '#22C55E' }}
-                      className="rounded-xl p-3 items-center flex-row justify-center active:opacity-80"
+                      style={{ backgroundColor: c.accent, borderRadius: radius.pill }}
+                      className="h-12 items-center flex-row justify-center active:opacity-80"
                     >
                       {pairMutation.isPending ? (
                         <InlineLoadingDots color="white" />
@@ -352,7 +370,9 @@ export default function MoreScreen() {
                       )}
                     </Pressable>
                     {pairMutation.isError && (
-                      <Text className="text-red-500 text-xs mt-2 text-center">Failed to get code. Ensure backend gateway is running.</Text>
+                      <Text style={{ color: c.alert }} className="text-xs mt-2 text-center">
+                        Failed to get code. Ensure backend gateway is running.
+                      </Text>
                     )}
                   </>
                 ) : (
@@ -361,13 +381,13 @@ export default function MoreScreen() {
                       Open WhatsApp → Settings → Linked Devices → Link a Device → Link with Phone Number.
                     </Text>
 
-                    <View style={{ backgroundColor: c.surface, borderColor: c.border }} className="px-5 py-4 rounded-2xl border mb-2 items-center">
+                    <View style={{ backgroundColor: c.surface, borderColor: c.border, borderRadius: radius.md }} className="px-5 py-4 border mb-2 items-center">
                       <Text style={{ color: c.textPrimary, letterSpacing: 8 }} className="text-3xl font-black">
                         {pairingCode}
                       </Text>
                       <View className="flex-row items-center mt-2">
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pairingSecondsLeft > 20 ? '#22C55E' : '#EF4444', marginRight: 5 }} />
-                        <Text style={{ color: pairingSecondsLeft > 20 ? c.textSecondary : '#EF4444' }} className="text-xs font-semibold">
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: pairingSecondsLeft > 20 ? c.settled : c.alert, marginRight: 5 }} />
+                        <Text style={{ color: pairingSecondsLeft > 20 ? c.textSecondary : c.alert }} className="text-xs font-semibold">
                           {pairingSecondsLeft > 0 ? `Code expires in ${Math.floor(pairingSecondsLeft / 60)}:${(pairingSecondsLeft % 60).toString().padStart(2, '0')}` : 'Pairing code expired'}
                         </Text>
                       </View>
@@ -377,12 +397,12 @@ export default function MoreScreen() {
                       Once entered on your phone, Biblio automatically finalizes the connection and persists credentials.
                     </Text>
 
-                    {/* Action controls so pairing is 100% recoverable without reinstalling */}
                     <View className="flex-row gap-2 w-full justify-center">
                       <Pressable
                         onPress={handlePair}
                         disabled={pairMutation.isPending}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 active:opacity-80 flex-row items-center"
+                        style={{ backgroundColor: c.accent, borderRadius: radius.pill }}
+                        className="px-4 py-2.5 active:opacity-80 flex-row items-center"
                       >
                         {pairMutation.isPending ? (
                           <InlineLoadingDots color="white" />
@@ -392,8 +412,8 @@ export default function MoreScreen() {
                       </Pressable>
                       <Pressable
                         onPress={() => setPairingCode(null)}
-                        style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }}
-                        className="px-4 py-2 rounded-xl border active:opacity-80"
+                        style={{ backgroundColor: c.surfaceAlt, borderColor: c.border, borderRadius: radius.pill }}
+                        className="px-4 py-2.5 border active:opacity-80"
                       >
                         <Text style={{ color: c.textSecondary }} className="font-semibold text-xs">Cancel</Text>
                       </Pressable>
@@ -409,61 +429,42 @@ export default function MoreScreen() {
         <Animated.View entering={FadeInDown.delay(125).springify()} className="mb-3">
           <Pressable
             onPress={() => handleWaitlist('Instagram DMs')}
-            style={{ backgroundColor: c.surface, borderColor: c.border, opacity: 0.85 }}
-            className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
+            style={{ backgroundColor: c.surface, borderColor: c.border, borderRadius: radius.md, opacity: 0.9 }}
+            className="p-4 border flex-row items-center active:opacity-60"
           >
-             <View style={{ backgroundColor: '#E1306C1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <Camera size={20} color="#E1306C" />
-             </View>
-             <View className="flex-1">
-               <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Instagram DMs</Text>
-               <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Automate IG comments & messages</Text>
-             </View>
-             <View style={{ backgroundColor: c.surfaceAlt }} className="px-2.5 py-1 rounded-md">
-               <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase">Early Access</Text>
-             </View>
+            <View style={{ backgroundColor: c.accentSoft }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
+              <Camera size={20} color={c.accent} />
+            </View>
+            <View className="flex-1">
+              <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Instagram DMs</Text>
+              <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Automate IG comments & messages</Text>
+            </View>
+            <View style={{ backgroundColor: c.surfaceAlt, borderRadius: radius.xs }} className="px-2.5 py-1">
+              <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase">Early Access</Text>
+            </View>
           </Pressable>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(135).springify()} className="mb-3">
           <Pressable
             onPress={() => handleWaitlist('TikTok Shop')}
-            style={{ backgroundColor: c.surface, borderColor: c.border, opacity: 0.85 }}
-            className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
+            style={{ backgroundColor: c.surface, borderColor: c.border, borderRadius: radius.md, opacity: 0.9 }}
+            className="p-4 border flex-row items-center active:opacity-60"
           >
-             <View style={{ backgroundColor: '#00F2FE1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <Video size={20} color="#00F2FE" />
-             </View>
-             <View className="flex-1">
-               <Text style={{ color: c.textPrimary }} className="font-bold text-sm">TikTok Shop</Text>
-               <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Sync inventory and orders</Text>
-             </View>
-             <View style={{ backgroundColor: c.surfaceAlt }} className="px-2.5 py-1 rounded-md">
-               <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase">Early Access</Text>
-             </View>
+            <View style={{ backgroundColor: c.signalTint }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
+              <Video size={20} color={c.signal} />
+            </View>
+            <View className="flex-1">
+              <Text style={{ color: c.textPrimary }} className="font-bold text-sm">TikTok Shop</Text>
+              <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Sync inventory and orders</Text>
+            </View>
+            <View style={{ backgroundColor: c.surfaceAlt, borderRadius: radius.xs }} className="px-2.5 py-1">
+              <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase">Early Access</Text>
+            </View>
           </Pressable>
         </Animated.View>
 
-        <Animated.View entering={FadeInDown.delay(145).springify()} className="mb-6">
-          <Pressable
-            onPress={() => handleWaitlist('Twitch Chat')}
-            style={{ backgroundColor: c.surface, borderColor: c.border, opacity: 0.85 }}
-            className="p-4 rounded-3xl border flex-row items-center active:opacity-60"
-          >
-             <View style={{ backgroundColor: '#9146FF1A' }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
-               <Tv size={20} color="#9146FF" />
-             </View>
-             <View className="flex-1">
-               <Text style={{ color: c.textPrimary }} className="font-bold text-sm">Twitch Chat</Text>
-               <Text style={{ color: c.textSecondary }} className="text-xs mt-0.5">Live stream commands & tipping</Text>
-             </View>
-             <View style={{ backgroundColor: c.surfaceAlt }} className="px-2.5 py-1 rounded-md">
-               <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase">Early Access</Text>
-             </View>
-          </Pressable>
-        </Animated.View>
-
-        <Text style={{ color: c.textTertiary }} className="px-2 text-xs font-bold uppercase tracking-wider mb-3">
+        <Text style={{ color: c.textTertiary }} className="px-2 text-xs font-bold uppercase tracking-wider mb-3 mt-3">
           Workspace
         </Text>
         {WORKSPACE_ITEMS.map((item, i) => (
@@ -477,14 +478,14 @@ export default function MoreScreen() {
         <Animated.View entering={FadeInDown.delay(450).springify()}>
           <Pressable
             onPress={handleSignOut}
-            style={{ backgroundColor: c.surface, borderColor: c.border }}
-            className="p-4 rounded-3xl mb-6 border flex-row items-center active:opacity-70"
+            style={{ backgroundColor: c.surface, borderColor: c.border, borderRadius: radius.md }}
+            className="p-4 mb-6 border flex-row items-center active:opacity-70"
           >
-            <View style={{ backgroundColor: '#EF44441A' }} className="w-12 h-12 rounded-2xl items-center justify-center mr-4">
-              <LogOut size={22} color="#EF4444" />
+            <View style={{ backgroundColor: c.alertTint }} className="w-12 h-12 rounded-2xl items-center justify-center mr-4">
+              <LogOut size={22} color={c.alert} />
             </View>
             <View className="flex-1">
-              <Text style={{ color: '#EF4444' }} className="font-bold text-base mb-0.5">
+              <Text style={{ color: c.alert }} className="font-bold text-base mb-0.5">
                 Sign Out
               </Text>
               <Text style={{ color: c.textSecondary }} className="text-xs">
@@ -495,7 +496,7 @@ export default function MoreScreen() {
           </Pressable>
         </Animated.View>
 
-        <Text style={{ color: c.textTertiary }} className="text-center text-xs mt-2 mb-8">Biblo Platform v1.0.0</Text>
+        <Text style={{ color: c.textTertiary }} className="text-center text-xs mt-2 mb-8">Biblio Platform v1.0.0</Text>
       </ScrollView>
     </View>
   );

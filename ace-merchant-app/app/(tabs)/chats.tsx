@@ -1,15 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, Filter, MessageCircleOff, Bot, ChevronRight } from 'lucide-react-native';
+import { User, Filter, MessageCircleOff, Bot, ChevronRight, Sparkles } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useChats } from '../../src/api/client';
-import { colors, shadows } from '../../theme';
+import { colors, radius, shadows } from '../../theme';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { SearchBar } from '../../src/components/SearchBar';
 import { EmptyState } from '../../src/components/EmptyState';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
+import { StatusPill } from '../../src/components/StatusPill';
 
 export default function ChatsTabScreen() {
   const router = useRouter();
@@ -51,21 +52,21 @@ export default function ChatsTabScreen() {
   return (
     <View style={{ backgroundColor: c.bg }} className="flex-1">
       <ScreenHeader
-        title="Chats"
+        title="Conversation Hub"
         rightAction={
           <View className="flex-row items-center gap-2">
             <Pressable
               onPress={() => router.push('/biblio-assistant')}
               style={{
-                backgroundColor: c.accentSoft,
-                borderColor: c.accent,
+                backgroundColor: c.signalTint,
+                borderColor: c.signal,
                 ...shadows.sm,
               }}
               className="px-2.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
             >
-              <Bot size={15} color={c.accent} />
-              <Text style={{ color: c.accent }} className="text-xs font-bold ml-1.5">
-                Assistant
+              <Bot size={15} color={c.signal} />
+              <Text style={{ color: c.signal }} className="text-xs font-bold ml-1.5">
+                ACE Copilot
               </Text>
             </Pressable>
 
@@ -88,31 +89,32 @@ export default function ChatsTabScreen() {
         <SearchBar value={query} onChangeText={setQuery} placeholder="Search conversations..." variant="pill" />
       </View>
 
-      {/* Prominent Biblio Assistant Entry Card */}
+      {/* Prominent ACE Assistant Entry Card (DESIGN.md Section 10.2) */}
       <Pressable
         onPress={() => router.push('/biblio-assistant')}
         style={{
           backgroundColor: c.surface,
-          borderColor: isDark ? '#1F2925' : '#E2E8F0',
+          borderColor: c.border,
+          borderRadius: radius.md,
           ...shadows.sm,
         }}
-        className="mx-4 mb-3 p-3 rounded-2xl border flex-row items-center justify-between active:opacity-80"
+        className="mx-4 mb-3 p-3.5 border flex-row items-center justify-between active:opacity-80"
       >
         <View className="flex-row items-center flex-1 pr-2">
-          <View style={{ backgroundColor: c.accentSoft }} className="w-9 h-9 rounded-xl items-center justify-center mr-3">
-            <Bot size={18} color={c.accent} />
+          <View style={{ backgroundColor: c.signalTint }} className="w-10 h-10 rounded-xl items-center justify-center mr-3">
+            <Bot size={20} color={c.signal} />
           </View>
           <View className="flex-1">
             <View className="flex-row items-center">
               <Text style={{ color: c.textPrimary }} className="font-bold text-xs">
-                Biblio Assistant
+                Biblio ACE Copilot
               </Text>
-              <View style={{ backgroundColor: '#22C55E22' }} className="px-1.5 py-0.5 rounded ml-2">
-                <Text style={{ color: '#22C55E' }} className="text-[9px] font-bold">24/7 LIVE</Text>
+              <View style={{ backgroundColor: c.settledTint }} className="px-1.5 py-0.5 rounded ml-2">
+                <Text style={{ color: c.settled }} className="text-[9px] font-bold">24/7 ACTIVE</Text>
               </View>
             </View>
             <Text style={{ color: c.textSecondary }} className="text-[11px] mt-0.5" numberOfLines={1}>
-              Ask AI about live chats, Providus settlement, or store tasks
+              Ask ACE about live chats, Providus settlement, or store tasks
             </Text>
           </View>
         </View>
@@ -130,7 +132,7 @@ export default function ChatsTabScreen() {
           className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
         >
           <Text
-            style={{ color: activeFilter === 'all' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            style={{ color: activeFilter === 'all' ? '#FFFFFF' : c.textSecondary }}
             className="text-xs font-bold"
           >
             All ({(chats || []).length})
@@ -146,7 +148,7 @@ export default function ChatsTabScreen() {
           className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
         >
           <Text
-            style={{ color: activeFilter === 'unread' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            style={{ color: activeFilter === 'unread' ? '#FFFFFF' : c.textSecondary }}
             className="text-xs font-bold"
           >
             Unread ({unreadCount})
@@ -162,7 +164,7 @@ export default function ChatsTabScreen() {
           className="px-3.5 py-1.5 rounded-full border flex-row items-center active:opacity-70"
         >
           <Text
-            style={{ color: activeFilter === 'takeover' ? (colorScheme === 'dark' ? '#090A0C' : '#FFFFFF') : c.textSecondary }}
+            style={{ color: activeFilter === 'takeover' ? '#FFFFFF' : c.textSecondary }}
             className="text-xs font-bold"
           >
             Manual ({takeoverCount})
@@ -188,9 +190,10 @@ export default function ChatsTabScreen() {
                 style={{
                   backgroundColor: c.surface,
                   borderColor: chat.unread ? c.accent : c.border,
+                  borderRadius: radius.md,
                   ...shadows.sm,
                 }}
-                className="p-4 rounded-[24px] mb-3 border flex-row items-center active:opacity-80"
+                className="p-4 mb-3 border flex-row items-center active:opacity-80"
               >
                 <View style={{ backgroundColor: c.accentSoft }} className="w-12 h-12 rounded-full items-center justify-center mr-4">
                   <User size={24} color={c.accent} />
@@ -213,8 +216,8 @@ export default function ChatsTabScreen() {
                       {chat.message}
                     </Text>
                     {chat.unread > 0 && (
-                      <View style={{ backgroundColor: c.accent }} className="min-w-[20px] h-5 px-1 rounded-full items-center justify-center">
-                        <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="text-[10px] font-bold">
+                      <View style={{ backgroundColor: c.accent }} className="min-w-[20px] h-5 px-1.5 rounded-full items-center justify-center">
+                        <Text style={{ color: '#FFFFFF' }} className="text-[10px] font-bold">
                           {chat.unread}
                         </Text>
                       </View>

@@ -40,7 +40,7 @@ export function jsonb(value: unknown): ReturnType<typeof sql.json> {
   return sql.json(value as Parameters<typeof sql.json>[0]);
 }
 
-const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6381";
+const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 export const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: null,
   connectTimeout: 10000,

@@ -344,7 +344,7 @@ export default function CRMScreen() {
                       <Text style={{ color: c.textTertiary }} className="text-[10px] font-bold uppercase tracking-wider mb-0.5">
                         Retail Price
                       </Text>
-                      <Text style={{ color: c.textPrimary }} className="text-base font-bold">
+                      <Text style={{ color: c.textPrimary, fontVariant: ['tabular-nums'] }} className="text-base font-bold">
                         ₦{Number(item.price || 0).toLocaleString()}
                       </Text>
                     </View>
@@ -355,7 +355,7 @@ export default function CRMScreen() {
                         </Text>
                         <TrendingDown size={12} color={c.danger} />
                       </View>
-                      <Text style={{ color: c.textPrimary }} className="text-base font-bold">
+                      <Text style={{ color: c.textPrimary, fontVariant: ['tabular-nums'] }} className="text-base font-bold">
                         ₦{Number(item.floor || item.price * 0.85 || 0).toLocaleString()}
                       </Text>
                     </View>

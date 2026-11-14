@@ -510,7 +510,7 @@ export default function LoginScreen() {
                     {/* Direct SMS Verification Channel Badge */}
                     <View
                       style={{
-                        backgroundColor: isDark ? '#064E3B20' : '#ECFDF5',
+                        backgroundColor: c.settledTint,
                         borderColor: '#10B981',
                       }}
                       className="border rounded-2xl p-3.5 mt-4 mb-2 flex-row items-center justify-between"
@@ -539,14 +539,14 @@ export default function LoginScreen() {
                     {/* Mandatory Anti-Fraud Security Disclaimer */}
                     <View
                       style={{
-                        backgroundColor: isDark ? '#2D1F08' : '#FFFBEB',
-                        borderColor: isDark ? '#78350F' : '#FDE68A',
+                        backgroundColor: c.reviewTint,
+                        borderColor: c.review,
                       }}
                       className="p-3.5 rounded-2xl border my-2 flex-row items-start"
                     >
-                      <Lock size={15} color="#D97706" style={{ marginTop: 2, marginRight: 8 }} />
+                      <Lock size={15} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
                       <Text
-                        style={{ color: isDark ? '#FDE68A' : '#92400E' }}
+                        style={{ color: c.review }}
                         className="text-[11px] leading-4 flex-1 font-medium"
                       >
                         <Text className="font-bold">DISCLAIMER:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
@@ -559,13 +559,13 @@ export default function LoginScreen() {
                       style={{
                         backgroundColor: isLoading ? c.border : c.accent,
                       }}
-                      className="h-14 rounded-2xl items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
+                      className="h-[52px] rounded-full items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
                     >
                       {isLoading ? (
                         <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                       ) : (
                         <Text
-                          style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
+                          style={{ color: '#FFFFFF' }}
                           className="text-base font-bold"
                         >
                           Send SMS Passcode
@@ -631,7 +631,7 @@ export default function LoginScreen() {
                     {/* Nodemailer Secure Transport Channel Badge */}
                     <View
                       style={{
-                        backgroundColor: isDark ? '#064E3B20' : '#ECFDF5',
+                        backgroundColor: c.settledTint,
                         borderColor: '#10B981',
                       }}
                       className="border rounded-2xl p-3.5 mt-4 mb-2 flex-row items-center justify-between"
@@ -660,14 +660,14 @@ export default function LoginScreen() {
                     {/* Mandatory Anti-Fraud Security Disclaimer */}
                     <View
                       style={{
-                        backgroundColor: isDark ? '#2D1F08' : '#FFFBEB',
-                        borderColor: isDark ? '#78350F' : '#FDE68A',
+                        backgroundColor: c.reviewTint,
+                        borderColor: c.review,
                       }}
                       className="p-3.5 rounded-2xl border my-2 flex-row items-start"
                     >
-                      <Lock size={15} color="#D97706" style={{ marginTop: 2, marginRight: 8 }} />
+                      <Lock size={15} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
                       <Text
-                        style={{ color: isDark ? '#FDE68A' : '#92400E' }}
+                        style={{ color: c.review }}
                         className="text-[11px] leading-4 flex-1 font-medium"
                       >
                         <Text className="font-bold">DISCLAIMER:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
@@ -680,13 +680,13 @@ export default function LoginScreen() {
                       style={{
                         backgroundColor: isLoading ? c.border : c.accent,
                       }}
-                      className="h-14 rounded-2xl items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
+                      className="h-[52px] rounded-full items-center justify-center mt-3 flex-row active:opacity-80 shadow-sm"
                     >
                       {isLoading ? (
                         <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                       ) : (
                         <Text
-                          style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
+                          style={{ color: '#FFFFFF' }}
                           className="text-base font-bold"
                         >
                           Send Email Passcode
@@ -727,7 +727,7 @@ export default function LoginScreen() {
                   <Animated.View
                     entering={FadeInDown.duration(300).springify()}
                     style={{
-                      backgroundColor: isDark ? '#1C2E24' : '#E8F5E9',
+                      backgroundColor: c.settledTint,
                       borderColor: '#10B981',
                     }}
                     className="border rounded-2xl p-3.5 mb-4 flex-row items-center justify-between shadow-sm"
@@ -806,14 +806,14 @@ export default function LoginScreen() {
                 {/* Mandatory Security Disclaimer */}
                 <View
                   style={{
-                    backgroundColor: isDark ? '#2D1F08' : '#FFFBEB',
-                    borderColor: isDark ? '#78350F' : '#FDE68A',
+                    backgroundColor: c.reviewTint,
+                    borderColor: c.review,
                   }}
                   className="p-3 rounded-2xl border my-2 flex-row items-start"
                 >
-                  <Lock size={14} color="#D97706" style={{ marginTop: 2, marginRight: 8 }} />
+                  <Lock size={14} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
                   <Text
-                    style={{ color: isDark ? '#FDE68A' : '#92400E' }}
+                    style={{ color: c.review }}
                     className="text-[10px] leading-4 flex-1 font-medium"
                   >
                     <Text className="font-bold">SECURITY NOTICE:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
@@ -885,7 +885,7 @@ export default function LoginScreen() {
                           {isEmailSending ? (
                             <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                           ) : (
-                            <Text style={{ color: isDark ? '#090A0C' : '#FFFFFF' }} className="text-xs font-bold">
+                            <Text style={{ color: '#FFFFFF' }} className="text-xs font-bold">
                               Send Code
                             </Text>
                           )}
@@ -1092,13 +1092,13 @@ export default function LoginScreen() {
                   onPress={handleConfirmFinishAccount}
                   disabled={isLoading}
                   style={{ backgroundColor: c.accent }}
-                  className="h-14 rounded-2xl items-center justify-center flex-row active:opacity-85 shadow-sm mb-4"
+                  className="h-[52px] rounded-full items-center justify-center flex-row active:opacity-85 shadow-sm mb-4"
                 >
                   {isLoading ? (
                     <InlineLoadingDots color={isDark ? '#090A0C' : '#FFFFFF'} />
                   ) : (
                     <Text
-                      style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
+                      style={{ color: '#FFFFFF' }}
                       className="text-base font-bold"
                     >
                       Confirm
@@ -1304,7 +1304,7 @@ export default function LoginScreen() {
               className="py-3.5 rounded-2xl items-center justify-center active:opacity-80"
             >
               <Text
-                style={{ color: isDark ? '#090A0C' : '#FFFFFF' }}
+                style={{ color: '#FFFFFF' }}
                 className="font-bold text-sm"
               >
                 Got It

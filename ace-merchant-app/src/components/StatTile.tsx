@@ -38,7 +38,7 @@ export function StatTile({ icon: Icon, iconColor, label, value, caption, onPress
       <Text style={{ color: c.textSecondary }} className="text-xs font-bold uppercase tracking-wider mb-1">
         {label}
       </Text>
-      <Text style={{ color: c.textPrimary }} className="text-3xl font-bold tracking-tight">
+      <Text style={{ color: c.textPrimary, fontVariant: ['tabular-nums'] }} className="text-3xl font-bold tracking-tight">
         {value}
       </Text>
       {caption && (

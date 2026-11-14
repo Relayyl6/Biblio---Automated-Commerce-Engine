@@ -181,7 +181,7 @@ function startService(service: ServiceConfig) {
     cwd: ROOT_DIR,
     env: { 
       ...process.env, 
-      REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6381',
+      REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
       NODE_OPTIONS: '--max-old-space-size=2048 --dns-result-order=ipv4first',
       FORCE_COLOR: '1' 
     },

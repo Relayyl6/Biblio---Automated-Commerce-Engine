@@ -21,7 +21,7 @@ import Animated, {
   FadeInLeft,
   FadeOutRight
 } from 'react-native-reanimated';
-import { colors } from '../../theme';
+import { colors, radius, shadows } from '../../theme';
 import { useInbox } from '../../src/api/client';
 
 function useInboxBadgeCount() {
@@ -36,6 +36,7 @@ function TabIcon({
   inactive,
   activeBg,
   badge,
+  badgeBg,
 }: {
   Icon: any;
   isFocused: boolean;
@@ -43,6 +44,7 @@ function TabIcon({
   inactive: string;
   activeBg: string;
   badge?: number;
+  badgeBg?: string;
 }) {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -50,7 +52,7 @@ function TabIcon({
   }));
 
   React.useEffect(() => {
-    scale.value = withSpring(isFocused ? 1.08 : 1, { damping: 12, stiffness: 180 });
+    scale.value = withSpring(isFocused ? 1.08 : 1, { damping: 14, stiffness: 220 });
   }, [isFocused]);
 
   return (
@@ -61,7 +63,7 @@ function TabIcon({
       <Icon size={22} color={isFocused ? accent : inactive} strokeWidth={isFocused ? 2.4 : 2} />
       {badge && badge > 0 ? (
         <View
-          style={{ backgroundColor: '#EF4444' }}
+          style={{ backgroundColor: badgeBg || colors.light.review }}
           className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full items-center justify-center px-1"
         >
           <Text className="text-white text-[9px] font-bold">{badge > 9 ? '9+' : badge}</Text>
@@ -82,11 +84,13 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const inboxBadge = useInboxBadgeCount();
   const [showMore, setShowMore] = useState(false);
   const [kbVisible, setKbVisible] = useState(false);
+
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', () => setKbVisible(true));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKbVisible(false));
     return () => { show.remove(); hide.remove(); };
   }, []);
+
   if (kbVisible) return null;
 
   const icons: Record<string, typeof Home> = {
@@ -101,32 +105,33 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       style={{
         position: 'absolute',
         bottom: Math.max(insets.bottom, 16),
-        left: 20,
-        right: 20,
+        left: 16,
+        right: 16,
         height: 64,
         flexDirection: 'row',
         alignItems: 'center',
       }}
       pointerEvents="box-none"
     >
+      {/* Floating glass pill (DESIGN.md Section 9.6 & 5.2) */}
       <View
         style={{
           flex: 1,
           height: '100%',
-          marginRight: 14,
-          borderRadius: 32,
-          backgroundColor: isDark ? 'rgba(21,23,26,0.92)' : 'rgba(255,255,255,0.96)',
+          marginRight: 12,
+          borderRadius: radius.pill,
+          backgroundColor: isDark ? 'rgba(21,23,28,0.92)' : 'rgba(255,255,255,0.92)',
           borderWidth: 1,
-          borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',
+          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.65)',
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-around',
-          paddingHorizontal: 6,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 10 },
-          shadowOpacity: isDark ? 0.4 : 0.12,
-          shadowRadius: 20,
-          elevation: 8,
+          paddingHorizontal: 8,
+          shadowColor: '#0F1115',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: isDark ? 0.45 : 0.10,
+          shadowRadius: 24,
+          elevation: 6,
         }}
       >
         {!showMore ? (
@@ -163,6 +168,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                     inactive={c.textTertiary}
                     activeBg={c.accentSoft}
                     badge={route.name === 'inbox' ? inboxBadge : undefined}
+                    badgeBg={c.review}
                   />
                 </Pressable>
               );
@@ -192,6 +198,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
         )}
       </View>
 
+      {/* Floating search pill */}
       <Pressable
         onPress={() => {
           safeHaptics.impact();
@@ -200,20 +207,20 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
         accessibilityRole="button"
         accessibilityLabel="Search"
         style={{
-          width: 64,
-          height: 64,
-          borderRadius: 32,
+          width: 56,
+          height: 56,
+          borderRadius: radius.pill,
           backgroundColor: c.accent,
           alignItems: 'center',
           justifyContent: 'center',
           shadowColor: c.accent,
           shadowOffset: { width: 0, height: 8 },
           shadowOpacity: 0.35,
-          shadowRadius: 15,
-          elevation: 8,
+          shadowRadius: 16,
+          elevation: 6,
         }}
       >
-        <Search size={24} color={isDark ? '#090A0C' : '#FFFFFF'} />
+        <Search size={22} color="#FFFFFF" />
       </Pressable>
     </View>
   );
@@ -233,7 +240,7 @@ export default function TabsLayout() {
         sceneStyle: { backgroundColor: c.bg },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Pulse' }} />
+      <Tabs.Screen name="index" options={{ title: 'Home' }} />
       <Tabs.Screen name="chats" options={{ title: 'Chats' }} />
       <Tabs.Screen name="inbox" options={{ title: 'Inbox' }} />
       <Tabs.Screen name="more" options={{ title: 'More' }} />
@@ -241,4 +248,3 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
-

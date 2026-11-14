@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
-import { CreditCard, Receipt, Share2, AlertTriangle, RefreshCw } from 'lucide-react-native';
+import { CreditCard, Receipt, Share2, AlertTriangle, RefreshCw, ChevronRight } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { useFinanceData, useSendChatMessage } from '../src/api/client';
 import { useAlert } from '../src/store/alertStore';
-import { colors, shadows } from '../theme';
+import { colors, radius, shadows, typography } from '../theme';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { EmptyState } from '../src/components/EmptyState';
+import { StatusPill } from '../src/components/StatusPill';
 
 export default function FinanceScreen() {
   const { data, isLoading, isError, error, refetch, isRefetching } = useFinanceData();
   const { colorScheme } = useColorScheme();
-  const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const isDark = colorScheme === 'dark';
+  const c = isDark ? colors.dark : colors.light;
   const alert = useAlert();
   const sendChatMessage = useSendChatMessage();
   const [sendingId, setSendingId] = useState<string | null>(null);
@@ -74,33 +76,55 @@ export default function FinanceScreen() {
       >
         {/* Error Banner with Retry */}
         {isError && (
-          <View style={{ backgroundColor: c.dangerSoft, borderColor: c.danger }} className="p-4 rounded-2xl border mb-4 flex-row items-center justify-between">
+          <View style={{ backgroundColor: c.alertTint, borderColor: c.alert, borderRadius: radius.md }} className="p-4 border mb-4 flex-row items-center justify-between">
             <View className="flex-row items-center flex-1 mr-2">
-              <AlertTriangle size={18} color={c.danger} />
-              <Text style={{ color: c.danger }} className="text-xs font-semibold ml-2">
+              <AlertTriangle size={18} color={c.alert} />
+              <Text style={{ color: c.alert }} className="text-xs font-semibold ml-2">
                 {(error as any)?.message || 'Failed to sync live financial ledger.'}
               </Text>
             </View>
-            <Pressable onPress={() => refetch()} className="px-3 py-1.5 rounded-xl bg-red-500/10 active:opacity-70 flex-row items-center">
-              <RefreshCw size={12} color={c.danger} />
-              <Text style={{ color: c.danger }} className="text-xs font-bold ml-1">Retry</Text>
+            <Pressable onPress={() => refetch()} className="px-3 py-1.5 rounded-full bg-red-500/10 active:opacity-70 flex-row items-center">
+              <RefreshCw size={12} color={c.alert} />
+              <Text style={{ color: c.alert }} className="text-xs font-bold ml-1">Retry</Text>
             </Pressable>
           </View>
         )}
 
-        {/* Receivables hero */}
-        <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-6 rounded-[24px] mb-4 border overflow-hidden relative">
+        {/* Receivables Hero (DESIGN.md Section 10.4) */}
+        <View
+          style={{
+            backgroundColor: c.surface,
+            borderColor: c.border,
+            borderRadius: radius.lg,
+            ...shadows.sm,
+          }}
+          className="p-6 mb-4 border overflow-hidden relative"
+        >
           <View style={{ backgroundColor: c.accentSoft }} className="absolute -top-10 -right-10 w-32 h-32 rounded-full opacity-60" />
           <Text style={{ color: c.textSecondary }} className="text-sm font-medium mb-2">
             Total Outstanding Receivables
           </Text>
-          <Text style={{ color: c.textPrimary }} className="text-4xl font-bold tracking-tight">
+          <Text
+            style={{
+              color: c.textPrimary,
+              ...typography.tabularNums,
+            }}
+            className="text-4xl font-extrabold tracking-tight"
+          >
             ₦{Number(data?.receivables_total || 0).toLocaleString()}
           </Text>
         </View>
 
-        {/* Reconciliation */}
-        <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-5 rounded-[24px] border mb-6">
+        {/* Payment Reconciliation */}
+        <View
+          style={{
+            backgroundColor: c.surface,
+            borderColor: c.border,
+            borderRadius: radius.md,
+            ...shadows.sm,
+          }}
+          className="p-5 border mb-5"
+        >
           <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-4">
             Payment Reconciliation
           </Text>
@@ -110,57 +134,94 @@ export default function FinanceScreen() {
             (data?.reconciliation || []).map((rec: any, idx: number) => (
               <View
                 key={idx}
-                style={{ borderBottomColor: c.border, borderBottomWidth: idx === (data?.reconciliation?.length || 0) - 1 ? 0 : 1 }}
+                style={{
+                  borderBottomColor: c.border,
+                  borderBottomWidth: idx === (data?.reconciliation?.length || 0) - 1 ? 0 : 1,
+                }}
                 className="flex-row justify-between items-center py-3"
               >
                 <View className="flex-row items-center">
-                  <CreditCard size={16} color={c.accent} style={{ marginRight: 8 }} />
-                  <Text style={{ color: c.textPrimary }} className="font-medium capitalize">
-                    {rec?.payment_method || 'Unknown Method'}
-                  </Text>
+                  <CreditCard size={18} color={c.accent} style={{ marginRight: 10 }} />
+                  <View>
+                    <Text style={{ color: c.textPrimary }} className="font-semibold capitalize text-sm">
+                      {rec?.payment_method || 'Unknown Method'}
+                    </Text>
+                    <Text style={{ color: c.textTertiary }} className="text-xs">
+                      {Number(rec?.count || 0)} transactions
+                    </Text>
+                  </View>
                 </View>
                 <View className="items-end">
-                  <Text style={{ color: c.success }} className="font-bold">
-                    ₦{Number(rec?.total || 0).toLocaleString()}
+                  <Text
+                    style={{
+                      color: c.settled,
+                      ...typography.tabularNums,
+                    }}
+                    className="font-bold text-base"
+                  >
+                    +₦{Number(rec?.total || 0).toLocaleString()}
                   </Text>
-                  <Text style={{ color: c.textSecondary }} className="text-xs">
-                    {Number(rec?.count || 0)} transactions
-                  </Text>
+                  <StatusPill label="Verified" tone="settled" />
                 </View>
               </View>
             ))
           )}
         </View>
 
-        {/* AI drafted follow-ups */}
-        <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-5 rounded-[24px] border mb-6">
+        {/* Pending Payments & AI Follow-Ups (DESIGN.md Section 10.4) */}
+        <View
+          style={{
+            backgroundColor: c.surface,
+            borderColor: c.border,
+            borderRadius: radius.md,
+            ...shadows.sm,
+          }}
+          className="p-5 border mb-5"
+        >
           <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-4">
-            Pending Payments (AI Drafts)
+            Pending Receivables (AI Follow-Ups)
           </Text>
           {!hasOutstanding ? (
-            <Text style={{ color: c.textSecondary }}>No pending payments.</Text>
+            <Text style={{ color: c.textSecondary }}>No pending receivables.</Text>
           ) : (
             (data?.outstanding || []).map((o: any, idx: number) => (
-              <View key={idx} style={{ backgroundColor: c.surfaceAlt, borderColor: c.border }} className="mb-3 p-4 rounded-xl border">
-                <View className="flex-row justify-between mb-2">
-                  <Text style={{ color: c.textPrimary }} className="font-bold">
+              <View
+                key={idx}
+                style={{
+                  backgroundColor: c.wellBg,
+                  borderColor: c.border,
+                  borderRadius: radius.sm,
+                }}
+                className="mb-3 p-4 border"
+              >
+                <View className="flex-row justify-between items-center mb-2">
+                  <Text style={{ color: c.textPrimary }} className="font-bold text-sm">
                     {o.name || 'Customer'}
                   </Text>
-                  <Text style={{ color: c.warning }} className="font-bold">
+                  <Text
+                    style={{
+                      color: c.review,
+                      ...typography.tabularNums,
+                    }}
+                    className="font-bold text-base"
+                  >
                     ₦{Number(o.total_amount || 0).toLocaleString()}
                   </Text>
                 </View>
-                <Text style={{ color: c.textSecondary }} className="text-sm mb-3 italic">
+                <Text style={{ color: c.textSecondary }} className="text-xs mb-3 italic">
                   "{o.draft_message || 'Payment pending settlement'}"
                 </Text>
                 <Pressable
                   onPress={() => handleSendReminder(o)}
                   disabled={sendingId === (o.id || o.name || 'reminder')}
-                  style={{ backgroundColor: c.accent }}
-                  className="py-2.5 rounded-lg items-center active:opacity-80"
+                  style={{
+                    backgroundColor: c.accent,
+                    borderRadius: radius.pill,
+                  }}
+                  className="h-10 items-center justify-center active:opacity-85"
                 >
-                  <Text style={{ color: colorScheme === 'dark' ? '#090A0C' : '#FFFFFF' }} className="font-bold">
-                    {sendingId === (o.id || o.name || 'reminder') ? 'Dispatching...' : 'Send Reminder'}
+                  <Text style={{ color: '#FFFFFF' }} className="font-bold text-xs">
+                    {sendingId === (o.id || o.name || 'reminder') ? 'Dispatching...' : 'Dispatch Reminder via WhatsApp'}
                   </Text>
                 </Pressable>
               </View>
@@ -168,8 +229,16 @@ export default function FinanceScreen() {
           )}
         </View>
 
-        {/* Margin analysis */}
-        <View style={{ backgroundColor: c.surface, borderColor: c.border, ...shadows.sm }} className="p-5 rounded-[24px] border mb-6">
+        {/* Margin Analysis */}
+        <View
+          style={{
+            backgroundColor: c.surface,
+            borderColor: c.border,
+            borderRadius: radius.md,
+            ...shadows.sm,
+          }}
+          className="p-5 border mb-6"
+        >
           <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-4">
             Margin Analysis
           </Text>
@@ -179,17 +248,32 @@ export default function FinanceScreen() {
             (data?.margins || []).map((m: any, idx: number) => (
               <View
                 key={idx}
-                style={{ borderBottomColor: c.border, borderBottomWidth: idx === (data?.margins?.length || 0) - 1 ? 0 : 1 }}
+                style={{
+                  borderBottomColor: c.border,
+                  borderBottomWidth: idx === (data?.margins?.length || 0) - 1 ? 0 : 1,
+                }}
                 className="flex-row justify-between items-center py-3"
               >
-                <Text style={{ color: c.textPrimary }} className="flex-1 mr-2" numberOfLines={1}>
+                <Text style={{ color: c.textPrimary }} className="flex-1 mr-2 text-sm font-medium" numberOfLines={1}>
                   {m?.name || 'Unnamed Product'}
                 </Text>
                 <View className="items-end">
-                  <Text style={{ color: c.success }} className="font-bold">
-                    ₦{Number(m?.margin || 0).toLocaleString()} profit
+                  <Text
+                    style={{
+                      color: c.settled,
+                      ...typography.tabularNums,
+                    }}
+                    className="font-bold text-sm"
+                  >
+                    +₦{Number(m?.margin || 0).toLocaleString()} profit
                   </Text>
-                  <Text style={{ color: c.textSecondary }} className="text-xs">
+                  <Text
+                    style={{
+                      color: c.textSecondary,
+                      ...typography.tabularNums,
+                    }}
+                    className="text-xs"
+                  >
                     Cost: ₦{Number(m?.cost || 0).toLocaleString()}
                   </Text>
                 </View>
@@ -199,7 +283,11 @@ export default function FinanceScreen() {
         </View>
 
         {!hasReconciliation && !hasOutstanding && !hasMargins && !isError && (
-          <EmptyState icon={Receipt} title="No financial activity yet" subtitle="Reconciliation, pending payments and margins will show up here once orders start coming in." />
+          <EmptyState
+            icon={Receipt}
+            title="No financial activity yet"
+            subtitle="Reconciliation, pending payments and margins will show up here once orders start coming in."
+          />
         )}
       </ScrollView>
     </View>

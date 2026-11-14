@@ -10,7 +10,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Check, X, Clock } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
-import { colors } from '../../theme';
+import { colors, radius, shadows } from '../../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.4;
@@ -28,9 +28,16 @@ export interface DraftCardProps {
   onSnooze?: (id: string) => void;
 }
 
+/**
+ * SwipeableDraftCard
+ * Follows DESIGN.md Section 9.3 & 10.1:
+ * Exception card: left 4px accent bar in review amber (c.review),
+ * clear title and subtitle, with reversible swipe actions.
+ */
 export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprove, onReject, onSnooze }: DraftCardProps) {
   const { colorScheme } = useColorScheme();
-  const c = colorScheme === 'dark' ? colors.dark : colors.light;
+  const isDark = colorScheme === 'dark';
+  const c = isDark ? colors.dark : colors.light;
   const [isDismissed, setIsDismissed] = React.useState(false);
 
   const translateX = useSharedValue(0);
@@ -73,9 +80,9 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
 
   const bgStyle = useAnimatedStyle(() => {
     let bgColor = c.surfaceAlt;
-    if (translateX.value > 50) bgColor = c.successSoft;
-    else if (translateX.value < -50) bgColor = c.dangerSoft;
-    
+    if (translateX.value > 50) bgColor = c.settledTint;
+    else if (translateX.value < -50) bgColor = c.alertTint;
+
     return {
       backgroundColor: bgColor,
     };
@@ -90,22 +97,35 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
       {/* Background action indicators */}
       <Animated.View style={[bgStyle]} className="absolute inset-0 flex-row items-center justify-between px-4 rounded-[24px]">
         <View className="flex-row items-center">
-          <Check size={28} color={c.success} />
-          <Text style={{ color: c.success }} className="ml-2 font-bold text-lg">Execute</Text>
+          <Check size={28} color={c.settled} />
+          <Text style={{ color: c.settled }} className="ml-2 font-bold text-lg">Execute</Text>
         </View>
         <View className="flex-row items-center">
-          <Text style={{ color: c.danger }} className="mr-2 font-bold text-lg">Discard</Text>
-          <X size={28} color={c.danger} />
+          <Text style={{ color: c.alert }} className="mr-2 font-bold text-lg">Discard</Text>
+          <X size={28} color={c.alert} />
         </View>
       </Animated.View>
 
       <GestureDetector gesture={panGesture}>
-        <Animated.View style={[animatedStyle, { backgroundColor: c.surface, borderColor: c.border }]} className="flex-1 p-5 border rounded-[24px] shadow-sm">
+        <Animated.View
+          style={[
+            animatedStyle,
+            {
+              backgroundColor: c.surface,
+              borderColor: c.border,
+              borderLeftColor: c.review,
+              borderLeftWidth: 4,
+              borderRadius: radius.md,
+              ...shadows.sm,
+            },
+          ]}
+          className="flex-1 p-5 border"
+        >
           <View className="flex-row justify-between items-start mb-2">
             <View className="flex-row items-center" style={{ gap: 6 }}>
-              <View 
-                style={{ backgroundColor: c.accentSoft }}
-                className="px-3 py-1 rounded-full"
+              <View
+                style={{ backgroundColor: c.accentSoft, borderRadius: radius.pill }}
+                className="px-3 py-1"
               >
                 <Text style={{ color: c.accent }} className="text-xs font-bold uppercase tracking-wider">
                   {displayType}
@@ -113,21 +133,21 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
               </View>
 
               {status === 'snoozed' && (
-                <View 
-                  style={{ backgroundColor: '#F59E0B20' }}
-                  className="px-2.5 py-1 rounded-full flex-row items-center"
+                <View
+                  style={{ backgroundColor: c.reviewTint, borderRadius: radius.pill }}
+                  className="px-2.5 py-1 flex-row items-center"
                 >
-                  <Clock size={11} color="#F59E0B" style={{ marginRight: 3 }} />
-                  <Text style={{ color: '#F59E0B' }} className="text-[10px] font-bold uppercase">
+                  <Clock size={11} color={c.review} style={{ marginRight: 3 }} />
+                  <Text style={{ color: c.review }} className="text-[10px] font-bold uppercase">
                     Snoozed
                   </Text>
                 </View>
               )}
             </View>
-            
+
             {onSnooze && (
-              <Pressable 
-                onPress={() => onSnooze(id)} 
+              <Pressable
+                onPress={() => onSnooze(id)}
                 style={{ backgroundColor: c.surfaceAlt }}
                 className="w-8 h-8 rounded-full items-center justify-center active:opacity-70"
               >
@@ -135,8 +155,8 @@ export function SwipeableDraftCard({ id, type, title, subtitle, status, onApprov
               </Pressable>
             )}
           </View>
-          
-          <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-1">{title || 'Pending Draft'}</Text>
+
+          <Text style={{ color: c.textPrimary }} className="text-lg font-bold tracking-tight mb-1">{title || 'Pending Decision'}</Text>
           <Text style={{ color: c.textSecondary }} className="text-sm leading-relaxed">{subtitle || ''}</Text>
         </Animated.View>
       </GestureDetector>

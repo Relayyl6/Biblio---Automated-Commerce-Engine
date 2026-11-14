@@ -1,14 +1,12 @@
 import net from 'net';
-import { execSync } from 'child_process';
 
 export const REDIS_BRIDGE_PORT = 6381;
 
 export function startRedisBridge(): Promise<number> {
   return new Promise((resolve) => {
-    const wslIp = process.env.WSL_IP || '172.27.83.102';
-
     const server = net.createServer((incoming) => {
-      const outgoing = net.connect(6380, wslIp);
+      // Connect to local WSL forwarded port 6379, with fallback to 6380
+      const outgoing = net.connect(6379, '127.0.0.1');
       incoming.pipe(outgoing);
       outgoing.pipe(incoming);
 
@@ -17,7 +15,7 @@ export function startRedisBridge(): Promise<number> {
     });
 
     server.listen(REDIS_BRIDGE_PORT, '127.0.0.1', () => {
-      console.log(`[redis-bridge] Bridging 127.0.0.1:${REDIS_BRIDGE_PORT} -> WSL ${wslIp}:6380 (Redis 7)`);
+      console.log(`[redis-bridge] Bridging 127.0.0.1:${REDIS_BRIDGE_PORT} -> 127.0.0.1:6379 (Redis 7)`);
       resolve(REDIS_BRIDGE_PORT);
     });
 
@@ -33,7 +31,6 @@ export function startRedisBridge(): Promise<number> {
   });
 }
 
-// When run directly as a script
 if (process.argv[1]?.includes('redis-bridge')) {
   startRedisBridge();
 }
