@@ -12,10 +12,10 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Editorial Stepped Headline Section */}
-        <div className="relative w-full mb-8 sm:mb-14">
+        <div className="relative w-full mb-16 sm:mb-24 lg:mb-32">
           
           {/* Top Line & Description Block */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end relative z-30">
             
             {/* Headline Line 1: "Your business" */}
             <div className="lg:col-span-8 animate-entrance">
@@ -32,20 +32,20 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
             </div>
           </div>
 
-          {/* Headline Line 2: "runs itself." (Pushed right so the two lines step down like stairs) */}
-          <div className="w-full flex justify-end mt-2 sm:mt-4 animate-entrance [animation-delay:200ms]">
+          {/* Headline Line 2: "runs itself." (Pushed right so the two lines step down like stairs - fully unobstructed) */}
+          <div className="w-full flex justify-end mt-3 sm:mt-6 animate-entrance [animation-delay:200ms] relative z-30">
             <h1 className="hero-stagger-title font-black text-ink-950 text-5xl sm:text-7xl md:text-8xl lg:text-[130px] xl:text-[150px] tracking-tight leading-[0.88] text-right select-none">
               runs <span className="text-ember-500">itself.</span>
             </h1>
           </div>
 
-          {/* 3D Cut-out Brand Object (Transparent PNG floating phone bridging headline and photo, rotated -15deg) */}
+          {/* 3D Cut-out Brand Object (Transparent floating phone bridging headline seam and photo, perfectly clear of headline text) */}
           <div 
             onClick={() => onOpenWaitlist()}
-            className="absolute top-[32%] sm:top-[38%] right-[2%] sm:right-[12%] lg:right-[20%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500"
+            className="absolute -bottom-20 sm:-bottom-28 md:-bottom-36 lg:-bottom-44 right-[2%] sm:right-[5%] md:right-[8%] lg:right-[12%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500"
             title="Join the early access"
           >
-            <div className="relative w-40 sm:w-56 md:w-68 lg:w-80 filter drop-shadow-[0_28px_56px_rgba(15,17,21,0.30)]">
+            <div className="relative w-36 sm:w-48 md:w-56 lg:w-68 filter drop-shadow-[0_28px_56px_rgba(15,17,21,0.35)]">
               <img
                 src="/hero-cutout-phone.png"
                 alt="Biblio Autonomous Commerce Engine 3D interface"

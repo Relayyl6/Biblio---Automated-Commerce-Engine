@@ -437,12 +437,11 @@ export default function LoginScreen() {
             </View>
           </Animated.View>
 
-          {/* ── Main Form Card ── */}
+          {/* ── Unboxed Native Form Surface ── */}
           <Animated.View
             layout={Layout.springify()}
             entering={FadeInUp.duration(400).springify()}
-            style={{ backgroundColor: c.surface, borderColor: c.border }}
-            className="border rounded-3xl p-6 shadow-sm mb-6"
+            className="w-full mb-6"
           >
             {/* STEP 1: Phone / Mobile Entry (Mobile-First Authentication) */}
             {step === 'phone' && (
@@ -507,49 +506,12 @@ export default function LoginScreen() {
                       </Animated.View>
                     )}
 
-                    {/* Direct SMS Verification Channel Badge */}
-                    <View
-                      style={{
-                        backgroundColor: c.settledTint,
-                        borderColor: '#10B981',
-                      }}
-                      className="border rounded-2xl p-3.5 mt-4 mb-2 flex-row items-center justify-between"
-                    >
-                      <View className="flex-row items-center flex-1 mr-2">
-                        <View className="w-9 h-9 rounded-xl bg-emerald-500/20 items-center justify-center mr-3">
-                          <Smartphone size={18} color="#10B981" />
-                        </View>
-                        <View className="flex-1">
-                          <View className="flex-row items-center">
-                            <Text style={{ color: '#10B981' }} className="text-xs font-bold">
-                              Direct SMS Verification
-                            </Text>
-                            <View className="ml-2 bg-emerald-500/15 px-1.5 py-0.2 rounded">
-                              <Text className="text-[9px] font-bold text-emerald-500">Clerk & Twilio</Text>
-                            </View>
-                          </View>
-                          <Text style={{ color: c.textTertiary }} className="text-[10px] mt-0.5 leading-tight">
-                            One-time passcode dispatched directly to your mobile carrier
-                          </Text>
-                        </View>
-                      </View>
-                      <ShieldCheck size={16} color="#10B981" />
-                    </View>
+                    
 
-                    {/* Mandatory Anti-Fraud Security Disclaimer */}
-                    <View
-                      style={{
-                        backgroundColor: c.reviewTint,
-                        borderColor: c.review,
-                      }}
-                      className="p-3.5 rounded-2xl border my-2 flex-row items-start"
-                    >
-                      <Lock size={15} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
-                      <Text
-                        style={{ color: c.review }}
-                        className="text-[11px] leading-4 flex-1 font-medium"
-                      >
-                        <Text className="font-bold">DISCLAIMER:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
+                    <View className="py-2.5 my-1 flex-row items-center">
+                      <Lock size={13} color={c.textTertiary} style={{ marginRight: 6 }} />
+                      <Text style={{ color: c.textTertiary }} className="text-[11px] leading-4 flex-1">
+                        Biblio will never ask for your verification code. Keep it confidential.
                       </Text>
                     </View>
 
@@ -628,49 +590,12 @@ export default function LoginScreen() {
                       </Animated.Text>
                     )}
 
-                    {/* Nodemailer Secure Transport Channel Badge */}
-                    <View
-                      style={{
-                        backgroundColor: c.settledTint,
-                        borderColor: '#10B981',
-                      }}
-                      className="border rounded-2xl p-3.5 mt-4 mb-2 flex-row items-center justify-between"
-                    >
-                      <View className="flex-row items-center flex-1 mr-2">
-                        <View className="w-9 h-9 rounded-xl bg-emerald-500/20 items-center justify-center mr-3">
-                          <Mail size={18} color="#10B981" />
-                        </View>
-                        <View className="flex-1">
-                          <View className="flex-row items-center">
-                            <Text style={{ color: '#10B981' }} className="text-xs font-bold">
-                              Nodemailer Secure Email Relay
-                            </Text>
-                            <View className="ml-2 bg-emerald-500/15 px-1.5 py-0.2 rounded">
-                              <Text className="text-[9px] font-bold text-emerald-500">SMTP Auth</Text>
-                            </View>
-                          </View>
-                          <Text style={{ color: c.textTertiary }} className="text-[10px] mt-0.5 leading-tight">
-                            6-digit security token delivered directly to your inbox
-                          </Text>
-                        </View>
-                      </View>
-                      <ShieldCheck size={16} color="#10B981" />
-                    </View>
+                    
 
-                    {/* Mandatory Anti-Fraud Security Disclaimer */}
-                    <View
-                      style={{
-                        backgroundColor: c.reviewTint,
-                        borderColor: c.review,
-                      }}
-                      className="p-3.5 rounded-2xl border my-2 flex-row items-start"
-                    >
-                      <Lock size={15} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
-                      <Text
-                        style={{ color: c.review }}
-                        className="text-[11px] leading-4 flex-1 font-medium"
-                      >
-                        <Text className="font-bold">DISCLAIMER:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
+                    <View className="py-2.5 my-1 flex-row items-center">
+                      <Lock size={13} color={c.textTertiary} style={{ marginRight: 6 }} />
+                      <Text style={{ color: c.textTertiary }} className="text-[11px] leading-4 flex-1">
+                        Biblio will never ask for your verification code. Keep it confidential.
                       </Text>
                     </View>
 
@@ -803,20 +728,10 @@ export default function LoginScreen() {
                   ))}
                 </View>
 
-                {/* Mandatory Security Disclaimer */}
-                <View
-                  style={{
-                    backgroundColor: c.reviewTint,
-                    borderColor: c.review,
-                  }}
-                  className="p-3 rounded-2xl border my-2 flex-row items-start"
-                >
-                  <Lock size={14} color={c.review} style={{ marginTop: 2, marginRight: 8 }} />
-                  <Text
-                    style={{ color: c.review }}
-                    className="text-[10px] leading-4 flex-1 font-medium"
-                  >
-                    <Text className="font-bold">SECURITY NOTICE:</Text> Never share this security code with anyone. Biblio will NEVER ask for your code via call, SMS, email, or chat.
+                <View className="py-2.5 my-1 flex-row items-center">
+                  <Lock size={13} color={c.textTertiary} style={{ marginRight: 6 }} />
+                  <Text style={{ color: c.textTertiary }} className="text-[11px] leading-4 flex-1">
+                    Biblio will never ask for your verification code. Keep it confidential.
                   </Text>
                 </View>
 

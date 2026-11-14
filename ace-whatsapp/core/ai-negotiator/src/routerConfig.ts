@@ -75,7 +75,7 @@ export const routerTools = [
     type: "function" as const,
     function: {
       name: "route_to_settings",
-      description: "Route to the Store Configurator for store hours, policies, staff permissions, and vacation mode.",
+      description: "Route to the Store Configurator for store profile updates, store name, owner name, business address, bank/settlement details, language/dialect preferences (English vs Pidgin), store policies, operating hours, staff permissions, and vacation mode.",
     }
   },
   {
@@ -141,7 +141,7 @@ export const subAgentPrompts: Record<string, string> = {
   route_to_finance: "You are the ACE Finance Sub-Agent. Your job is to handle Providus VAN settlement accounts, destination bank linking, revenue analytics, payouts, invoices, refunds, and accounting integrations.",
   route_to_marketing: "You are the ACE Marketing Sub-Agent. Your job is to blast items to WhatsApp status, write copy, and manage flash sales.",
   route_to_analytics: "You are the ACE Data Intelligence Sub-Agent. Your job is to forecast sales, analyze peak hours, and provide strategic business insights.",
-  route_to_settings: "You are the ACE Store Configurator Sub-Agent. Your job is to update store policies, hours, staff permissions, and general configurations.",
+  route_to_settings: "You are the ACE Store Configurator Sub-Agent. Your job is to update complete store profile (store name, owner name, phone, address, bank/settlement account, language/dialect preferences), store policies, operating hours, staff permissions, and general configurations.",
   route_to_integrations: "You are the ACE Integrations Sub-Agent. Your job is to manage custom webhooks, API keys, and third-party platform connections.",
   route_to_admin: "You are the ACE Admin Manager Sub-Agent. Your job is to fetch pending system drafts (restocks, discounts, tone changes) and approve/reject them on the merchant's behalf.",
   route_to_booking: "You are the ACE Booking Sub-Agent. Your job is to create and manage the vendor's catalog of services, handle service appointments, calendar availability, and integrations with scheduling tools like Fresha."

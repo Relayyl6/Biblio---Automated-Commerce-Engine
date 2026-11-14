@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
 import {
   View,
   Text,
@@ -49,6 +50,7 @@ import {
   RefreshCw,
   Camera,
   Calendar,
+  Plus,
 } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 import { colors } from '../theme';
@@ -151,6 +153,10 @@ export default function BiblioAssistantScreen() {
   const [selectedChannel, setSelectedChannel] = useState<ChannelFilter>('all');
   const [selectedCategory, setSelectedCategory] = useState<CategoryTray>('products');
   const [isIdentityExpanded, setIsIdentityExpanded] = useState(false);
+  const [isActionLauncherOpen, setIsActionLauncherOpen] = useState(false);
+  const [optimisticMessages, setOptimisticMessages] = useState<AgentMessage[]>([]);
+  const [isAgentProcessing, setIsAgentProcessing] = useState(false);
+  const [agentProcessingStep, setAgentProcessingStep] = useState('Biblio is analyzing your request...');
 
   // Real Audio Recording State
   const recordingRef = useRef<any | null>(null);
@@ -196,9 +202,10 @@ export default function BiblioAssistantScreen() {
   // Filter messages based on channel tab
   const filteredMessages = useMemo(() => {
     const safe = Array.isArray(messages) ? messages : [];
-    if (selectedChannel === 'all') return safe;
-    return safe.filter((m) => m && m.channel === selectedChannel);
-  }, [messages, selectedChannel]);
+    const combined = [...safe, ...optimisticMessages];
+    if (selectedChannel === 'all') return combined;
+    return combined.filter((m) => m && m.channel === selectedChannel);
+  }, [messages, optimisticMessages, selectedChannel]);
 
   // Counts for tabs
   const whatsappCount = useMemo(
@@ -217,17 +224,49 @@ export default function BiblioAssistantScreen() {
     safeHaptics.impact();
     const mediaToSend = attachedMedia;
 
+    // 1. Immediately clear input box and close action menu (0ms latency feel)
+    setInputText('');
+    setAttachedMedia(null);
+    setIsActionLauncherOpen(false);
+
+    // 2. Append optimistic user message into chat stream instantly
+    const tempId = `optimistic_${Date.now()}`;
+    const optimisticMsg: AgentMessage = {
+      id: tempId,
+      channel: selectedChannel === 'whatsapp' ? 'whatsapp' : 'in_app',
+      sender_role: 'vendor',
+      content: text || (mediaToSend ? `[${mediaToSend.type} Attached]` : ''),
+      created_at: new Date().toISOString(),
+      metadata: mediaToSend ? { attachmentType: mediaToSend.type } : undefined,
+    };
+    setOptimisticMessages((prev) => [...prev, optimisticMsg]);
+    setIsAgentProcessing(true);
+    setAgentProcessingStep('Biblio is analyzing your request...');
+
+    // Progress through realistic pipeline stages
+    const timer1 = setTimeout(() => {
+      setAgentProcessingStep('Checking store logs & synthesizing context...');
+    }, 700);
+    const timer2 = setTimeout(() => {
+      setAgentProcessingStep('Executing autonomous commerce action...');
+    }, 1400);
+
     try {
       await sendMessageMutation.mutateAsync({
         text: text || '',
         imageBase64: mediaToSend ? `data:image/jpeg;base64,${mediaToSend.base64}` : undefined,
         attachmentType: mediaToSend?.type,
       });
-      setInputText('');
-      setAttachedMedia(null);
     } catch (err: any) {
       console.error('Failed to send assistant message:', err);
       Alert.alert('Message Failed', err?.message || 'Could not communicate with Biblio Assistant.');
+    } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      setIsAgentProcessing(false);
+      setTimeout(() => {
+        setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempId));
+      }, 600);
     }
   };
 
@@ -779,7 +818,31 @@ export default function BiblioAssistantScreen() {
             </Text>
           </Pressable>
 
-          {/* Tab: In-App */}
+          {/* WhatsApp Live Agent Affirmation Banner */}
+        <View
+          style={{
+            backgroundColor: isDark ? 'rgba(37, 211, 102, 0.12)' : '#E7F5EE',
+            borderColor: '#25D36640',
+          }}
+          className="mx-4 mt-2 mb-1 p-2.5 rounded-2xl border flex-row items-center justify-between"
+        >
+          <View className="flex-row items-center flex-1 mr-2">
+            <View className="w-7 h-7 rounded-full bg-[#25D366] items-center justify-center mr-2">
+              <MessageSquare size={14} color="#FFFFFF" />
+            </View>
+            <View className="flex-1">
+              <Text style={{ color: isDark ? '#4ADE80' : '#14865B' }} className="text-[11px] font-bold">
+                WhatsApp Live Agent Active
+              </Text>
+              <Text style={{ color: c.textSecondary }} className="text-[10px] leading-tight">
+                Your Biblio agent sends an automated welcome message on WhatsApp upon number linking and handles 24/7 autonomous sales.
+              </Text>
+            </View>
+          </View>
+          <View className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+        </View>
+
+        {/* Tab: In-App */}
           <Pressable
             onPress={() => {
               safeHaptics.impact();
@@ -1004,6 +1067,29 @@ export default function BiblioAssistantScreen() {
           keyExtractor={(item, index) => item?.id || `msg_${index}`}
           contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
           showsVerticalScrollIndicator={false}
+          ListFooterComponent={
+            isAgentProcessing ? (
+              <View className="mb-4 flex-row justify-start items-center">
+                <View className="w-8 h-8 rounded-full items-center justify-center mr-2 self-start mt-1 overflow-hidden">
+                  <Image source={require('../assets/logo.png')} style={{ width: 28, height: 28 }} resizeMode="contain" />
+                </View>
+                <View
+                  style={{
+                    backgroundColor: isDark ? '#1A2320' : '#FFFFFF',
+                    borderColor: c.border,
+                    borderRadius: 18,
+                    borderBottomLeftRadius: 4,
+                  }}
+                  className="p-3.5 border shadow-sm flex-row items-center gap-2.5"
+                >
+                  <InlineLoadingDots color={c.accent} />
+                  <Text style={{ color: c.textSecondary }} className="text-xs font-medium">
+                    {agentProcessingStep}
+                  </Text>
+                </View>
+              </View>
+            ) : undefined
+          }
           renderItem={({ item }) => {
             const isAgent = item.sender_role === 'agent' || item.sender_role === 'assistant';
             const productCard = parseProductCard(item.content);
@@ -1470,37 +1556,88 @@ export default function BiblioAssistantScreen() {
             }}
             className="px-4 py-3 flex-row items-center gap-2"
           >
-            {/* Distinguishable Attachment Button */}
+            {/* Pop-up Vertical Action Stack atop the Plus Trigger */}
+            {isActionLauncherOpen && (
+              <Animated.View
+                entering={FadeInDown.duration(180)}
+                exiting={FadeOutUp.duration(140)}
+                style={{
+                  position: 'absolute',
+                  bottom: 66,
+                  left: 16,
+                  backgroundColor: isDark ? '#1A2320' : '#FFFFFF',
+                  borderColor: c.border,
+                }}
+                className="p-2 rounded-2xl border shadow-xl z-50 gap-1.5"
+              >
+                {/* 1. Voice Note (Mic) */}
+                <Pressable
+                  onPress={() => {
+                    safeHaptics.impact();
+                    setIsActionLauncherOpen(false);
+                    handleToggleVoice();
+                  }}
+                  className="flex-row items-center gap-2.5 p-2 rounded-xl active:bg-black/5 dark:active:bg-white/5"
+                >
+                  <View className="w-8 h-8 rounded-full bg-rose-500/15 items-center justify-center">
+                    <Mic size={16} color="#F43F5E" />
+                  </View>
+                  <Text style={{ color: c.textPrimary }} className="text-xs font-semibold pr-3">
+                    Spoken Voice Note
+                  </Text>
+                </Pressable>
+
+                {/* 2. In-App Camera */}
+                <Pressable
+                  onPress={() => {
+                    safeHaptics.impact();
+                    setIsActionLauncherOpen(false);
+                    handleOpenCamera('product_photo');
+                  }}
+                  className="flex-row items-center gap-2.5 p-2 rounded-xl active:bg-black/5 dark:active:bg-white/5"
+                >
+                  <View className="w-8 h-8 rounded-full bg-emerald-500/15 items-center justify-center">
+                    <Camera size={16} color="#10B981" />
+                  </View>
+                  <Text style={{ color: c.textPrimary }} className="text-xs font-semibold pr-3">
+                    Take Photo
+                  </Text>
+                </Pressable>
+
+                {/* 3. Attach Document / Invoice */}
+                <Pressable
+                  onPress={() => {
+                    safeHaptics.impact();
+                    setIsActionLauncherOpen(false);
+                    setIsMediaModalOpen(true);
+                  }}
+                  className="flex-row items-center gap-2.5 p-2 rounded-xl active:bg-black/5 dark:active:bg-white/5"
+                >
+                  <View className="w-8 h-8 rounded-full bg-blue-500/15 items-center justify-center">
+                    <Paperclip size={16} color="#3B82F6" />
+                  </View>
+                  <Text style={{ color: c.textPrimary }} className="text-xs font-semibold pr-3">
+                    Attach Invoice / File
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            )}
+
+            {/* Single Expandable Plus Button (Frees up input width) */}
             <Pressable
               onPress={() => {
                 safeHaptics.impact();
-                setIsMediaModalOpen(true);
+                setIsActionLauncherOpen((prev) => !prev);
               }}
-              style={{ backgroundColor: isDark ? '#1F2925' : '#F1F5F9' }}
-              className="w-10 h-10 rounded-full items-center justify-center active:opacity-70"
-            >
-              <Paperclip size={18} color={c.textSecondary} />
-            </Pressable>
-
-            {/* In-App Live Camera Button */}
-            <Pressable
-              onPress={() => handleOpenCamera('product_photo')}
-              style={{ backgroundColor: isDark ? '#1F2925' : '#F1F5F9' }}
-              className="w-10 h-10 rounded-full items-center justify-center active:opacity-70"
-            >
-              <Camera size={18} color={c.textSecondary} />
-            </Pressable>
-
-            {/* Real Voice Mic Button */}
-            <Pressable
-              onPress={handleToggleVoice}
-              disabled={isProcessingAudio}
               style={{
-                backgroundColor: isDark ? '#1F2925' : '#F1F5F9',
+                backgroundColor: isActionLauncherOpen ? c.accent : isDark ? '#1F2925' : '#F1F5F9',
               }}
-              className="w-10 h-10 rounded-full items-center justify-center active:opacity-70"
+              className="w-10 h-10 rounded-full items-center justify-center active:opacity-70 shadow-sm"
             >
-              <Mic size={18} color={c.textSecondary} />
+              <Plus
+                size={20}
+                color={isActionLauncherOpen ? '#FFFFFF' : c.textSecondary}
+              />
             </Pressable>
 
             {/* Text Input */}

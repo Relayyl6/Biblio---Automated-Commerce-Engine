@@ -68,28 +68,36 @@ export const PartnerTicker: React.FC = () => {
     { name: 'Wema Bank', label: 'Virtual NIBSS', icon: WemaIcon },
   ];
 
+  // Quadruple array to ensure seamless infinite looping on ultra-wide screens
+  const marqueePartners = [...partners, ...partners, ...partners, ...partners];
+
   return (
-    <section className="py-10 bg-paper-100/60 border-y border-ink-950/8 relative">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 relative z-10">
-        <p className="text-center text-[11px] font-mono uppercase tracking-widest text-ink-400 mb-6 font-semibold">
+    <section className="py-8 sm:py-10 bg-paper-100/60 border-y border-ink-950/8 relative overflow-hidden w-full">
+      {/* Edge Fade Gradients for smooth disappearing/reappearing effect */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-20 sm:w-36 bg-gradient-to-r from-[#F7F4EE] to-transparent z-10" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-20 sm:w-36 bg-gradient-to-l from-[#F7F4EE] to-transparent z-10" />
+
+      <div className="w-full relative z-0">
+        <p className="text-center text-[11px] font-mono uppercase tracking-widest text-ink-400 mb-6 font-semibold px-4">
           Native integration with Nigeria's trusted commerce infrastructure
         </p>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 items-center">
-          {partners.map((partner, idx) => {
+        {/* Continuous Infinite Scrolling Marquee */}
+        <div className="flex w-max animate-marquee hover:[animation-play-state:paused] py-1">
+          {marqueePartners.map((partner, idx) => {
             const Icon = partner.icon;
             return (
               <div
                 key={idx}
-                className="py-3 px-3 rounded-xl border border-ink-950/8 bg-white text-center flex flex-col items-center justify-center min-h-[72px] hover:border-ember-500/40 hover:shadow-elev-2 transition-all duration-200 group shadow-elev-1"
+                className="mx-2 py-3 px-5 rounded-xl border border-ink-950/8 bg-white text-center flex flex-col items-center justify-center min-w-[150px] sm:min-w-[165px] min-h-[72px] hover:border-ember-500/40 hover:shadow-elev-2 transition-all duration-200 group shadow-elev-1 select-none flex-shrink-0"
               >
                 <div className="mb-1.5 flex items-center justify-center">
                   <Icon />
                 </div>
-                <div className="font-bold text-xs text-ink-950 tracking-tight group-hover:text-ember-500 transition-colors">
+                <div className="font-bold text-xs text-ink-950 tracking-tight group-hover:text-ember-500 transition-colors whitespace-nowrap">
                   {partner.name}
                 </div>
-                <div className="text-[10px] text-ink-400 mt-0.5">
+                <div className="text-[10px] text-ink-400 mt-0.5 whitespace-nowrap">
                   {partner.label}
                 </div>
               </div>

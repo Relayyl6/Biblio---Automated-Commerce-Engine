@@ -91,7 +91,7 @@ export async function runBiblioAgentTurn(turn: ConversationTurn, channel: "whats
     return_policy: "",
     delivery_notes: "",
     delivery_info: "",
-    dialect: "pidgin",
+    dialect: "english",
     tone_guide: "",
     default_discount_pct: 0
   };
@@ -167,15 +167,51 @@ ${hasLinkedBank
     ? `Registered with CAC (${m.rc_number} - ${m.business_type || 'Registered Entity'})`
     : (m.is_registered ? 'Registered Business' : 'Sole Proprietorship');
 
-  const normalizedDialect = typeof m.dialect === "string" ? m.dialect.trim().toLowerCase() : "pidgin";
+  // ── Dynamic Tone, Language & Dialect Inference Engine ──
+  const userTextClean = userText.trim();
+  const lowerText = userTextClean.toLowerCase();
+
+  // Explicit Directives from User:
+  const explicitEnglishDirective = /\b(speak|talk|use|write|switch to|prefer)\s+(in\s+)?(proper\s+|standard\s+)?english\b|\benglish\s+please\b|\bdon'?t\s+(speak|use|talk\s+in)\s+pidgin\b|\bstop\s+pidgin\b/i.test(lowerText);
+  const explicitPidginDirective = /\b(speak|talk|use|write|switch to|prefer)\s+(in\s+)?(pidgin|broken)\b|\bpidgin\s+please\b/i.test(lowerText);
+
+  // Slang & Dialect Indicators:
+  const pidginRegex = /\b(wetin|abeg|dey|fit|oya|no be|don|na so|wahala|sha|sef|abi|dem|chop|commot|comot|kwanu|ke|nna|jare|biko|shey|na|bros|wetin dey|how far|no vex)\b/i;
+  const englishFormalRegex = /\b(please|kindly|could you|would you|assist|regards|thank you|hello|good morning|good afternoon|good evening|inquire|update|schedule|confirm|verify)\b/i;
+
+  let activeDialect: string = "english";
+
+  if (explicitEnglishDirective) {
+    activeDialect = "english";
+    // Persist explicitly chosen preference to DB
+    await sql`UPDATE merchants SET dialect = 'english', updated_at = NOW() WHERE id = ${merchantId}::uuid`.catch(() => {});
+  } else if (explicitPidginDirective) {
+    activeDialect = "pidgin";
+    await sql`UPDATE merchants SET dialect = 'pidgin', updated_at = NOW() WHERE id = ${merchantId}::uuid`.catch(() => {});
+  } else if (m.dialect && m.dialect !== "pidgin") {
+    activeDialect = m.dialect.toLowerCase();
+  } else {
+    // Dynamic Adaptive Inference: First start with proper English; adapt if user speaks Pidgin
+    const pidginMatches = (userTextClean.match(new RegExp(pidginRegex.source, 'gi')) || []).length;
+    const isEnglishStyle = englishFormalRegex.test(lowerText) || pidginMatches === 0;
+
+    if (isEnglishStyle) {
+      activeDialect = "english";
+    } else if (pidginMatches >= 2) {
+      activeDialect = "pidgin";
+    } else {
+      activeDialect = "english";
+    }
+  }
+
   const dialectRulesMap: Record<string, string> = {
-    pidgin: "Speak in natural, culturally grounded Nigerian Pidgin (e.g. 'How business dey go?', 'I don check am', 'No wahala'). Keep it respectful, professional, and clear.",
-    yoruba: "Infuse warm, polite Yoruba greetings and phrasing where appropriate (e.g. 'E kaaro', 'E ku ise', 'Bawo ni').",
-    igbo: "Infuse warm, polite Igbo commercial phrasing where natural (e.g. 'Nno', 'Daalu', 'Kedu').",
-    hausa: "Infuse warm, polite Hausa commercial phrasing where natural (e.g. 'Sannu', 'Madalla').",
-    english: "Use clear, friendly, standard Nigerian business English.",
+    english: "Speak in clear, professional, warm, and proper English first. Do NOT use Pidgin or slang. The merchant expects clean, standard English communication.",
+    pidgin: "Speak in natural, respectful, light Nigerian Pidgin. Be concise and commercial. Never use forced slang or 'sharp sharp'.",
+    yoruba: "Speak primarily in clear English infused with warm, polite Yoruba commercial courtesies (e.g. 'E kaaro', 'E ku ise', 'Bawo ni').",
+    igbo: "Speak primarily in clear English infused with warm, polite Igbo commercial phrasing (e.g. 'Nno', 'Daalu', 'Kedu').",
+    hausa: "Speak primarily in clear English infused with warm, polite Hausa greetings (e.g. 'Sannu', 'Madalla').",
   };
-  const dialectGuidanceText = dialectRulesMap[normalizedDialect] || dialectRulesMap.english;
+  const dialectGuidanceText = dialectRulesMap[activeDialect] || dialectRulesMap.english;
 
   const businessProfileContext = `STORE BUSINESS PROFILE & POLICIES:
 - Store Name: "${m.name}"
@@ -185,14 +221,15 @@ ${hasLinkedBank
 - Return & Refund Policy: ${m.return_policy || 'Standard store return policy (items eligible for return upon inspection).'}
 - Delivery & Courier Notes: ${m.delivery_notes || m.delivery_info || 'Same-day / next-day dispatch via verified couriers.'}
 - Support Line: ${m.support_phone || merchantPhone || 'Direct WhatsApp Line'}
-- Dialect: ${normalizedDialect} (${dialectGuidanceText})`;
+- Dialect: ${activeDialect} (${dialectGuidanceText})`;
 
   const toneAndStyleRules = `COMMUNICATION STYLE & TONE GUIDELINES:
 1. Speak as an experienced, sharp, respectful Nigerian commercial partner / COO. ${dialectGuidanceText}
-2. ABSOLUTELY NO MARKDOWN BOLD ASTERISKS (**word**). Never output ** or __ around any words. Write in clean, normal text.
-3. NO EMOJI SPAM. Use zero emojis or at most one subtle emoji in the entire message. Never output bulleted lists of emojis (no 🚀, ✨, 🛒, 💼, 🤖, 🔥).
-4. NEVER say you lack access to WhatsApp chat logs, customer inquiries, or store data. You have direct database access to all store logs, customer messages, inventory, orders, and settlements.
-5. Be concise, direct, and actionable. Zero generic AI filler, no robotic declarations, no corporate fluff.`;
+2. TONE & DIALECT COMPLIANCE: If the active dialect is 'english' (or if the user speaks English or asks for English), YOU MUST REPLY IN PROPER ENGLISH. NEVER force Pidgin when the user prefers English. Adapt your language dynamically to mirror the user's communication style.
+3. ABSOLUTELY NO MARKDOWN BOLD ASTERISKS (**word**). Never output ** or __ around any words. Write in clean, normal text.
+4. NO EMOJI SPAM. Use zero emojis or at most one subtle emoji in the entire message. Never output bulleted lists of emojis (no 🚀, ✨, 🛒, 💼, 🤖, 🔥).
+5. NEVER say you lack access to WhatsApp chat logs, customer inquiries, or store data. You have direct database access to all store logs, customer messages, inventory, orders, and settlements.
+6. Be concise, direct, and actionable. Zero generic AI filler, no robotic declarations, no corporate fluff.`;
 
   // Log inbound turn to transcript table
   await sql`

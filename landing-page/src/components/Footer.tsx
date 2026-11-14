@@ -11,14 +11,14 @@ interface FooterProps {
 
 export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
   return (
-    <footer className="relative bg-[#050608] text-zinc-400 border-t border-white/[0.08] overflow-hidden w-full max-w-[100vw]">
+    <footer className="relative bg-[#050608] text-zinc-400 border-t border-white/[0.08] overflow-hidden w-full min-w-full">
       {/* Top subtle ambient glow */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[250px] bg-emerald-500/[0.04] blur-[140px] pointer-events-none rounded-full" />
       <div className="absolute inset-0 apple-subtle-grid opacity-20 pointer-events-none" />
 
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-12 sm:pt-20 pb-12">
+      <div className="relative w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-20 pb-12">
         {/* Pre-Footer Callout Card: Minimalist Linear / Apple High-Craft Aesthetic */}
-        <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-12 mb-12 sm:mb-16 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
+        <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-10 lg:p-12 mb-12 sm:mb-16 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
           <div className="relative z-10 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ember-500/20 border border-ember-500/30 text-ember-400 font-mono text-[11px] mb-3 sm:mb-4">
               <Sparkles className="w-3.5 h-3.5" />
@@ -37,7 +37,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
               <button
                 type="button"
                 onClick={() => onOpenWaitlist && onOpenWaitlist()}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-ember-500 hover:bg-ember-600 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-ember-500/25 active:scale-98"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-ember-500 hover:bg-ember-600 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-ember-500/25 active:scale-98 w-full sm:w-auto"
               >
                 <span>Join Batch 1 Waitlist</span>
                 <ArrowRight className="w-4 h-4" />
@@ -45,7 +45,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
 
               <a
                 href="#simulator"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-white/[0.05] hover:bg-white/10 text-white font-semibold text-xs sm:text-sm border border-white/10 transition-colors"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-white/[0.05] hover:bg-white/10 text-white font-semibold text-xs sm:text-sm border border-white/10 transition-colors w-full sm:w-auto"
               >
                 <span>Try Interactive Demo</span>
               </a>
@@ -53,10 +53,10 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
           </div>
         </div>
 
-        {/* Clean, Human 4-Column Navigation Layout */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08]">
+        {/* Clean, Human 4-Column Navigation Layout - Fully Responsive on Mobile & Wide Screens */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08]">
           {/* Brand & Location Column (Span 5 on Desktop) */}
-          <div className="md:col-span-5 flex flex-col justify-between">
+          <div className="col-span-1 sm:col-span-2 lg:col-span-5 flex flex-col justify-between">
             <div>
               {/* Brand Lockup */}
               <a href="#" className="flex items-center gap-2 group mb-3">
@@ -102,12 +102,12 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             </div>
           </div>
 
-          {/* Col 2: Product (Span 2) */}
-          <div className="md:col-span-2 col-span-1">
+          {/* Col 2: Product */}
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
             <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
               Product
             </h4>
-            <ul className="space-y-2 text-xs">
+            <ul className="space-y-2.5 text-xs">
               <li>
                 <a href="#features" className="hover:text-emerald-400 transition-colors">
                   Pidgin Haggling
@@ -141,12 +141,12 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             </ul>
           </div>
 
-          {/* Col 3: Platform (Span 2) */}
-          <div className="md:col-span-2 col-span-1">
+          {/* Col 3: Platform */}
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
             <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
               Platform
             </h4>
-            <ul className="space-y-2 text-xs">
+            <ul className="space-y-2.5 text-xs">
               <li>
                 <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
                   How It Works
@@ -170,12 +170,12 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             </ul>
           </div>
 
-          {/* Col 4: Trust & Support (Span 3) */}
-          <div className="md:col-span-3 col-span-1">
+          {/* Col 4: Trust & Support */}
+          <div className="col-span-1 sm:col-span-2 lg:col-span-3">
             <h4 className="text-xs font-mono font-bold tracking-wider uppercase text-white mb-3 sm:mb-4">
               Trust & Support
             </h4>
-            <ul className="space-y-2 text-xs">
+            <ul className="space-y-2.5 text-xs">
               <li>
                 <a href="#faq" className="hover:text-emerald-400 transition-colors">
                   Privacy Policy
@@ -201,7 +201,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
         </div>
 
         {/* Minimalist Bottom Bar */}
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 text-center sm:text-left">
           <div>
             © {new Date().getFullYear()} Biblio Technologies Ltd. All rights reserved.
           </div>

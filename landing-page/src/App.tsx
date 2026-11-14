@@ -23,12 +23,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-paper-50 text-ink-950 font-sans antialiased selection:bg-ember-500 selection:text-white w-full max-w-[100vw] overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-paper-50 text-ink-950 font-sans antialiased selection:bg-ember-500 selection:text-white w-full min-w-full overflow-x-hidden">
       {/* Floating Dark Frosted Glass Pill Header (DESIGN.md Section 10.7) */}
       <Navbar onOpenWaitlist={() => handleOpenWaitlist(undefined, 'professional')} />
 
       {/* Main Flow */}
-      <main className="flex-1 w-full max-w-[100vw] overflow-x-hidden">
+      <main className="flex-1 w-full min-w-full overflow-x-hidden">
         {/* Editorial Hero (Stepped Typography, Real Lagos Merchant Photo, Sticker Cut-out) */}
         <Hero onOpenWaitlist={(seed) => handleOpenWaitlist(seed, 'professional')} />
         
