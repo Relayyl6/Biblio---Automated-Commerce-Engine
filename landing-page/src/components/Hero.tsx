@@ -39,13 +39,13 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
             </h1>
           </div>
 
-          {/* 3D Cut-out Brand Object (Transparent floating phone bridging headline seam and photo, perfectly clear of headline text) */}
+          {/* 3D Cut-out Brand Object (Floating in the central diagonal whitespace between Line 1 and Line 2, clear of "itself.") */}
           <div 
             onClick={() => onOpenWaitlist()}
-            className="absolute -bottom-20 sm:-bottom-28 md:-bottom-36 lg:-bottom-44 right-[2%] sm:right-[5%] md:right-[8%] lg:right-[12%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500"
+            className="absolute top-[8%] sm:top-[10%] md:top-[9%] lg:top-[7%] left-[50%] sm:left-[51%] md:left-[52%] lg:left-[54%] xl:left-[54%] -translate-x-1/2 z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500"
             title="Join the early access"
           >
-            <div className="relative w-36 sm:w-48 md:w-56 lg:w-68 filter drop-shadow-[0_28px_56px_rgba(15,17,21,0.35)]">
+            <div className="relative w-28 sm:w-36 md:w-44 lg:w-52 xl:w-56 filter drop-shadow-[0_24px_48px_rgba(15,17,21,0.28)]">
               <img
                 src="/hero-cutout-phone.png"
                 alt="Biblio Autonomous Commerce Engine 3D interface"
