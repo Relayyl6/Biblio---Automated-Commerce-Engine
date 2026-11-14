@@ -7,8 +7,7 @@ import {
   Copy,
   Bike,
   Sparkles,
-  Volume2,
-  Phone,
+    Phone,
   Video,
   Check,
   Smartphone,
@@ -39,6 +38,84 @@ export const WhatsAppSimulator: React.FC = () => {
   const [inputMsg, setInputMsg] = useState('');
   const [aiPaused, setAiPaused] = useState(false);
   const [escrowReleased, setEscrowReleased] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [audioElapsed, setAudioElapsed] = useState(0);
+  const audioTimerRef = React.useRef<any>(null);
+
+  const togglePlayAudio = (msgId: string, text: string) => {
+    if (playingAudioId === msgId) {
+      if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      setPlayingAudioId(null);
+      return;
+    }
+
+    if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    setPlayingAudioId(msgId);
+    setAudioElapsed(0);
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        gain.gain.setValueAtTime(0.08, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.2);
+      }
+    } catch {
+      // ignored
+    }
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const cleanText = text.replace(/^🎙️\s*Voice Note\s*\([^)]*\):\s*/i, '').replace(/["']/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05;
+      utterance.onend = () => {
+        if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+        setPlayingAudioId(null);
+        setAudioElapsed(0);
+      };
+      utterance.onerror = () => {
+        // fallback
+      };
+      window.speechSynthesis.speak(utterance);
+    }
+
+    const start = Date.now();
+    audioTimerRef.current = setInterval(() => {
+      const sec = Math.floor((Date.now() - start) / 1000);
+      if (sec >= 14) {
+        clearInterval(audioTimerRef.current);
+        setPlayingAudioId(null);
+        setAudioElapsed(0);
+      } else {
+        setAudioElapsed(sec);
+      }
+    }, 250);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   // Automatically lock to authentic single iPhone mode on mobile screens (< 768px)
   useEffect(() => {
@@ -184,6 +261,12 @@ export const WhatsAppSimulator: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>(initialChats.pidgin);
 
   const handleDialectChange = (dialect: 'pidgin' | 'lagos' | 'formal') => {
+    if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPlayingAudioId(null);
+    setAudioElapsed(0);
     setSelectedDialect(dialect);
     setMessages(initialChats[dialect]);
   };
@@ -893,20 +976,54 @@ export const WhatsAppSimulator: React.FC = () => {
                             >
                               {/* Voice Note Audio Bar */}
                               {msg.isAudio && (
-                                <div className="flex items-center gap-2 mb-1.5 pb-1 border-b border-white/10 text-emerald-300 font-semibold text-[11px]">
-                                  <div className="w-6 h-6 rounded-full bg-emerald-500 text-black flex items-center justify-center flex-shrink-0">
-                                    <Play className="w-3 h-3 fill-black ml-0.5" />
+                                <div 
+                                  onClick={() => togglePlayAudio(msg.id, msg.text)}
+                                  className="flex items-center gap-2 mb-2 p-1.5 rounded-xl bg-black/25 hover:bg-black/40 border border-white/10 text-emerald-300 font-semibold text-[11px] cursor-pointer transition-colors group select-none"
+                                  title={playingAudioId === msg.id ? "Pause voice note" : "Play voice note"}
+                                >
+                                  <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-90 ${
+                                    playingAudioId === msg.id 
+                                      ? 'bg-emerald-400 text-black shadow-[0_0_12px_rgba(52,211,153,0.5)]' 
+                                      : 'bg-emerald-500 text-black group-hover:scale-105'
+                                  }`}>
+                                    {playingAudioId === msg.id ? (
+                                      <Pause className="w-3.5 h-3.5 fill-black" />
+                                    ) : (
+                                      <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
+                                    )}
                                   </div>
-                                  <div className="flex-1 flex items-center gap-0.5">
-                                    <div className="w-1 h-3 bg-emerald-400 rounded-full" />
-                                    <div className="w-1 h-5 bg-emerald-300 rounded-full" />
-                                    <div className="w-1 h-2 bg-emerald-500 rounded-full" />
-                                    <div className="w-1 h-6 bg-emerald-400 rounded-full" />
-                                    <div className="w-1 h-4 bg-emerald-200 rounded-full" />
-                                    <div className="w-1 h-3 bg-emerald-400 rounded-full" />
-                                    <div className="w-1 h-1 bg-emerald-500 rounded-full" />
+                                  <div className="flex-1 flex items-center gap-0.5 h-6">
+                                    {[12, 20, 8, 24, 16, 12, 6, 18, 14, 22, 10, 16].map((barHeight, bIdx) => {
+                                      const isPast = playingAudioId === msg.id && (bIdx / 12) <= (audioElapsed / 14);
+                                      return (
+                                        <div
+                                          key={bIdx}
+                                          className={`w-1 rounded-full transition-all duration-200 ${
+                                            isPast
+                                              ? 'bg-white shadow-[0_0_6px_rgba(255,255,255,0.6)]'
+                                              : playingAudioId === msg.id
+                                              ? 'bg-emerald-300 animate-pulse'
+                                              : 'bg-emerald-400/80'
+                                          }`}
+                                          style={{
+                                            height: playingAudioId === msg.id 
+                                              ? `${Math.max(6, Math.min(24, barHeight + ((bIdx + audioElapsed) % 3) * 4 - 4))}px` 
+                                              : `${barHeight}px`,
+                                          }}
+                                        />
+                                      );
+                                    })}
                                   </div>
-                                  <span className="text-[10px] text-emerald-200 font-mono">0:14</span>
+                                  <div className="text-[10px] text-emerald-200 font-mono flex items-center gap-1">
+                                    <span>
+                                      {playingAudioId === msg.id
+                                        ? `0:${audioElapsed < 10 ? '0' + audioElapsed : audioElapsed}`
+                                        : (msg.audioDuration || '0:14')}
+                                    </span>
+                                    {playingAudioId === msg.id && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                    )}
+                                  </div>
                                 </div>
                               )}
 
@@ -1224,12 +1341,58 @@ export const WhatsAppSimulator: React.FC = () => {
                                 : 'bg-[#202C33] text-zinc-100 rounded-tl-xs border border-white/[0.06]'
                             }`}
                           >
-                            {msg.isAudio && (
-                              <div className="flex items-center gap-2 mb-1 pb-1 border-b border-white/10 text-emerald-300 font-semibold text-[11px]">
-                                <Volume2 className="w-3.5 h-3.5" />
-                                <span>Voice Note ({msg.audioDuration})</span>
-                              </div>
-                            )}
+                            {/* Voice Note Audio Bar */}
+                              {msg.isAudio && (
+                                <div 
+                                  onClick={() => togglePlayAudio(msg.id, msg.text)}
+                                  className="flex items-center gap-2 mb-2 p-1.5 rounded-xl bg-black/25 hover:bg-black/40 border border-white/10 text-emerald-300 font-semibold text-[11px] cursor-pointer transition-colors group select-none"
+                                  title={playingAudioId === msg.id ? "Pause voice note" : "Play voice note"}
+                                >
+                                  <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-90 ${
+                                    playingAudioId === msg.id 
+                                      ? 'bg-emerald-400 text-black shadow-[0_0_12px_rgba(52,211,153,0.5)]' 
+                                      : 'bg-emerald-500 text-black group-hover:scale-105'
+                                  }`}>
+                                    {playingAudioId === msg.id ? (
+                                      <Pause className="w-3.5 h-3.5 fill-black" />
+                                    ) : (
+                                      <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 flex items-center gap-0.5 h-6">
+                                    {[12, 20, 8, 24, 16, 12, 6, 18, 14, 22, 10, 16].map((barHeight, bIdx) => {
+                                      const isPast = playingAudioId === msg.id && (bIdx / 12) <= (audioElapsed / 14);
+                                      return (
+                                        <div
+                                          key={bIdx}
+                                          className={`w-1 rounded-full transition-all duration-200 ${
+                                            isPast
+                                              ? 'bg-white shadow-[0_0_6px_rgba(255,255,255,0.6)]'
+                                              : playingAudioId === msg.id
+                                              ? 'bg-emerald-300 animate-pulse'
+                                              : 'bg-emerald-400/80'
+                                          }`}
+                                          style={{
+                                            height: playingAudioId === msg.id 
+                                              ? `${Math.max(6, Math.min(24, barHeight + ((bIdx + audioElapsed) % 3) * 4 - 4))}px` 
+                                              : `${barHeight}px`,
+                                          }}
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="text-[10px] text-emerald-200 font-mono flex items-center gap-1">
+                                    <span>
+                                      {playingAudioId === msg.id
+                                        ? `0:${audioElapsed < 10 ? '0' + audioElapsed : audioElapsed}`
+                                        : (msg.audioDuration || '0:14')}
+                                    </span>
+                                    {playingAudioId === msg.id && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                    )}
+                                  </div>
+                                </div>
+                              )}
 
                             <p className="leading-relaxed text-[12px]">{msg.text}</p>
 

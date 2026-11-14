@@ -87,7 +87,7 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #FAF8F4;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #D1D5DB;
@@ -95,6 +95,17 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #8A909C;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
 
 /* Continuous Infinite Horizontal Marquee */

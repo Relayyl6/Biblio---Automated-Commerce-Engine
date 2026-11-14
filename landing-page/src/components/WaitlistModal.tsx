@@ -78,6 +78,19 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
     }
   }, [initialValue, defaultPhone, initialPlan, isOpen]);
 
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -191,9 +204,9 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn cursor-pointer">
       {/* Modal Card - Clean, spacious, Apple/Linear aesthetic */}
-      <div className="relative w-full max-w-[460px] bg-[#0E1117] rounded-3xl border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden text-white p-6 sm:p-8 max-h-[92vh] overflow-y-auto">
+      <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-[460px] bg-[#0E1117] rounded-3xl border border-white/10 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden text-white p-6 sm:p-8 max-h-[92vh] overflow-y-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden cursor-default">
         
         {/* Top-Right Quiet Dismiss Button */}
         <button

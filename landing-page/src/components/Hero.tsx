@@ -33,8 +33,23 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
           </div>
 
           {/* Headline Line 2: "runs itself." (Pushed right so the two lines step down like stairs - fully unobstructed) */}
-          <div className="w-full flex justify-end mt-3 sm:mt-6 animate-entrance [animation-delay:200ms] relative z-30">
-            <h1 className="hero-stagger-title font-black text-ink-950 text-5xl sm:text-7xl md:text-8xl lg:text-[130px] xl:text-[150px] tracking-tight leading-[0.88] text-right select-none">
+          <div className="w-full flex items-end justify-between mt-3 sm:mt-6 animate-entrance [animation-delay:200ms] relative z-30">
+            {/* Mobile 3D Phone Cutout: Nestled in the open left whitespace below description, free of text collisions */}
+            <div 
+              onClick={() => onOpenWaitlist()}
+              className="md:hidden flex-shrink-0 cursor-pointer -mb-8 -mt-2 z-40 transform rotate-0 active:scale-95 transition-transform"
+              title="Join early access"
+            >
+              <div className="w-24 xs:w-28 filter drop-shadow-[0_20px_40px_rgba(15,17,21,0.28)]">
+                <img
+                  src="/hero-cutout-phone.png"
+                  alt="Biblio Autonomous Commerce Engine 3D interface"
+                  className="w-full h-auto object-contain pointer-events-auto"
+                />
+              </div>
+            </div>
+
+            <h1 className="hero-stagger-title font-black text-ink-950 text-5xl sm:text-7xl md:text-8xl lg:text-[130px] xl:text-[150px] tracking-tight leading-[0.88] text-right select-none ml-auto">
               runs <span className="text-ember-500">itself.</span>
             </h1>
           </div>
