@@ -1,248 +1,127 @@
-import React, { useState } from 'react';
-import { ArrowRight, Smartphone, ShieldCheck, Zap } from 'lucide-react';
+import React from 'react';
+import { ShieldCheck, Zap } from 'lucide-react';
 
 interface HeroProps {
   onOpenWaitlist: (phone?: string) => void;
 }
 
-// Actual Official Brand Vector SVGs
-const WhatsAppBusinessLogo = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-    <path
-      d="M12 2C6.48 2 2 6.48 2 12C2 13.85 2.5 15.58 3.38 17.08L2.05 21.95L7.07 20.65C8.53 21.5 10.22 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z"
-      fill="#25D366"
-    />
-    <path
-      d="M17.5 14.39C17.2 14.24 15.73 13.51 15.45 13.41C15.18 13.31 14.98 13.26 14.78 13.56C14.58 13.86 14.01 14.53 13.83 14.73C13.66 14.93 13.48 14.96 13.18 14.81C12.88 14.66 11.91 14.34 10.77 13.32C9.88 12.53 9.28 11.55 9.11 11.25C8.93 10.95 9.09 10.79 9.24 10.64C9.37 10.51 9.53 10.3 9.68 10.13C9.83 9.96 9.88 9.83 9.98 9.63C10.08 9.43 10.03 9.26 9.96 9.11C9.88 8.96 9.28 7.49 9.03 6.89C8.79 6.3 8.55 6.39 8.37 6.38C8.2 6.37 8 6.37 7.8 6.37C7.6 6.75 5.95 7.78 5.95 9.26C5.95 10.74 7.03 12.17 7.18 12.37C7.33 12.57 9.29 15.59 12.3 16.89C13.02 17.2 13.57 17.38 14.01 17.52C14.73 17.75 15.38 17.72 15.9 17.64C16.48 17.55 17.68 16.91 17.93 16.21C18.18 15.51 18.18 14.91 18.1 14.79C18.03 14.66 17.8 14.54 17.5 14.39Z"
-      fill="white"
-    />
-  </svg>
-);
-
-const PaystackLogo = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-    <rect x="3" y="4" width="18" height="3" rx="1.5" fill="#00C3F7" />
-    <rect x="3" y="9" width="14" height="3" rx="1.5" fill="#00C3F7" />
-    <rect x="3" y="14" width="18" height="3" rx="1.5" fill="#09A5DB" />
-    <rect x="3" y="19" width="10" height="3" rx="1.5" fill="#09A5DB" />
-  </svg>
-);
-
-const KwikLogo = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-    <path
-      d="M13 2L3 14H12L11 22L21 10H12L13 2Z"
-      fill="#FF6B00"
-    />
-  </svg>
-);
-
-const GroqLogo = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="12" r="9" stroke="#F55036" strokeWidth="2.5" />
-    <path d="M12 7V17M7 12H17" stroke="#F55036" strokeWidth="2.5" strokeLinecap="round" />
-  </svg>
-);
-
 export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
-  const [heroInput, setHeroInput] = useState('');
-
-  const handleHeroSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onOpenWaitlist(heroInput);
-  };
-
   return (
-    <section className="relative min-h-[85vh] sm:min-h-[92vh] pt-28 sm:pt-36 pb-16 sm:pb-24 flex flex-col justify-center items-center overflow-hidden bg-[#08090C] apple-bg-mesh apple-subtle-grid w-full">
-      {/* Precision Apple Radar Hairlines - Strictly Clamped to Prevent Mobile Viewport Bleed */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-        <div className="w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] apple-radar-arc" />
-        <div className="w-[520px] h-[520px] sm:w-[820px] sm:h-[820px] apple-radar-dashed" />
-        <div className="w-[740px] h-[740px] sm:w-[1180px] sm:h-[1180px] apple-radar-arc" />
-        <div className="w-[980px] h-[980px] sm:w-[1580px] sm:h-[1580px] apple-radar-dashed" />
-        <div className="absolute -top-32 w-[550px] sm:w-[700px] h-[350px] sm:h-[500px] bg-emerald-500/10 rounded-full blur-[110px] sm:blur-[130px] -z-10" />
-      </div>
-
-      {/* Floating Integration Chips With Actual Vector Logos (Desktop Only) */}
-      <div className="absolute inset-0 max-w-6xl mx-auto pointer-events-none hidden md:block">
-        {/* WhatsApp Business */}
-        <div className="absolute top-36 left-12 lg:left-24 apple-card px-3.5 py-2.5 rounded-2xl flex items-center gap-3 animate-float-slow">
-          <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center shadow-sm flex-shrink-0">
-            <WhatsAppBusinessLogo />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-white flex items-center gap-1">
-              WhatsApp Business
+    <section className="relative w-full pt-28 sm:pt-36 pb-12 sm:pb-20 overflow-hidden bg-paper-50 text-ink-950 paper-pattern">
+      {/* Editorial Grid Container */}
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8">
+        
+        {/* Editorial Stepped Headline Section */}
+        <div className="relative w-full mb-8 sm:mb-12">
+          
+          {/* Top Line & Description Block */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+            
+            {/* Headline Line 1: "Your business" */}
+            <div className="lg:col-span-8 animate-entrance">
+              <h1 className="hero-stagger-title font-black text-ink-950 text-5xl sm:text-7xl md:text-8xl lg:text-[130px] xl:text-[150px] tracking-tight leading-[0.88] select-none">
+                Your business
+              </h1>
             </div>
-            <div className="text-[10px] text-zinc-400 font-mono">Cloud Protocol</div>
-          </div>
-        </div>
 
-        {/* Paystack Escrow */}
-        <div className="absolute top-32 right-12 lg:right-24 apple-card px-3.5 py-2.5 rounded-2xl flex items-center gap-3 animate-float-slow [animation-delay:1.5s]">
-          <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center shadow-sm flex-shrink-0">
-            <PaystackLogo />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-white flex items-center gap-1">
-              Paystack Escrow
+            {/* Short Editorial Description (Tucked under/alongside Line 1, max 320px) */}
+            <div className="lg:col-span-4 pb-2 sm:pb-4 animate-entrance [animation-delay:150ms]">
+              <div className="max-w-[320px] text-ink-700 text-sm sm:text-base font-normal leading-relaxed border-l-2 border-ember-500/40 pl-3">
+                biblio handles your WhatsApp orders, payments, and restocking while you focus on what you make.
+              </div>
             </div>
-            <div className="text-[10px] text-zinc-400 font-mono">Dynamic VAN Accounts</div>
           </div>
-        </div>
 
-        {/* Kwik Delivery */}
-        <div className="absolute top-[48%] left-6 lg:left-14 apple-card px-3.5 py-2.5 rounded-2xl flex items-center gap-3 animate-float-slow [animation-delay:2.5s]">
-          <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center shadow-sm flex-shrink-0">
-            <KwikLogo />
+          {/* Headline Line 2: "runs itself." (Pushed right so the two lines step down like stairs) */}
+          <div className="w-full flex justify-end mt-2 sm:mt-4 animate-entrance [animation-delay:200ms]">
+            <h1 className="hero-stagger-title font-black text-ink-950 text-5xl sm:text-7xl md:text-8xl lg:text-[130px] xl:text-[150px] tracking-tight leading-[0.88] text-right select-none">
+              runs <span className="text-ember-500">itself.</span>
+            </h1>
           </div>
-          <div>
-            <div className="text-xs font-bold text-white">Kwik Delivery</div>
-            <div className="text-[10px] text-zinc-400 font-mono">Instant Dispatch Webhook</div>
-          </div>
-        </div>
 
-        {/* Groq Llama 3 */}
-        <div className="absolute top-[52%] right-6 lg:right-16 apple-card px-3.5 py-2.5 rounded-2xl flex items-center gap-3 animate-float-slow [animation-delay:0.8s]">
-          <div className="w-8 h-8 rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center shadow-sm flex-shrink-0">
-            <GroqLogo />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-white">Groq Llama 3 70B</div>
-            <div className="text-[10px] text-zinc-400 font-mono">Sub-Second Negotiation</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Hero Copy */}
-      <div className="relative z-10 w-full max-w-3xl mx-auto px-3.5 sm:px-6 text-center">
-        {/* Cohort Status Pill — Compact & Single-Line on Mobile */}
-        <div className="inline-flex items-center gap-1.5 sm:gap-2 px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full bg-zinc-900/90 border border-white/10 shadow-sm text-[10px] sm:text-xs text-zinc-300 font-medium mb-4 sm:mb-8 backdrop-blur-xl">
-          <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
-          <span className="font-semibold text-white">Lagos Batch 1 Early Access</span>
-          <span className="text-zinc-600">•</span>
-          <span className="text-emerald-400 font-mono font-bold">82 spots left</span>
-        </div>
-
-        {/* Scaled Responsive Luminous Headline — Proportional on Mobile (Zero Horizontal Overrun) */}
-        <h1 className="text-[26px] xs:text-[29px] sm:text-5xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.12] mb-3 sm:mb-6">
-          Never leave money in{' '}
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-200">
-            your DMs.
-          </span>
-        </h1>
-
-        {/* Sub-headline — Compact for phone viewports */}
-        <p className="text-xs sm:text-base text-zinc-400 max-w-xs sm:max-w-lg mx-auto font-normal leading-relaxed mb-6 sm:mb-10">
-          An autonomous sales agent for your WhatsApp store. Haggles in Pidgin, locks Paystack escrow, and dispatches riders 24/7.
-        </p>
-
-        {/* Waitlist Intake Bar */}
-        <div className="w-full max-w-sm sm:max-w-md mx-auto mb-6 sm:mb-10 px-1 sm:px-0">
-          <form
-            onSubmit={handleHeroSubmit}
-            className="flex flex-col sm:flex-row items-center gap-2 p-1 sm:p-1.5 rounded-2xl bg-zinc-900/80 border border-white/15 shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+          {/* 3D Cut-out Brand Object (Sticker-style floating phone bridging headline and photo, rotated -15deg) */}
+          <div 
+            onClick={() => onOpenWaitlist()}
+            className="absolute top-[42%] right-[8%] sm:right-[18%] lg:right-[26%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500 hidden sm:block"
+            title="Join the early access"
           >
-            <div className="flex-1 flex items-center w-full min-w-0 px-3 py-2 sm:px-3.5 sm:py-2.5">
-              <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-zinc-500 mr-2 flex-shrink-0" />
-              <input
-                type="text"
-                placeholder="Enter WhatsApp number or email..."
-                value={heroInput}
-                onChange={(e) => setHeroInput(e.target.value)}
-                className="w-full min-w-0 bg-transparent text-xs sm:text-sm text-white placeholder-zinc-500 outline-none font-medium"
+            <div className="relative w-48 sm:w-60 md:w-72 lg:w-80 filter drop-shadow-[0_24px_48px_rgba(15,17,21,0.25)]">
+              <img
+                src="/hero-cutout-phone.jpg"
+                alt="Biblio Autonomous Commerce Engine 3D interface"
+                className="w-full h-auto object-contain rounded-2xl border-2 border-white/60"
               />
+              {/* Live Status Sticker Pill attached to cut-out */}
+              <div className="absolute -bottom-3 -left-4 biblio-glass-dark px-3 py-1.5 rounded-full flex items-center gap-2 text-white shadow-elev-3">
+                <span className="w-2 h-2 rounded-full bg-settled-600 animate-ping" />
+                <span className="text-[11px] font-mono font-bold tracking-tight text-emerald-400">
+                  +₦45,000 Verified
+                </span>
+              </div>
             </div>
-            <button
-              type="submit"
-              className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-1.5 flex-shrink-0 shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] active:scale-98"
-            >
-              <span>Join Waitlist</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </form>
-
-          {/* Social Proof */}
-          <div className="flex items-center justify-center gap-2.5 mt-3 sm:mt-4 text-[11px] sm:text-xs text-zinc-400">
-            <div className="flex -space-x-1.5 overflow-hidden flex-shrink-0">
-              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-emerald-500 text-zinc-950 text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
-                TO
-              </span>
-              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-teal-500 text-zinc-950 text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
-                AM
-              </span>
-              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-blue-500 text-white text-[9px] sm:text-[10px] font-bold flex items-center justify-center">
-                CH
-              </span>
-              <span className="inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full ring-2 ring-zinc-900 bg-zinc-800 text-zinc-300 text-[9px] sm:text-[10px] font-bold flex items-center justify-center font-mono">
-                +4k
-              </span>
-            </div>
-            <span className="font-medium truncate">
-              <strong className="text-white">4,218 Nigerian merchants</strong> already waiting
-            </span>
           </div>
         </div>
 
-        {/* Real Activity Notification Stack: iOS Lock Screen Style (Constrained Width to Eliminate Horizontal Overflow) */}
-        <div className="relative w-full max-w-sm sm:max-w-xl mx-auto px-1 sm:px-4 mt-2 select-none group">
-          {/* Stack Layer 3 (Deepest notification card) */}
-          <div className="absolute inset-x-4 sm:inset-x-8 -bottom-3 h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-[#12141A]/60 border border-white/[0.04] backdrop-blur-md transform scale-[0.92] opacity-40 z-10 transition-all duration-300 group-hover:-bottom-3.5" />
+        {/* Real Lagos Merchant Warm Photography Full-Bleed Frame (12px rounded corners, 24px margins, warm light) */}
+        <div className="relative w-full rounded-xl sm:rounded-2xl lg:rounded-3xl overflow-hidden border border-ink-950/10 shadow-elev-2 bg-paper-100">
+          
+          {/* Real Photo Asset */}
+          <div className="relative aspect-[16/9] sm:aspect-[21/9] w-full max-h-[640px] overflow-hidden">
+            <img
+              src="/hero-merchant.jpg"
+              alt="Lagos merchant managing orders via Biblio WhatsApp Autonomous Engine"
+              className="w-full h-full object-cover object-center transform hover:scale-[1.01] transition-transform duration-700"
+            />
+            
+            {/* Subtle Warm Gradient Overlay at bottom */}
+            <div className="absolute inset-0 bg-gradient-to-t from-ink-950/70 via-transparent to-transparent pointer-events-none" />
 
-          {/* Stack Layer 2 (Middle notification card) */}
-          <div className="absolute inset-x-2 sm:inset-x-6 -bottom-1.5 h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-[#161822]/80 border border-white/[0.07] backdrop-blur-md transform scale-[0.96] opacity-70 z-20 transition-all duration-300 group-hover:-bottom-2 flex items-center justify-between px-3 sm:px-5 py-2">
-            <div className="flex items-center gap-2 opacity-60 min-w-0">
-              <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-teal-500/20 text-teal-400 flex items-center justify-center text-[9px] sm:text-[10px] font-bold flex-shrink-0">₦</div>
-              <span className="text-[10px] sm:text-[11px] text-zinc-300 font-medium truncate">Chidi from @lagosvintage secured #4,218</span>
-            </div>
-            <span className="text-[8px] sm:text-[9px] text-zinc-500 font-mono flex-shrink-0 ml-2">1m ago</span>
-          </div>
-
-          {/* Stack Layer 1 (Top / Front Active Notification Card — Strict Truncation & Compact Padding) */}
-          <div className="relative apple-card rounded-xl sm:rounded-2xl px-3 sm:px-5 py-2.5 sm:py-3.5 border border-white/10 flex items-center justify-between gap-2.5 sm:gap-4 text-left shadow-2xl bg-zinc-900/85 backdrop-blur-2xl z-30 transition-all duration-300 group-hover:border-emerald-500/30">
-            <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 text-emerald-400 font-bold text-[11px] sm:text-xs shadow-inner">
-                ₦
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] sm:text-xs font-bold text-white truncate max-w-[130px] xs:max-w-[160px] sm:max-w-none">
-                    Tobi from @thesneakerhub
-                  </span>
-                  <span className="text-[10px] sm:text-[11px] text-zinc-400 hidden md:inline">
-                    reserved early access
+            {/* In-Photo Trust Elements (Hospitality & Autonomous Verifications) */}
+            <div className="absolute bottom-4 sm:bottom-8 left-4 sm:left-8 right-4 sm:right-8 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 pointer-events-none">
+              
+              {/* Photo Caption / Merchant Context */}
+              <div 
+                onClick={() => onOpenWaitlist()}
+                className="biblio-glass-dark px-4 py-2.5 rounded-xl pointer-events-auto max-w-sm cursor-pointer hover:border-white/30 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="w-2 h-2 rounded-full bg-settled-600" />
+                  <span className="text-xs font-bold text-white tracking-wide">
+                    Adeola Fabrics • Balogun Market, Lagos
                   </span>
                 </div>
-                <div className="text-[9px] sm:text-[10px] text-zinc-500 truncate">
-                  Lagos Early Access • Ticket #4,217
+                <p className="text-[11px] text-zinc-300 leading-snug">
+                  "Biblio closed 42 customer orders and verified ₦185,000 in bank transfers while I was at the textile mill."
+                </p>
+              </div>
+
+              {/* Floating Real-Time Metrics Badge */}
+              <div className="hidden md:flex items-center gap-3 biblio-glass-dark px-4 py-2 rounded-xl pointer-events-auto">
+                <div className="flex items-center gap-2 text-xs font-mono text-zinc-300">
+                  <Zap className="w-3.5 h-3.5 text-ember-500" />
+                  <span>24/7 WhatsApp Autonomy</span>
+                </div>
+                <span className="text-zinc-600">|</span>
+                <div className="flex items-center gap-1.5 text-xs font-mono text-emerald-400">
+                  <ShieldCheck className="w-3.5 h-3.5 text-settled-600" />
+                  <span>Instant VAN Escrow</span>
                 </div>
               </div>
             </div>
-
-            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-              <span className="text-[9px] sm:text-[10px] text-zinc-500 font-mono hidden xs:inline">Just now</span>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-[9px] sm:text-[10px] font-mono shadow-sm">
-                CONFIRMED
-              </span>
-            </div>
           </div>
         </div>
 
-        {/* Quick Highlights — Scaled & Proportional on Mobile */}
-        <div className="mt-8 sm:mt-14 flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-[10px] sm:text-xs text-zinc-400 font-medium">
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
-            <span>20s pairing</span>
+        {/* Microcopy Bar under photo */}
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-ink-400 px-2">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-ember-500" />
+            <span>Designed for Lagos merchants running 30–150 WhatsApp conversations daily</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />
-            <span>Zero fake alert losses</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>Instant rider dispatch</span>
+          <div className="font-mono text-[11px]">
+            No laptop required • 100% Android & iOS native • Works offline
           </div>
         </div>
+
       </div>
     </section>
   );

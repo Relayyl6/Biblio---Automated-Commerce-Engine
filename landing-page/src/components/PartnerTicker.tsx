@@ -31,8 +31,8 @@ const KwikIcon = () => (
 
 const GroqIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="12" r="9" stroke="#F55036" strokeWidth="2.5" />
-    <path d="M12 7V17M7 12H17" stroke="#F55036" strokeWidth="2.5" strokeLinecap="round" />
+    <circle cx="12" cy="12" r="9" stroke="#E8552D" strokeWidth="2.5" />
+    <path d="M12 7V17M7 12H17" stroke="#E8552D" strokeWidth="2.5" strokeLinecap="round" />
   </svg>
 );
 
@@ -69,10 +69,10 @@ export const PartnerTicker: React.FC = () => {
   ];
 
   return (
-    <section className="py-12 bg-[#08090C] apple-subtle-grid border-b border-white/[0.08] relative">
+    <section className="py-10 bg-paper-100/60 border-y border-ink-950/8 relative">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 relative z-10">
-        <p className="text-center text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-6">
-          Integrated with Nigeria's leading commerce rails
+        <p className="text-center text-[11px] font-mono uppercase tracking-widest text-ink-400 mb-6 font-semibold">
+          Native integration with Nigeria's trusted commerce infrastructure
         </p>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 items-center">
@@ -81,15 +81,15 @@ export const PartnerTicker: React.FC = () => {
             return (
               <div
                 key={idx}
-                className="py-3 px-3 rounded-2xl border border-white/[0.08] bg-[#0D0F14]/80 backdrop-blur-md hover:bg-white/[0.06] text-center flex flex-col items-center justify-center min-h-[72px] hover:border-emerald-500/30 transition-all duration-200 group shadow-sm"
+                className="py-3 px-3 rounded-xl border border-ink-950/8 bg-white text-center flex flex-col items-center justify-center min-h-[72px] hover:border-ember-500/40 hover:shadow-elev-2 transition-all duration-200 group shadow-elev-1"
               >
                 <div className="mb-1.5 flex items-center justify-center">
                   <Icon />
                 </div>
-                <div className="font-bold text-xs text-zinc-200 tracking-tight group-hover:text-emerald-400 transition-colors">
+                <div className="font-bold text-xs text-ink-950 tracking-tight group-hover:text-ember-500 transition-colors">
                   {partner.name}
                 </div>
-                <div className="text-[10px] text-zinc-500 mt-0.5">
+                <div className="text-[10px] text-ink-400 mt-0.5">
                   {partner.label}
                 </div>
               </div>
