@@ -1,7 +1,27 @@
-import { inventoryTools, orderTools, crmTools, negotiationTools, financeTools, marketingTools, analyticsTools, settingsTools, integrationTools, bookingTools, adminTools } from "./tools/index.js";
+import {
+  inventoryTools,
+  orderTools,
+  crmTools,
+  negotiationTools,
+  financeTools,
+  marketingTools,
+  analyticsTools,
+  settingsTools,
+  integrationTools,
+  bookingTools,
+  adminTools,
+  autonomousTaskToolDefinitions,
+} from "./tools/index.js";
 
 // The primary Router Agent tools
 export const routerTools = [
+  {
+    type: "function" as const,
+    function: {
+      name: "route_to_autonomous_tasks",
+      description: "Route to the Autonomous Tasks & Research Suite for continuous background web monitoring, noise filtering, fact-checking (FilmOne releases, movie showtimes, Benin City commercial spots), commercial writing, visual staging, math/margins/landed costs, and planning itineraries.",
+    }
+  },
   {
     type: "function" as const,
     function: {
@@ -97,6 +117,7 @@ export const routerTools = [
 
 // Map router tool names to the actual sub-agent toolsets
 export const subAgentToolsets: Record<string, any[]> = {
+  route_to_autonomous_tasks: autonomousTaskToolDefinitions,
   route_to_inventory: inventoryTools,
   route_to_orders: orderTools,
   route_to_crm: crmTools,
@@ -112,6 +133,7 @@ export const subAgentToolsets: Record<string, any[]> = {
 
 // Map router tool names to specific system prompts for the sub-agents
 export const subAgentPrompts: Record<string, string> = {
+  route_to_autonomous_tasks: "You are the ACE Autonomous Tasks & Research Sub-Agent. Your job is to schedule continuous web monitoring tasks, filter out noise, trigger direct notifications, perform real-time research and fact-checking, draft commercial copy, calculate stepped margins and landed costs, and plan business itineraries.",
   route_to_inventory: "You are the ACE Inventory Manager Sub-Agent. Your job is to manage the vendor's catalog, stock, and pricing.",
   route_to_orders: "You are the ACE Order Manager Sub-Agent. Your job is to handle fulfillment, logistics, shipping, and cancellations.",
   route_to_crm: "You are the ACE CRM Sub-Agent. Your job is to manage customer inquiries, WhatsApp messages and chat history, customer relationships, tags, segmentation, and CRM synchronization. You have direct access to store message logs.",

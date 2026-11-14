@@ -30,6 +30,7 @@ import { transition, TransitionError } from "../../state-machine/src/orderStateM
 import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 import { sendCustomerMessage } from "../../comms-router/src/outbound.js";
 import Groq from "groq-sdk";
+import { AutonomousTaskService } from "./services/autonomousTaskService.js";
 
 
 import {
@@ -291,6 +292,55 @@ export const toolDefinitions = [
       required: ["productQuery"],
     },
   },
+  {
+    name: "schedule_background_monitoring_task",
+    description:
+      "Schedule an automated background task for continuous web monitoring, noise filtering, and direct customer/merchant notifications when an item or update is found (e.g. out of stock item like 'blue jacket' or verified announcement like 'FilmOne Entertainment release dates').",
+    input_schema: {
+      type: "object",
+      properties: {
+        topic: {
+          type: "string",
+          description: "The specific product, release, or topic to continuously monitor (e.g., 'blue jacket', 'FilmOne Entertainment new release dates')",
+        },
+        taskType: {
+          type: "string",
+          enum: ["inventory_sourcing", "web_monitoring", "price_watch", "release_tracker"],
+          description: "The type of continuous background monitoring",
+        },
+        criteria: {
+          type: "object",
+          description: "Filtering criteria such as official sources only, max price, size/color specs",
+        },
+      },
+      required: ["topic"],
+    },
+  },
+  {
+    name: "manage_background_tasks",
+    description:
+      "List, inspect, pause, or cancel existing background monitoring tasks for this customer.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "cancel", "pause", "resume"],
+          description: "The action to perform on background tasks",
+        },
+        taskId: {
+          type: "string",
+          description: "The ID of the specific task (required for cancel, pause, resume)",
+        },
+        status: {
+          type: "string",
+          enum: ["active", "completed", "paused", "cancelled"],
+          description: "Optional filter for listing tasks",
+        },
+      },
+      required: ["action"],
+    },
+  },
 ] as const;
 
 // ─── Execution Context ────────────────────────────────────────────────────────
@@ -380,6 +430,39 @@ export async function executeTool(
       const { query } = input as { query: string };
       const results = await executeSearchWeb(query);
       return { output: results };
+    }
+    case "schedule_background_monitoring_task": {
+      const result = await AutonomousTaskService.scheduleTask({
+        merchantId: ctx.merchantId,
+        customerId: input.customerId || ctx.customerId || null,
+        topic: input.topic,
+        taskType: input.taskType || "inventory_sourcing",
+        criteria: input.criteria,
+      });
+      return { output: result };
+    }
+    case "manage_background_tasks": {
+      if (input.action === "list") {
+        const tasks = await AutonomousTaskService.listTasks(
+          ctx.merchantId,
+          ctx.customerId || null,
+          input.status
+        );
+        return { output: { tasks, count: tasks.length } };
+      } else {
+        const statusMap: Record<string, "active" | "completed" | "paused" | "cancelled"> = {
+          cancel: "cancelled",
+          pause: "paused",
+          resume: "active",
+        };
+        const newStatus = statusMap[input.action] || "active";
+        const updated = await AutonomousTaskService.updateTaskStatus(
+          input.taskId,
+          ctx.merchantId,
+          newStatus
+        );
+        return { output: { success: !!updated, task: updated } };
+      }
     }
     case "source_price": {
       const { productQuery } = input as { productQuery: string };

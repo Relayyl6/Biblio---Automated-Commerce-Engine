@@ -38,6 +38,8 @@ import {
 } from "@ace/shared/tiers/featureGuard.js";
 import { VendorPresenceService, type PresenceInfo, type PresenceState } from "./services/VendorPresenceService.js";
 import { ChatClassifier } from "./services/ChatClassifier.js";
+import { AutonomousTaskService, HOW_IT_WORKS_EXPLANATION } from "../../ai-negotiator/src/services/autonomousTaskService.js";
+import { executeAutonomousTaskTool } from "../../ai-negotiator/src/tools/autonomousTaskTools.js";
 import { getLiveUsdNgnRate } from "@ace/shared/fxService.js";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -4885,6 +4887,192 @@ app.get("/legal/deletion", async (_req, reply) => {
   </div>
 </body>
 </html>`);
+});
+
+
+// ─── Autonomous Background Tasks & Extended Agent Tool Suite ─────────────────
+
+app.get("/merchants/:id/background-tasks", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const query = request.query as { customerId?: string; status?: string };
+  try {
+    const tasks = await AutonomousTaskService.listTasks(id, query.customerId || null, query.status);
+    return reply.send({
+      success: true,
+      count: tasks.length,
+      tasks,
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to list background tasks");
+    return reply.status(500).send({ error: "Failed to list background tasks", message: err.message });
+  }
+});
+
+app.post("/merchants/:id/background-tasks", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const body = (request.body as any) || {};
+  if (!body.topic) {
+    return reply.status(400).send({ error: "Missing topic in request body" });
+  }
+  try {
+    const result = await AutonomousTaskService.scheduleTask({
+      merchantId: id,
+      customerId: body.customerId || null,
+      topic: body.topic,
+      taskType: body.taskType || "inventory_sourcing",
+      criteria: body.criteria,
+    });
+    return reply.status(201).send({
+      success: true,
+      ...result,
+      howItWorks: HOW_IT_WORKS_EXPLANATION,
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to schedule background task");
+    return reply.status(500).send({ error: "Failed to schedule background task", message: err.message });
+  }
+});
+
+app.patch("/merchants/:id/background-tasks/:taskId", async (request, reply) => {
+  const { id, taskId } = request.params as { id: string; taskId: string };
+  const body = (request.body as any) || {};
+  const status = body.status;
+  if (!["active", "completed", "paused", "cancelled"].includes(status)) {
+    return reply.status(400).send({ error: "Invalid status. Must be active, completed, paused, or cancelled" });
+  }
+  try {
+    const updated = await AutonomousTaskService.updateTaskStatus(taskId, id, status);
+    if (!updated) {
+      return reply.status(404).send({ error: "Task not found or not updated" });
+    }
+    return reply.send({ success: true, task: updated });
+  } catch (err: any) {
+    app.log.error(err, "Failed to update background task");
+    return reply.status(500).send({ error: "Failed to update background task", message: err.message });
+  }
+});
+
+app.delete("/merchants/:id/background-tasks/:taskId", async (request, reply) => {
+  const { id, taskId } = request.params as { id: string; taskId: string };
+  try {
+    const updated = await AutonomousTaskService.updateTaskStatus(taskId, id, "cancelled");
+    return reply.send({ success: true, message: "Task cancelled successfully", task: updated });
+  } catch (err: any) {
+    app.log.error(err, "Failed to delete background task");
+    return reply.status(500).send({ error: "Failed to delete background task", message: err.message });
+  }
+});
+
+app.post("/merchants/:id/background-tasks/run-check", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  try {
+    const runSummary = await AutonomousTaskService.runMonitoringCheck(id);
+    return reply.send({
+      success: true,
+      count: runSummary.results.length,
+      ...runSummary,
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to run background monitoring check");
+    return reply.status(500).send({ error: "Failed to run background monitoring check", message: err.message });
+  }
+});
+
+app.post("/merchants/:id/send-welcome", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  try {
+    const mRows = await sql<{ name: string; owner_first_name: string; contact_phone: string; phone_number_id: string }[]>`
+      SELECT name, owner_first_name, contact_phone, phone_number_id
+      FROM merchants
+      WHERE id = ${id}
+      LIMIT 1
+    `;
+    if (!mRows[0]) {
+      return reply.status(404).send({ error: "Merchant not found" });
+    }
+    const merchant = mRows[0];
+    const greetingName = merchant.owner_first_name || merchant.name || "Merchant";
+    const welcomeText =
+      `👋 Hello ${greetingName}! I am Biblio, your autonomous commerce assistant.\n\n` +
+      `Your WhatsApp is now linked and active. Here is how I work for you 24/7:\n\n` +
+      `1. 🛍️ Automated Sales & Negotiation: When buyers message your business line, I handle inquiries, check product stock, and negotiate discounts up to your approved limits.\n` +
+      `2. 💳 Instant Zero-Deduction Settlements: For every order, I generate a Providus Virtual Account Number (VAN). Customers pay, and funds settle directly into your bank account with zero deductions.\n` +
+      `3. ⚡ Store Command Center: You can chat with me right here anytime to manage your store.\n\n` +
+      `Try texting me any of these commands right now:\n` +
+      `• "Show my settlement account"\n` +
+      `• "Show recent customer inquiries"\n` +
+      `• "Add product: [Product Name] [Price]"\n` +
+      `• "Generate WhatsApp status post"\n\n` +
+      `I am live and ready to take sales!`;
+
+    // Record into merchant_agent_transcripts
+    await sql`
+      INSERT INTO merchant_agent_transcripts (merchant_id, channel, sender_role, content, metadata)
+      VALUES (${id}, 'whatsapp', 'agent', ${welcomeText}, ${JSON.stringify({ type: 'onboarding_welcome', timestamp: Date.now() })}::jsonb)
+    `.catch(() => {});
+
+    // Publish to Redis stream for live mobile UI and agent subscribers
+    await redis.publish(`agent:stream:${id}`, JSON.stringify({
+      channel: 'whatsapp',
+      sender_role: 'agent',
+      content: welcomeText,
+      created_at: new Date().toISOString()
+    })).catch(() => {});
+
+    // Attempt direct dispatch via Baileys gateway if connected
+    let targetPhone = merchant.contact_phone || merchant.phone_number_id || "";
+    let dispatchedToBaileys = false;
+    if (targetPhone) {
+      try {
+        const resp = await fetch(`${BAILEYS_GATEWAY_URL}/messages/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            merchantId: id,
+            to: targetPhone,
+            message: welcomeText,
+          }),
+        });
+        dispatchedToBaileys = resp.ok;
+      } catch (e) {
+        // Gateway may be offline or in pairing mode
+      }
+    }
+
+    return reply.send({
+      success: true,
+      message: "Welcome message sent and recorded in merchant stream",
+      welcomeText,
+      dispatchedToBaileys,
+      recipient: targetPhone || "channel_stream",
+    });
+  } catch (err: any) {
+    app.log.error(err, "Failed to dispatch welcome message");
+    return reply.status(500).send({ error: "Failed to dispatch welcome message", message: err.message });
+  }
+});
+
+app.post("/merchants/:id/ai-tools/execute", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const body = (request.body as any) || {};
+  const { toolName, input, customerId } = body;
+  if (!toolName) {
+    return reply.status(400).send({ error: "toolName is required" });
+  }
+  try {
+    const result = await executeAutonomousTaskTool(toolName, input || {}, {
+      merchantId: id,
+      customerId: customerId || null,
+    });
+    return reply.send({
+      success: true,
+      toolName,
+      result,
+    });
+  } catch (err: any) {
+    app.log.error(err, `Failed to execute AI tool ${toolName}`);
+    return reply.status(500).send({ error: `Failed to execute AI tool ${toolName}`, message: err.message });
+  }
 });
 
 app.setErrorHandler((error: any, request, reply) => {

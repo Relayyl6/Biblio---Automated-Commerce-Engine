@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StatusBar } from 'react-native';
 import {
   Settings,
@@ -37,6 +37,8 @@ export default function CommandCenterScreen() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const c = isDark ? colors.dark : colors.light;
+  const [isChannelsStacked, setIsChannelsStacked] = useState(true);
+  const isWhatsAppConnected = !!data?.whatsapp_connected;
 
   // Time-aware greeting
   const greeting = useMemo(() => {

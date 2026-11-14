@@ -9,8 +9,20 @@ export { settingsTools } from "./settingsTools.js";
 export { integrationTools } from "./integrationTools.js";
 export { bookingTools } from "./bookingTools.js";
 export { adminTools } from "./adminTools.js";
+export { autonomousTaskToolDefinitions, executeAutonomousTaskTool } from "./autonomousTaskTools.js";
 
-import { inventoryTools, orderTools, crmTools, negotiationTools, financeTools, marketingTools, analyticsTools, settingsTools, integrationTools, bookingTools, adminTools } from "./index.js";
+import { inventoryTools } from "./inventoryTools.js";
+import { orderTools } from "./orderTools.js";
+import { crmTools } from "./crmTools.js";
+import { negotiationTools } from "./negotiationTools.js";
+import { financeTools } from "./financeTools.js";
+import { marketingTools } from "./marketingTools.js";
+import { analyticsTools } from "./analyticsTools.js";
+import { settingsTools } from "./settingsTools.js";
+import { integrationTools } from "./integrationTools.js";
+import { bookingTools } from "./bookingTools.js";
+import { adminTools } from "./adminTools.js";
+import { autonomousTaskToolDefinitions } from "./autonomousTaskTools.js";
 
 export const allBiblioTools = [
   ...inventoryTools,
@@ -23,5 +35,6 @@ export const allBiblioTools = [
   ...settingsTools,
   ...integrationTools,
   ...bookingTools,
-  ...adminTools
+  ...adminTools,
+  ...autonomousTaskToolDefinitions,
 ];
