@@ -12,7 +12,7 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Editorial Stepped Headline Section */}
-        <div className="relative w-full mb-8 sm:mb-12">
+        <div className="relative w-full mb-8 sm:mb-14">
           
           {/* Top Line & Description Block */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
@@ -39,25 +39,18 @@ export const Hero: React.FC<HeroProps> = ({ onOpenWaitlist }) => {
             </h1>
           </div>
 
-          {/* 3D Cut-out Brand Object (Sticker-style floating phone bridging headline and photo, rotated -15deg) */}
+          {/* 3D Cut-out Brand Object (Transparent PNG floating phone bridging headline and photo, rotated -15deg) */}
           <div 
             onClick={() => onOpenWaitlist()}
-            className="absolute top-[42%] right-[8%] sm:right-[18%] lg:right-[26%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500 hidden sm:block"
+            className="absolute top-[32%] sm:top-[38%] right-[2%] sm:right-[12%] lg:right-[20%] z-20 cursor-pointer transform -rotate-12 hover:-rotate-6 hover:scale-105 transition-all duration-500"
             title="Join the early access"
           >
-            <div className="relative w-48 sm:w-60 md:w-72 lg:w-80 filter drop-shadow-[0_24px_48px_rgba(15,17,21,0.25)]">
+            <div className="relative w-40 sm:w-56 md:w-68 lg:w-80 filter drop-shadow-[0_28px_56px_rgba(15,17,21,0.30)]">
               <img
-                src="/hero-cutout-phone.jpg"
+                src="/hero-cutout-phone.png"
                 alt="Biblio Autonomous Commerce Engine 3D interface"
-                className="w-full h-auto object-contain rounded-2xl border-2 border-white/60"
+                className="w-full h-auto object-contain pointer-events-auto"
               />
-              {/* Live Status Sticker Pill attached to cut-out */}
-              <div className="absolute -bottom-3 -left-4 biblio-glass-dark px-3 py-1.5 rounded-full flex items-center gap-2 text-white shadow-elev-3">
-                <span className="w-2 h-2 rounded-full bg-settled-600 animate-ping" />
-                <span className="text-[11px] font-mono font-bold tracking-tight text-emerald-400">
-                  +₦45,000 Verified
-                </span>
-              </div>
             </div>
           </div>
         </div>

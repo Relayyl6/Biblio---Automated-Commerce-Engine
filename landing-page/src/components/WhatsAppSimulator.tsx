@@ -584,19 +584,19 @@ export const WhatsAppSimulator: React.FC = () => {
   );
 
   return (
-    <section id="simulator" className="py-16 sm:py-32 bg-[#060709] text-white relative overflow-hidden border-b border-white/[0.08] apple-subtle-grid w-full max-w-[100vw]">
+    <section id="simulator" className="py-16 sm:py-28 bg-paper-100/60 text-ink-950 relative overflow-hidden border-b border-ink-950/8 w-full max-w-[100vw]">
       <div className="max-w-6xl mx-auto px-3.5 sm:px-6 relative z-10">
         
         {/* Section Header */}
         <div className="text-center max-w-2xl mx-auto mb-6 sm:mb-10">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-[11px] sm:text-xs font-medium mb-2.5 sm:mb-3 shadow-sm">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-ember-50 border border-ember-500/20 text-ember-600 text-xs font-mono font-bold mb-3 shadow-sm">
             <Sparkles className="w-3.5 h-3.5" />
             <span>Interactive Simulator</span>
           </div>
-          <h2 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2 sm:mb-3">
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-ink-950 mb-3">
             Experience the Nigerian AI live
           </h2>
-          <p className="text-zinc-400 text-xs sm:text-base leading-relaxed">
+          <p className="text-ink-700 text-sm sm:text-base leading-relaxed">
             Haggle in Pidgin, test voice notes, or unfold into native WhatsApp dual-pane view.
           </p>
         </div>

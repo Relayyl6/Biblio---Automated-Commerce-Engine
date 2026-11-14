@@ -1,90 +1,95 @@
 import React, { useState } from 'react';
-import { Check, ArrowRight, Sparkles } from 'lucide-react';
+import { Check, Sparkles, ArrowRight } from 'lucide-react';
+import { PlanType } from './WaitlistModal';
 
 interface PricingProps {
-  onOpenWaitlist: (planId?: 'starter' | 'professional' | 'enterprise') => void;
+  onOpenWaitlist: (planId?: PlanType) => void;
 }
 
 export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
 
-  const plans: {
-    id: 'starter' | 'professional' | 'enterprise';
+  const plans: Array<{
+    id: PlanType;
     name: string;
     tagline: string;
-    price: number;
-    isPopular?: boolean;
+    priceMonthly: string;
+    priceYearly: string;
     badge?: string;
+    isPopular?: boolean;
     features: string[];
-    ctaText: string;
-  }[] = [
+    buttonText: string;
+  }> = [
     {
       id: 'starter',
-      name: 'Starter Plan',
-      tagline: 'For vendors testing automated sales.',
-      price: 0,
+      name: 'Starter',
+      tagline: 'For boutique owners doing under 30 chats daily.',
+      priceMonthly: '₦12,500',
+      priceYearly: '₦10,000',
       features: [
-        '50 automated orders/mo',
-        'Pidgin & English negotiation',
-        'Paystack VAN escrow',
-        'Manual rider confirmation',
-        'Instant takeover (/pause)',
+        '1 WhatsApp business line',
+        'English & Pidgin auto-negotiation',
+        'Basic Paystack VAN escrow collection',
+        'Manual rider booking link',
+        'Up to 150 automated orders/mo',
       ],
-      ctaText: 'Join Free Waitlist',
+      buttonText: 'Join Waitlist',
     },
     {
       id: 'professional',
-      name: 'Professional Plan',
-      tagline: 'For boutiques, hair vendors, and fashion brands.',
-      price: billingCycle === 'monthly' ? 15000 : 12000,
+      name: 'Pro Merchant',
+      tagline: 'For growing brands processing 30–150 daily orders.',
+      priceMonthly: '₦28,000',
+      priceYearly: '₦22,400',
+      badge: 'MOST POPULAR',
       isPopular: true,
-      badge: 'Most Popular',
       features: [
-        'Unlimited automated chats',
-        'Voice note transcription',
-        'Auto Kwik & Gokada booking',
-        'Daily WhatsApp Status poster',
-        'Floor margin guardrails',
-        'Real-time Paystack webhook lock',
+        'Up to 3 staff & multi-device sync',
+        'Instant voice note transcription (Audio AI)',
+        'Automatic 1-click Kwik rider dispatch',
+        'Anti-fraud VAN escrow protection',
+        'Daily WhatsApp Status auto-poster',
+        'Unlimited automated transactions',
       ],
-      ctaText: 'Reserve Priority Spot',
+      buttonText: 'Get Pro Access',
     },
     {
       id: 'enterprise',
-      name: 'Enterprise Plan',
-      tagline: 'For wholesalers and merchant networks.',
-      price: billingCycle === 'monthly' ? 50000 : 40000,
+      name: 'Scale / Multi-Branch',
+      tagline: 'For high-volume merchants and distributed warehouses.',
+      priceMonthly: '₦65,000',
+      priceYearly: '₦52,000',
       features: [
-        'Multi-agent team swarm',
-        'Custom inventory & ERP sync',
-        'Dedicated Lagos account manager',
-        'Custom dialect fine-tuning',
-        '99.99% uptime SLA',
+        'Multi-warehouse & store branch routing',
+        'Dedicated account manager in Lagos',
+        'Custom courier API integrations',
+        'Priority low-latency Groq AI server',
+        'Custom ERP & accounting webhook exports',
       ],
-      ctaText: 'Join Enterprise Cohort',
+      buttonText: 'Contact for Scale',
     },
   ];
 
   return (
-    <section id="pricing" className="py-16 sm:py-32 bg-[#060709] border-b border-white/[0.08] relative w-full max-w-[100vw] overflow-hidden">
-      <div className="max-w-6xl mx-auto px-3.5 sm:px-6">
-        <div className="text-center max-w-xl mx-auto mb-10 sm:mb-20">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1 rounded-full bg-white/[0.04] border border-white/10 text-emerald-400 text-[11px] sm:text-xs font-medium mb-2.5 sm:mb-3">
+    <section id="pricing" className="py-16 sm:py-28 bg-paper-50 border-b border-ink-950/8 relative w-full max-w-[100vw] overflow-hidden">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <div className="text-center max-w-xl mx-auto mb-10 sm:mb-16">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ember-50 border border-ember-500/20 text-ember-600 text-xs font-mono font-bold mb-3">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Pricing</span>
+            <span>TRANSPARENT NAIRA PRICING</span>
           </div>
-          <h2 className="text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2 sm:mb-3">
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-ink-950 mb-3">
             Simple, predictable pricing
           </h2>
-          <p className="text-zinc-400 text-xs sm:text-base leading-relaxed">
-            No hidden fees or surprise deductions.
+          <p className="text-ink-700 text-sm sm:text-base leading-relaxed">
+            No hidden fees, no percentage cuts, zero surprise bank deductions.
           </p>
 
           {/* Monthly / Yearly Toggle */}
-          <div className="flex items-center justify-center gap-3 mt-6 sm:mt-8">
+          <div className="flex items-center justify-center gap-3 mt-6">
             <span
-              className={`text-xs font-medium cursor-pointer transition-colors ${
-                billingCycle === 'monthly' ? 'text-white' : 'text-zinc-500'
+              className={`text-xs font-semibold cursor-pointer transition-colors ${
+                billingCycle === 'monthly' ? 'text-ink-950' : 'text-ink-400'
               }`}
               onClick={() => setBillingCycle('monthly')}
             >
@@ -92,90 +97,94 @@ export const Pricing: React.FC<PricingProps> = ({ onOpenWaitlist }) => {
             </span>
             <button
               onClick={() => setBillingCycle(billingCycle === 'monthly' ? 'yearly' : 'monthly')}
-              className="w-11 h-6 rounded-full bg-white/10 p-0.5 flex items-center transition-colors relative border border-white/10"
+              className="w-11 h-6 rounded-full bg-paper-200 p-0.5 flex items-center transition-colors relative border border-ink-950/10"
               aria-label="Toggle Billing"
             >
               <div
-                className={`w-5 h-5 rounded-full bg-emerald-400 transform transition-transform ${
+                className={`w-5 h-5 rounded-full bg-ember-500 transform transition-transform shadow-sm ${
                   billingCycle === 'yearly' ? 'translate-x-5' : 'translate-x-0'
                 }`}
               />
             </button>
             <span
-              className={`text-xs font-medium cursor-pointer flex items-center gap-1.5 transition-colors ${
-                billingCycle === 'yearly' ? 'text-white' : 'text-zinc-500'
+              className={`text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors ${
+                billingCycle === 'yearly' ? 'text-ink-950' : 'text-ink-400'
               }`}
               onClick={() => setBillingCycle('yearly')}
             >
               <span>Yearly</span>
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                -20%
+              <span className="text-[10px] font-bold text-settled-600 bg-settled-50 px-2 py-0.5 rounded-full border border-settled-600/20">
+                Save 20%
               </span>
             </span>
           </div>
         </div>
 
         {/* Pricing Cards */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-6 items-stretch">
           {plans.map((plan) => (
             <div
               key={plan.id}
-              className={`rounded-2xl sm:rounded-3xl p-5 sm:p-8 flex flex-col justify-between transition-all duration-200 relative ${
+              className={`rounded-2xl sm:rounded-3xl p-6 sm:p-8 flex flex-col justify-between transition-all duration-200 relative ${
                 plan.isPopular
-                  ? 'bg-gradient-to-b from-[#141822] to-[#0D1017] text-white border-2 border-emerald-500/50 shadow-2xl z-10'
-                  : 'bg-[#0D0F14] text-white border border-white/[0.08]'
+                  ? 'bg-ink-950 text-white shadow-elev-3 border-2 border-ember-500 z-10'
+                  : 'bg-white text-ink-950 border border-ink-950/8 shadow-elev-1 hover:border-ember-500/30 hover:shadow-elev-2'
               }`}
             >
               {plan.badge && (
                 <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                  <span className="bg-emerald-400 text-black text-[10px] font-bold px-3 py-0.5 rounded-full shadow-md">
+                  <span className="bg-ember-500 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-md tracking-wider uppercase font-mono">
                     {plan.badge}
                   </span>
                 </div>
               )}
 
               <div>
-                <h3 className="text-xl font-bold mb-1 text-white">{plan.name}</h3>
-                <p className="text-xs text-zinc-400 mb-6">
+                <h3 className={`text-xl font-bold mb-1 ${plan.isPopular ? 'text-white' : 'text-ink-950'}`}>
+                  {plan.name}
+                </h3>
+                <p className={`text-xs mb-6 ${plan.isPopular ? 'text-zinc-400' : 'text-ink-400'}`}>
                   {plan.tagline}
                 </p>
 
-                <div className="mb-6">
-                  <div className="flex items-baseline gap-1 font-mono">
-                    <span className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
-                      ₦{plan.price.toLocaleString()}
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      / month
-                    </span>
-                  </div>
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className={`text-3xl sm:text-4xl font-extrabold tracking-tight tabular-nums ${plan.isPopular ? 'text-white' : 'text-ink-950'}`}>
+                    {billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly}
+                  </span>
+                  <span className={`text-xs ${plan.isPopular ? 'text-zinc-400' : 'text-ink-400'}`}>
+                    /month
+                  </span>
                 </div>
 
-                <div className="space-y-3 mb-8 text-xs border-t border-white/[0.06] pt-6">
-                  {plan.features.map((feat, fIdx) => (
-                    <div key={fIdx} className="flex items-start gap-2.5">
-                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <Check className="w-2.5 h-2.5" />
+                <div className="space-y-3 pt-4 border-t border-ink-950/8">
+                  {plan.features.map((feature, fIdx) => (
+                    <div key={fIdx} className="flex items-start gap-2.5 text-xs">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                        plan.isPopular ? 'bg-ember-500/20 text-ember-400' : 'bg-settled-50 text-settled-600'
+                      }`}>
+                        <Check className="w-3 h-3" />
                       </div>
-                      <span className="text-zinc-300">
-                        {feat}
+                      <span className={plan.isPopular ? 'text-zinc-300' : 'text-ink-700'}>
+                        {feature}
                       </span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <button
-                onClick={() => onOpenWaitlist(plan.id)}
-                className={`w-full py-3.5 rounded-full font-bold text-xs transition-all flex items-center justify-center gap-1.5 active:scale-98 ${
-                  plan.isPopular
-                    ? 'bg-emerald-400 hover:bg-emerald-300 text-black shadow-md shadow-emerald-400/20'
-                    : 'bg-white/[0.06] hover:bg-white/[0.1] text-white border border-white/10'
-                }`}
-              >
-                <span>{plan.ctaText}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="pt-8 mt-6">
+                <button
+                  onClick={() => onOpenWaitlist(plan.id)}
+                  className={`w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm ${
+                    plan.isPopular
+                      ? 'bg-ember-500 hover:bg-ember-600 text-white shadow-ember-500/20'
+                      : 'bg-paper-100 hover:bg-paper-200 text-ink-950 border border-ink-950/8'
+                  }`}
+                >
+                  <span>{plan.buttonText}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

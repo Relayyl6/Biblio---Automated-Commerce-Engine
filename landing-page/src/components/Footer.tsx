@@ -20,7 +20,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
         {/* Pre-Footer Callout Card: Minimalist Linear / Apple High-Craft Aesthetic */}
         <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-12 mb-12 sm:mb-16 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
           <div className="relative z-10 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[11px] mb-3 sm:mb-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ember-500/20 border border-ember-500/30 text-ember-400 font-mono text-[11px] mb-3 sm:mb-4">
               <Sparkles className="w-3.5 h-3.5" />
               <span>BATCH 1 NOW OPEN • 80 SPOTS REMAINING</span>
             </div>
@@ -37,7 +37,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
               <button
                 type="button"
                 onClick={() => onOpenWaitlist && onOpenWaitlist()}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-emerald-400 hover:bg-emerald-300 text-black font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-400/25 active:scale-98"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-ember-500 hover:bg-ember-600 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-ember-500/25 active:scale-98"
               >
                 <span>Join Batch 1 Waitlist</span>
                 <ArrowRight className="w-4 h-4" />

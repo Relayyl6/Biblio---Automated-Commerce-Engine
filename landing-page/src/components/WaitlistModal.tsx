@@ -255,7 +255,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                   }`}
                 >
                   <span>Professional</span>
-                  <span className={`text-[10px] font-mono ${selectedPlan === 'professional' ? 'text-black/80 font-semibold' : 'text-emerald-400'}`}>
+                  <span className={`text-[10px] font-mono ${selectedPlan === 'professional' ? 'text-black/80 font-semibold' : 'text-ember-400'}`}>
                     ₦15,000/mo
                   </span>
                 </button>
@@ -303,7 +303,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
               {/* WhatsApp Phone Number */}
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  WhatsApp Phone Number <span className="text-emerald-400">*</span>
+                  WhatsApp Phone Number <span className="text-ember-400">*</span>
                 </label>
                 <input
                   type="tel"
@@ -318,7 +318,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
               {/* Business Email */}
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  Business Email Address <span className="text-emerald-400">*</span>
+                  Business Email Address <span className="text-ember-400">*</span>
                 </label>
                 <input
                   type="email"
@@ -364,7 +364,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                       onClick={() => setOrderVolume(vol.id)}
                       className={`py-2 px-1 rounded-xl text-xs font-medium border text-center transition-all ${
                         orderVolume === vol.id
-                          ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-400 font-semibold'
+                          ? 'bg-emerald-500/15 border-emerald-500/60 text-ember-400 font-semibold'
                           : 'bg-[#141822] border-white/[0.08] text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
@@ -379,7 +379,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full h-12 rounded-xl font-bold text-sm text-black bg-[#10B981] hover:bg-[#059669] transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                  className="w-full h-12 rounded-xl font-bold text-sm text-black bg-ember-500 hover:bg-ember-600 text-white transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
                 >
                   {isLoading ? (
                     <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
@@ -415,7 +415,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
         {step === 'success' && waitlistData && (
           <div className="flex flex-col items-center text-center py-2 animate-fadeIn">
             {/* VIP Access Badge */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold mb-4">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-ember-500/30 text-xs font-mono font-bold mb-4">
               <span>LAGOS BATCH 1 RESERVED</span>
             </div>
 
@@ -436,7 +436,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
             <div className="w-full bg-[#141822] rounded-2xl border border-white/10 p-4 mb-5 text-left space-y-2.5 text-xs">
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
                 <span className="text-zinc-400">Reserved Tier:</span>
-                <span className="font-bold text-emerald-400 uppercase font-mono">
+                <span className="font-bold text-ember-400 uppercase font-mono">
                   {selectedPlan} Plan
                 </span>
               </div>
@@ -462,7 +462,7 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
             <div className="w-full bg-[#090B0F] rounded-2xl border border-white/10 p-3.5 mb-5 text-left">
               <div className="text-[10px] text-zinc-400 font-mono uppercase mb-1.5 flex items-center justify-between">
                 <span>Skip 50 spots per merchant referral:</span>
-                <span className="text-emerald-400 font-bold">{waitlistData.referralCode}</span>
+                <span className="text-ember-400 font-bold">{waitlistData.referralCode}</span>
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -477,8 +477,8 @@ export const WaitlistModal: React.FC<WaitlistModalProps> = ({
                 >
                   {copiedLink ? (
                     <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">Copied</span>
+                      <Check className="w-3.5 h-3.5 text-ember-400" />
+                      <span className="text-ember-400">Copied</span>
                     </>
                   ) : (
                     <>
