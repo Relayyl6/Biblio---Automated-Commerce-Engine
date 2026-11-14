@@ -96,3 +96,25 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #8A909C;
 }
+
+/* Continuous Infinite Horizontal Marquee */
+@keyframes biblio-marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.biblio-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: biblio-marquee 26s linear infinite;
+  will-change: transform;
+}
+
+.biblio-marquee-track:hover {
+  animation-play-state: paused;
+}
+

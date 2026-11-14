@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Send,
   CheckCheck,
@@ -39,6 +39,18 @@ export const WhatsAppSimulator: React.FC = () => {
   const [inputMsg, setInputMsg] = useState('');
   const [aiPaused, setAiPaused] = useState(false);
   const [escrowReleased, setEscrowReleased] = useState(false);
+
+  // Automatically lock to authentic single iPhone mode on mobile screens (< 768px)
+  useEffect(() => {
+    const handleResize = () => {
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setDeviceMode('iphone');
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Chat datasets for each scenario
   const initialChats: Record<string, ChatMessage[]> = {
@@ -601,11 +613,10 @@ export const WhatsAppSimulator: React.FC = () => {
           </p>
         </div>
 
-        {/* Unified Controls Toolbar: Dialects on Left, Hardware Form Factor Toggle BESIDE it on Right */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-3 max-w-4xl mx-auto mb-6 sm:mb-10 p-1 sm:p-1.5 rounded-2xl bg-zinc-900/80 border border-white/10 shadow-xl backdrop-blur-xl">
-          {/* Dialect Switcher on Left */}
-          <div className="flex items-center gap-1 w-full sm:w-auto justify-center sm:justify-start">
-            <span className="text-[10px] font-mono uppercase text-zinc-500 px-2 hidden md:inline">Dialect:</span>
+        {/* Compact, Centered Controls Toolbar: Hugs content, hides unconvincing duo on mobile */}
+        <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2.5 max-w-fit mx-auto mb-6 sm:mb-10 p-1 sm:p-1.5 rounded-2xl bg-zinc-900/90 border border-white/10 shadow-xl backdrop-blur-xl">
+          {/* Dialect Switcher */}
+          <div className="flex items-center gap-1">
             <button
               onClick={() => handleDialectChange('pidgin')}
               className={`px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all ${
@@ -638,8 +649,8 @@ export const WhatsAppSimulator: React.FC = () => {
             </button>
           </div>
 
-          {/* Hardware Device Toggle Placed Directly BESIDE it on Right */}
-          <div className="flex items-center gap-1 p-0.5 sm:p-1 bg-black/40 rounded-xl border border-white/5 w-full sm:w-auto justify-center">
+          {/* Hardware Device Toggle: Only shown on md+ screens where dual-pane is convincing */}
+          <div className="hidden md:flex items-center gap-1 p-0.5 sm:p-1 bg-black/40 rounded-xl border border-white/5 ml-1">
             <button
               onClick={() => setDeviceMode('iphone')}
               className={`flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-all duration-300 ${

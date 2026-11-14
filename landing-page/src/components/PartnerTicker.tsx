@@ -68,22 +68,22 @@ export const PartnerTicker: React.FC = () => {
     { name: 'Wema Bank', label: 'Virtual NIBSS', icon: WemaIcon },
   ];
 
-  // Quadruple array to ensure seamless infinite looping on ultra-wide screens
-  const marqueePartners = [...partners, ...partners, ...partners, ...partners];
+  // Dual array for pixel-perfect seamless 0% to -50% infinite marquee loop
+  const marqueePartners = [...partners, ...partners];
 
   return (
     <section className="py-8 sm:py-10 bg-paper-100/60 border-y border-ink-950/8 relative overflow-hidden w-full">
       {/* Edge Fade Gradients for smooth disappearing/reappearing effect */}
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-20 sm:w-36 bg-gradient-to-r from-[#F7F4EE] to-transparent z-10" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-20 sm:w-36 bg-gradient-to-l from-[#F7F4EE] to-transparent z-10" />
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-16 sm:w-36 bg-gradient-to-r from-[#F7F4EE] to-transparent z-10" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-16 sm:w-36 bg-gradient-to-l from-[#F7F4EE] to-transparent z-10" />
 
-      <div className="w-full relative z-0">
+      <div className="w-full relative z-0 overflow-hidden">
         <p className="text-center text-[11px] font-mono uppercase tracking-widest text-ink-400 mb-6 font-semibold px-4">
           Native integration with Nigeria's trusted commerce infrastructure
         </p>
 
         {/* Continuous Infinite Scrolling Marquee */}
-        <div className="flex w-max animate-marquee hover:[animation-play-state:paused] py-1">
+        <div className="biblio-marquee-track py-1">
           {marqueePartners.map((partner, idx) => {
             const Icon = partner.icon;
             return (

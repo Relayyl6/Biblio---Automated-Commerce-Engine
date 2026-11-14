@@ -16,9 +16,9 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[250px] bg-emerald-500/[0.04] blur-[140px] pointer-events-none rounded-full" />
       <div className="absolute inset-0 apple-subtle-grid opacity-20 pointer-events-none" />
 
-      <div className="relative w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-20 pb-12">
-        {/* Pre-Footer Callout Card: Minimalist Linear / Apple High-Craft Aesthetic */}
-        <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-10 lg:p-12 mb-12 sm:mb-16 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent">
+      {/* 1. Contained Pre-Footer Callout Card (Not full-width, clean rounded card atop) */}
+      <div className="relative max-w-4xl mx-auto px-4 sm:px-6 pt-12 sm:pt-20 pb-12 sm:pb-16 z-10">
+        <div className="rounded-2xl sm:rounded-3xl apple-card p-6 sm:p-10 lg:p-12 border border-white/10 relative overflow-hidden bg-gradient-to-b from-white/[0.04] to-transparent shadow-2xl">
           <div className="relative z-10 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ember-500/20 border border-ember-500/30 text-ember-400 font-mono text-[11px] mb-3 sm:mb-4">
               <Sparkles className="w-3.5 h-3.5" />
@@ -52,9 +52,12 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Clean, Human 4-Column Navigation Layout - Fully Responsive on Mobile & Wide Screens */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08]">
+      {/* 2. Full-Width Edge-to-Edge Navigation & Legal Surface (User requested: max-w-full) */}
+      <div className="w-full px-4 sm:px-8 lg:px-14 pb-12 pt-8 sm:pt-12 border-t border-white/[0.08] relative z-10">
+        {/* Clean, Human 4-Column Navigation Layout - Full Width Across All Monitors */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 sm:gap-10 pb-12 sm:pb-16 border-b border-white/[0.08] w-full">
           {/* Brand & Location Column (Span 5 on Desktop) */}
           <div className="col-span-1 sm:col-span-2 lg:col-span-5 flex flex-col justify-between">
             <div>
@@ -200,8 +203,8 @@ export const Footer: React.FC<FooterProps> = ({ onOpenWaitlist }) => {
           </div>
         </div>
 
-        {/* Minimalist Bottom Bar */}
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 text-center sm:text-left">
+        {/* Minimalist Bottom Bar - Spans Full Width */}
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 text-center sm:text-left w-full">
           <div>
             © {new Date().getFullYear()} Biblio Technologies Ltd. All rights reserved.
           </div>
