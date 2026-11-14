@@ -1209,6 +1209,9 @@ app.get("/merchants/:id/features", async (req, reply) => {
 app.post("/merchants/:id/billing/upgrade", async (req, reply) => {
   const { id } = req.params as { id: string };
   const body = (req.body || {}) as any;
+  if (body.targetTier && !["growth", "enterprise", "starter", "pro"].includes(body.targetTier)) {
+    return reply.status(400).send({ error: "Invalid targetTier. Allowed tiers: starter, growth, enterprise, pro", code: "BAD_REQUEST" });
+  }
   let targetTier = body.targetTier || body.tier;
   if (targetTier === "pro") targetTier = "growth";
   if (!targetTier || (targetTier !== "growth" && targetTier !== "enterprise" && targetTier !== "starter")) {
@@ -1311,6 +1314,9 @@ app.post("/merchants/:id/bank-account", async (req, reply) => {
 app.put("/merchants/:id/pricing-rules", async (req, reply) => {
   const { id } = req.params as { id: string };
   const b = (req.body || {}) as Record<string, unknown>;
+  if (!req.body || Object.keys(b).length === 0) {
+    return reply.code(400).send({ error: "pricing rules body cannot be empty", code: "EMPTY_BODY" });
+  }
   const absoluteFloor = num(b.absoluteFloor) ?? num(b.absolute_floor) ?? (b.friendPricing ? 0 : 0);
   if (absoluteFloor === null || absoluteFloor < 0) {
     return reply.code(400).send({ error: "absoluteFloor (non-negative number) is required", code: "INVALID_FLOOR" });
@@ -4655,6 +4661,9 @@ app.get("/merchants/:id/veto/actions", async (req, reply) => {
 app.post("/merchants/:id/veto/action", async (req, reply) => {
   const { id } = req.params as { id: string };
   const b = (req.body || {}) as any;
+  if (!req.body || Object.keys(b).length === 0 || (!b.actionType && !b.action)) {
+    return reply.status(400).send({ error: "actionType or action is required", code: "MISSING_REQUIRED_FIELDS" });
+  }
   const actionType = b.actionType || b.action || 'AUTONOMOUS_INTERVENTION';
   const blockedBy = b.blockedBy || b.user || b.targetId || 'merchant';
   const reason = b.reason || b.note || 'Manual override';
