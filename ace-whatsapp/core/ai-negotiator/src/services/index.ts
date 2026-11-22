@@ -1,0 +1,12 @@
+export { WatchTaskService } from './watchTaskService.js';
+export { InventoryManagementService } from './inventoryManagementService.js';
+export { OrderFulfillmentService } from './orderFulfillmentService.js';
+export { CustomerRelationshipService } from './customerRelationshipService.js';
+export { FinanceSettlementService } from './financeSettlementService.js';
+export { MarketingBroadcastService } from './marketingBroadcastService.js';
+export { AppointmentBookingService } from './appointmentBookingService.js';
+export { BusinessAnalyticsService } from './businessAnalyticsService.js';
+export { MerchantSettingsService } from './merchantSettingsService.js';
+export { ExternalIntegrationService } from './externalIntegrationService.js';
+export { NegotiationStrategyService } from './negotiationStrategyService.js';
+export { AutonomousTaskService } from './autonomousTaskService.js';
