@@ -2,6 +2,7 @@ import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 import { resolveCustomerTier } from "../pricingService.js";
+import { CustomerRelationshipService } from "../services/customerRelationshipService.js";
 
 export const crmTools = [
   {
@@ -303,77 +304,26 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
   },
 
   get_customer_profile: async (merchantId: string, args: any) => {
-    try {
-      const rawCustomerId = String(args.customerId || "").trim();
-      if (!rawCustomerId) return "Customer ID is required to fetch profile.";
-
-      // Contact resolution: normalize phone number variations (+234, 080, @s.whatsapp.net)
-      const cleanPhone = rawCustomerId.replace(/@s\.whatsapp\.net$/i, "").replace(/[^0-9]/g, "");
-      const normalizedPhone = cleanPhone.startsWith("0") && cleanPhone.length === 11
-        ? "234" + cleanPhone.slice(1)
-        : cleanPhone;
-
-      const [txRows, linkRows, msgRows] = await Promise.all([
-        sql`
-          SELECT COUNT(id) as total_orders, COALESCE(SUM(amount), 0) as ltv, MAX(created_at) as last_order_date
-          FROM transactions 
-          WHERE merchant_id = ${merchantId}::uuid 
-            AND (customer_id = ${rawCustomerId} OR customer_id = ${normalizedPhone} OR customer_id = ${cleanPhone}) 
-            AND status = 'confirmed'
-        `.catch(() => [{ total_orders: 0, ltv: 0, last_order_date: null }]),
-        sql`
-          SELECT c.verified_profile, c.tier FROM customers c
-          WHERE (c.phone_hash = ${rawCustomerId} OR c.phone_hash = ${normalizedPhone} OR c.phone_hash = ${cleanPhone} OR c.global_buyer_id::text = ${rawCustomerId})
-          LIMIT 1
-        `.catch(() => []),
-        sql`
-          SELECT content, created_at FROM conversation_messages
-          WHERE merchant_id = ${merchantId}::uuid 
-            AND (customer_id = ${rawCustomerId} OR customer_id = ${normalizedPhone} OR customer_id = ${cleanPhone})
-          ORDER BY created_at DESC LIMIT 3
-        `.catch(() => [])
-      ]);
-
-      const name = linkRows[0]?.verified_profile?.name || linkRows[0]?.verified_profile?.firstName || "Customer";
-      const ltv = Number(txRows[0]?.ltv || 0);
-      const orderCount = Number(txRows[0]?.total_orders || 0);
-      const lastDate = txRows[0]?.last_order_date ? new Date(txRows[0].last_order_date).toLocaleDateString() : 'Never';
-      const recentMsgs = msgRows.map((m: any) => `• "${m.content || ''}"`).join('\n') || 'None recorded';
-
-      // Customer tier upgrade / resolution
-      const storedTier = linkRows[0]?.tier;
-      const resolvedTier = storedTier || resolveCustomerTier({ orderCount, lifetimeValue: ltv });
-
-      return `Customer Profile for ${name} (${rawCustomerId}):\n- Customer Tier: ${resolvedTier.toUpperCase()}\n- Lifetime Value: ₦${ltv.toLocaleString()}\n- Total Completed Orders: ${orderCount}\n- Last Purchase: ${lastDate}\n- Recent Chats:\n${recentMsgs}`;
-    } catch (e: any) {
-      logger.error("[get_customer_profile error]", e);
-      return `Failed to retrieve profile for ${args.customerId}`;
-    }
+    const res = await CustomerRelationshipService.getCustomerProfile(args.customerId, merchantId);
+    return `Customer Profile for ${res.name} (${res.phone}):
+- Customer Tier: ${res.tier.toUpperCase()}
+- Lifetime Value: ₦${res.totalSpent.toLocaleString()}
+- Total Completed Orders: ${res.orderCount}
+- Average Order Value: ₦${res.averageOrderValue.toLocaleString()}
+- Last Purchase: ${res.lastOrderDate ? new Date(res.lastOrderDate).toLocaleDateString() : 'Never'}
+- Churn Risk: ${res.churnRisk.toUpperCase()}
+- Tags: ${res.tags.length > 0 ? res.tags.join(', ') : 'None'}`;
   },
 
   tag_customer: async (merchantId: string, args: any) => {
-    const { customerId } = args;
-    if (!customerId) return "Customer ID is required.";
-    
-    // Support single tag (string), tags array, and handle empty arrays gracefully
     const rawTags = args.tags !== undefined ? args.tags : args.tag;
-    let tagsToAdd: string[] = [];
-    if (Array.isArray(rawTags)) {
-      tagsToAdd = rawTags.map(t => String(t || '').trim()).filter(Boolean);
-    } else if (typeof rawTags === 'string') {
-      const trimmed = rawTags.trim();
-      if (trimmed) tagsToAdd = [trimmed];
-    }
-
-    if (tagsToAdd.length === 0) {
-      return "Tag cannot be empty. Please provide at least one valid tag.";
-    }
-
-    const key = `customer_tags:${merchantId}:${customerId}`;
-    for (const t of tagsToAdd) {
-      await redis.sadd(key, t);
-    }
-    return `Tag(s) [${tagsToAdd.join(", ")}] added to customer ${customerId}.`;
+    const tagsToAdd = Array.isArray(rawTags) ? rawTags : [String(rawTags || '').trim()].filter(Boolean);
+    const res = await CustomerRelationshipService.tagCustomer({
+      merchantId,
+      customerId: args.customerId,
+      tagsToAdd
+    });
+    return `Customer tagged successfully. Current tags: [${res.currentTags.join(', ')}]`;
   },
 
   upgrade_customer_tier: async (merchantId: string, args: { customerId: string; tier: string }) => {
@@ -412,50 +362,22 @@ export const crmHandlers: Record<string, (merchantId: string, args: any) => Prom
   },
 
   block_customer: async (merchantId: string, args: any) => {
-    const { customerId } = args;
-    if (!customerId) return "Customer ID is required to block customer.";
-    await redis.sadd(`blocked_customers:${merchantId}`, customerId);
-    await sql`
-      INSERT INTO chat_overrides (merchant_id, chat_jid, override_mode, updated_at)
-      VALUES (${merchantId}::uuid, ${customerId}, 'hands_off', NOW())
-      ON CONFLICT (merchant_id, chat_jid) DO UPDATE SET override_mode = 'hands_off', updated_at = NOW()
-    `.catch(() => {});
-    return `Customer ${customerId} is now blocked. Autonomous replies are silenced.`;
+    await CustomerRelationshipService.toggleCustomerBlock(merchantId, args.customerId, true);
+    return `Customer ${args.customerId} has been blocked. Autonomous AI replies are paused.`;
   },
 
   unblock_customer: async (merchantId: string, args: any) => {
-    const { customerId } = args;
-    if (!customerId) return "Customer ID is required to unblock customer.";
-    await redis.srem(`blocked_customers:${merchantId}`, customerId);
-    await sql`
-      DELETE FROM chat_overrides WHERE merchant_id = ${merchantId}::uuid AND chat_jid = ${customerId}
-    `.catch(() => {});
-    return `Customer ${customerId} unblocked. Standard engagement resumed.`;
+    await CustomerRelationshipService.toggleCustomerBlock(merchantId, args.customerId, false);
+    return `Customer ${args.customerId} has been unblocked. Standard autonomous engagement resumed.`;
   },
 
   send_broadcast_message: async (merchantId: string, args: any) => {
-    const { tag, message } = args;
-    let targetPhones: string[] = [];
-    if (tag) {
-      const keys = await redis.keys(`customer_tags:${merchantId}:*`);
-      for (const k of keys) {
-        const isTagged = await redis.sismember(k, tag);
-        if (isTagged) targetPhones.push(k.split(':')[2]);
-      }
-    } else {
-      const links = await sql<{ customer_id: string }[]>`
-        SELECT customer_id FROM customer_merchant_links WHERE merchant_id = ${merchantId}::uuid LIMIT 50
-      `.catch(() => []);
-      targetPhones = links.map(l => l.customer_id);
-    }
-    if (targetPhones.length === 0) return "No matching customers found for this broadcast.";
-    
-    const { Queue } = await import('bullmq');
-    const queue = new Queue('outbound_messages', { connection: { ...redis.options, maxRetriesPerRequest: null } });
-    for (const phone of targetPhones) {
-      await queue.add('send_broadcast', { merchantId, customerId: phone, text: message });
-    }
-    return `Broadcast queued for ${targetPhones.length} customer(s).`;
+    const res = await CustomerRelationshipService.sendBroadcastMessage({
+      merchantId,
+      messageText: args.message,
+      tagFilter: args.tag
+    });
+    return `Broadcast queued for ${res.sentCount} out of ${res.targetCount} recipient(s).`;
   },
 
   sync_hubspot_contacts: async (merchantId: string, args: any) => {

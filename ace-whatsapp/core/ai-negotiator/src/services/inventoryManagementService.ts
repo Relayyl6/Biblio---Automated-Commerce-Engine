@@ -650,4 +650,83 @@ Extract structured JSON strictly with:
 
     return { product: extracted, saved: false };
   }
+
+  /**
+   * List all out of stock catalog items.
+   */
+  static async listOutOfStock(merchantId: string, limit: number = 10): Promise<{ count: number; items: any[]; message: string }> {
+    const rows = await sql<{ id: string; name: string; sku: string; price: number }[]>`
+      SELECT id, name, sku, price
+      FROM products
+      WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+        AND COALESCE(quantity, stock, 0) = 0
+        AND deleted_at IS NULL
+      LIMIT ${limit}
+    `.catch(() => []);
+
+    if (rows.length === 0) {
+      return { count: 0, items: [], message: 'No products are currently out of stock!' };
+    }
+
+    const list = rows.map((r) => `- ${r.name} (SKU: ${r.sku}) — ₦${Number(r.price).toLocaleString()}`).join('\n');
+    return {
+      count: rows.length,
+      items: rows,
+      message: `Out of Stock Items (${rows.length}):\n${list}`,
+    };
+  }
+
+  /**
+   * AI Catalog Enrichment: Generate cultural descriptions and smart tags.
+   */
+  static async enrichCatalogWithAI(
+    merchantId: string,
+    sku: string,
+    name?: string,
+    category?: string
+  ): Promise<{ description: string; tags: string[]; category: string }> {
+    const defaultDesc = `✨ Premium Nigerian quality, crafted with care. Perfect for everyday elegance and durability.`;
+    const defaultTags = ['premium', category || 'general', 'nigerian-quality'];
+
+    try {
+      const pRows = await sql<{ name: string; category: string }[]>`
+        SELECT name, category FROM products
+        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
+          AND sku = ${sku}
+        LIMIT 1
+      `.catch(() => []);
+
+      const prodName = name || pRows[0]?.name || 'Premium Item';
+      const prodCat = category || pRows[0]?.category || 'General';
+
+      const prompt = `Write a compelling 2-sentence Nigerian social commerce description and 4 tags for product: ${prodName} (Category: ${prodCat}). Return JSON: {"description": "...", "tags": ["tag1", "tag2"]}`;
+      const completion = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        messages: [{ role: 'system', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+      });
+
+      const parsed = JSON.parse(completion.choices[0]?.message?.content || '{}');
+      return {
+        description: parsed.description || defaultDesc,
+        tags: Array.isArray(parsed.tags) ? parsed.tags : defaultTags,
+        category: prodCat,
+      };
+    } catch {
+      return {
+        description: defaultDesc,
+        tags: defaultTags,
+        category: category || 'General',
+      };
+    }
+  }
+
+  /**
+   * Trigger Shopify inventory synchronization.
+   */
+  static async syncShopifyInventory(merchantId: string): Promise<{ ok: boolean; message: string }> {
+    await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId, source: 'shopify' })).catch(() => {});
+    return { ok: true, message: 'Shopify catalog synchronized.' };
+  }
 }

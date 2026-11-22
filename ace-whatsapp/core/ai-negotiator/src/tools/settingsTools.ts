@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { MerchantSettingsService } from "../services/merchantSettingsService.js";
 
 export const settingsTools = [
   {
@@ -344,19 +345,9 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     }
   },
   update_store_hours: async (merchantId: string, args: { schedule: string | object }) => {
-    try {
-      const parsedSchedule = typeof args.schedule === 'string' ? JSON.parse(args.schedule) : args.schedule;
-      const result = await sql`
-        UPDATE merchants 
-        SET operating_hours = ${JSON.stringify(parsedSchedule)}::jsonb, updated_at = NOW() 
-        WHERE id = ${merchantId}::uuid 
-        RETURNING operating_hours
-      `;
-      return `Store operating hours successfully updated: ${JSON.stringify(parsedSchedule)}`;
-    } catch (e: any) {
-      await logger.error("[update_store_hours error]", e);
-      return "Failed to update store hours: " + e.message;
-    }
+    const parsedSchedule = typeof args.schedule === 'string' ? JSON.parse(args.schedule) : (args.schedule || {});
+    await MerchantSettingsService.updateStoreHours(merchantId, parsedSchedule);
+    return `Store operating hours successfully updated: ${JSON.stringify(parsedSchedule)}`;
   },
   update_welcome_message: async (merchantId: string, args: any) => {
     try {
@@ -371,16 +362,12 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     }
   },
   update_store_policy: async (merchantId: string, args: any) => {
-    try {
-      await sql`
-        UPDATE merchants 
-        SET business_policies = ${args.policy}, return_policy = ${args.policy}, updated_at = NOW() 
-        WHERE id = ${merchantId}::uuid
-      `;
-      return `Store policy updated to: "${args.policy}"`;
-    } catch (e: any) {
-      return "Failed to update store policy.";
-    }
+    const res = await MerchantSettingsService.updateStorePolicy({
+      merchantId,
+      returnPolicy: args.policy,
+      deliveryNotes: args.policy
+    });
+    return res.message;
   },
   set_store_language: async (merchantId: string, args: any) => {
     try {
@@ -395,16 +382,11 @@ export const settingsHandlers: Record<string, (merchantId: string, args: any) =>
     }
   },
   toggle_vacation_mode: async (merchantId: string, args: any) => {
-    try {
-      const enabled = args.enabled !== false;
-      const state = enabled ? 'away' : 'present';
-      await redis.set(`vendor:presence:${merchantId}`, JSON.stringify({ state, mode: enabled ? 'hands_off' : 'active', updatedAt: Date.now() }));
-      return enabled 
-        ? "Vacation mode enabled. Biblio will handle all incoming inquiries with gentle holding messages and no aggressive commitments."
-        : "Vacation mode disabled. Normal operations resumed.";
-    } catch (e: any) {
-      return "Failed to toggle vacation mode.";
-    }
+    const enabled = args.enabled !== false;
+    await MerchantSettingsService.toggleVacationMode(merchantId, enabled, args.autoResponder);
+    return enabled
+      ? "Vacation mode enabled. Biblio will handle incoming inquiries with automated holding messages."
+      : "Vacation mode disabled. Standard store operations resumed.";
   },
   add_staff_member: async (merchantId: string, args: any) => {
     return `Staff member '${args.name || 'Staff'}' (${args.phone || args.email}) added with '${args.role || 'support'}' permissions.`;

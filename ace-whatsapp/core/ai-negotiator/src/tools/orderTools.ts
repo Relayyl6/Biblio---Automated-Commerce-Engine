@@ -1,6 +1,7 @@
 import { sql, redis, jsonb } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { OrderFulfillmentService } from "../services/orderFulfillmentService.js";
 
 const isValidUUID = (id: any): boolean =>
   typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
@@ -381,45 +382,13 @@ export const orderTools = [
 
 export const orderHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   request_refund_or_dispute: async (merchantId: string, args: { orderId: string; customerId?: string; reason: string; refundAmount?: number }) => {
-    const { orderId, customerId = "", reason, refundAmount } = args;
-    if (!orderId || !isValidUUID(orderId)) return `Invalid order ID: ${orderId || 'none'}`;
-    await logger.log(`[ToolHandler:request_refund_or_dispute] Opening dispute for order ${orderId}`, { merchantId, args });
-
-    // Look up order total if refundAmount was not provided
-    let amount = refundAmount;
-    if (!amount) {
-      const orderRows = await sql<{ state: any; total_amount?: number }[]>`
-        SELECT state, total_amount FROM orders WHERE id = ${orderId}::uuid LIMIT 1
-      `.catch(() => []);
-      amount = Number(orderRows[0]?.total_amount || orderRows[0]?.state?.total || 0);
-    }
-
-    // Insert dispute record
-    const disputeRows = await sql<{ id: string }[]>`
-      INSERT INTO order_disputes (order_id, merchant_id, customer_id, reason, refund_amount_ngn, status)
-      VALUES (${orderId}::uuid, ${merchantId}::uuid, ${customerId || 'unknown_customer'}, ${reason || 'Customer requested refund'}, ${amount || 0}, 'pending_review')
-      RETURNING id
-    `.catch(() => []);
-    const disputeId = disputeRows[0]?.id;
-
-    // Lock Escrow status to 'disputed'
-    await sql`
-      UPDATE escrow_accounts SET status = 'disputed', updated_at = now()
-      WHERE order_id = ${orderId}::uuid
-    `.catch(() => {});
-
-    // Insert urgent action into escalations for Merchant App Inbox
-    await sql`
-      INSERT INTO escalations (merchant_id, customer_id, reason, context, resolved, created_at)
-      VALUES (
-        ${merchantId}::uuid, ${customerId || 'order_fulfillment'}, ${'dispute_review_required: ' + reason},
-        ${JSON.stringify({ disputeId, orderId, customerId, reason, amount })}::jsonb,
-        false,
-        now()
-      )
-    `.catch(() => {});
-
-    return `⚠️ Refund request of ₦${(amount || 0).toLocaleString()} recorded for Order #${orderId.slice(0, 8)}.\n• Reason: ${reason}\n• Escrow Status: Locked (Disputed)\n• An urgent action card has been dispatched to the merchant's mobile app for review.`;
+    const res = await OrderFulfillmentService.requestRefundOrDispute({
+      merchantId,
+      orderId: args.orderId,
+      customerId: args.customerId || 'customer',
+      reason: args.reason,
+    });
+    return res.message;
   },
 
   resolve_dispute: async (merchantId: string, args: { disputeId: string; decision: string; note?: string }) => {
@@ -501,43 +470,13 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   dispatch_rider: async (merchantId: string, args: any) => {
-    try {
-      const { orderId, customerPhone } = args;
-      if (!isValidUUID(orderId)) return `Invalid order ID: ${orderId}`;
-      const orders = await sql<{ id: string; state: any; customer_id: string }[]>`
-        SELECT id, state, customer_id FROM orders
-        WHERE id = ${orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid)
-        LIMIT 1
-      `.catch(() => []);
-
-      const phone = customerPhone || orders[0]?.customer_id || orders[0]?.state?.customerPhone || '08000000000';
-      const { bookRider } = await import('../../../logistics/src/dispatchService.js');
-      const riderRes = await bookRider(orderId, merchantId, phone);
-
-      await sql`
-        UPDATE orders
-        SET status = 'shipped'::order_status,
-            state = jsonb_set(
-              COALESCE(state, '{}'::jsonb),
-              '{logistics}',
-              ${JSON.stringify({
-                trackingUrl: riderRes.trackingUrl,
-                riderName: riderRes.riderName,
-                riderPhone: riderRes.riderPhone,
-                dispatchedAt: new Date().toISOString()
-              })}::jsonb
-            ),
-            updated_at = NOW()
-        WHERE id = ${orderId}::uuid
-      `.catch(() => {});
-
-      return `🚀 Rider dispatched successfully for Order #${orderId.slice(0, 8)}!
-• Courier: ${riderRes.riderName} (${riderRes.riderPhone})
-• Tracking: ${riderRes.trackingUrl}`;
-    } catch (e: any) {
-      logger.error("[dispatch_rider error]", e);
-      return `Failed to dispatch rider: ${e.message}`;
-    }
+    const res = await OrderFulfillmentService.dispatchRider({
+      merchantId,
+      orderId: args.orderId,
+      courierPreference: args.courierPreference || 'kwik',
+      pickupNotes: args.pickupNotes
+    });
+    return `🚀 Rider dispatched successfully for Order #${res.orderId.slice(0, 8)}!\n• Courier: ${res.courierName} (Rider: ${res.riderName} - ${res.riderPhone})\n• Tracking Code: ${res.trackingNumber}\n• ETA: ${res.pickupEta}`;
   },
 
   view_pending_orders: async (merchantId: string, _args: any) => {
@@ -1011,50 +950,21 @@ export const orderHandlers: Record<string, (merchantId: string, args: any) => Pr
     }
   },
   verify_payment_receipt: async (merchantId: string, args: { orderId: string; receiptImageUrl?: string; extractedAmount?: number }) => {
-    if (!args.orderId || !isValidUUID(args.orderId)) return { ok: false, error: 'Order not found' };
-    try {
-      const orders = await sql`
-        SELECT * FROM orders 
-        WHERE id = ${args.orderId}::uuid AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid OR user_id = ${merchantId}::uuid) 
-        LIMIT 1
-      `;
-      if (orders.length === 0) return { ok: false, error: 'Order not found' };
-      const order = orders[0];
-
-      const expectedAmount = Number(order.total_amount || order.state?.total || 0);
-      const rawPaid = args.extractedAmount !== undefined ? Number(args.extractedAmount) : expectedAmount;
-      const paidAmount = Number.isFinite(rawPaid) && rawPaid > 0 ? rawPaid : expectedAmount;
-
-      const { transition } = await import('../../../state-machine/src/orderStateMachine.js');
-      let newState;
-      try {
-        newState = transition(order.state, {
-          type: 'PAYMENT_CONFIRMED',
-          amount: paidAmount,
-          paidAt: Date.now(),
-        });
-      } catch (err: any) {
-        newState = { ...order.state, status: 'payment_verified', paidAt: Date.now() };
-      }
-
-      await sql`
-        UPDATE orders SET
-          status = 'confirmed'::order_status,
-          state = ${jsonb(newState)},
-          updated_at = now()
-        WHERE id = ${args.orderId}::uuid
-      `;
-
-      return {
-        ok: true,
-        verified: true,
-        amount: paidAmount,
-        status: 'payment_verified',
-        message: `Payment of ₦${paidAmount.toLocaleString()} verified successfully for Order #${args.orderId}.`
-      };
-    } catch (e) {
-      await logger.error("[verify_payment_receipt error]", e);
-      return { ok: false, error: String(e) };
-    }
+    const res = await OrderFulfillmentService.verifyPaymentReceipt({
+      merchantId,
+      orderId: args.orderId,
+      receiptTextOrUrl: args.receiptImageUrl || 'receipt_verification_manual',
+      claimedAmount: args.extractedAmount
+    });
+    return {
+      ok: res.verified,
+      verified: res.verified,
+      amount: res.extractedAmount,
+      bankName: res.bankName,
+      reference: res.extractedReference,
+      message: res.verified
+        ? `Payment verified successfully! Reference: ${res.extractedReference}. Amount: ₦${(res.extractedAmount || 0).toLocaleString()}.`
+        : (res.fraudAlert || `Unable to verify payment reference ${res.extractedReference}. Please review receipt.`)
+    };
   }
 };

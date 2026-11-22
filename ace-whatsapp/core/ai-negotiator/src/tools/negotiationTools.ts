@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { NegotiationStrategyService } from "../services/negotiationStrategyService.js";
 
 export const negotiationTools = [
   {
@@ -319,18 +320,14 @@ export const negotiationHandlers: Record<string, (merchantId: string, args: any)
     }
   },
   create_discount_code: async (merchantId: string, args: any) => {
-    try {
-      const { code } = args;
-      if (!code) return "Promo code name is required.";
-      const pct = Number(args.percentage !== undefined ? args.percentage : args.discountPercent);
-      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-        return "Discount percentage must be a number between 1 and 100.";
-      }
-      await redis.hset(`discounts:${merchantId}`, code.toUpperCase().trim(), String(pct));
-      return `Promo code '${code.toUpperCase().trim()}' created (${pct}% off).`;
-    } catch (e) {
-      return "Failed to create discount code.";
-    }
+    const pct = Number(args.percentage !== undefined ? args.percentage : args.discountPercent || 10);
+    const res = await NegotiationStrategyService.createDiscountCode({
+      merchantId,
+      code: args.code,
+      discountType: 'percentage',
+      value: pct,
+    });
+    return `Promo code '${res.code}' created successfully (${res.value}% off). Valid until ${new Date(res.expiresAt).toLocaleDateString()}.`;
   },
   disable_discount_code: async (merchantId: string, args: any) => {
     try {

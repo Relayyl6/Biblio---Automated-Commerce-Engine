@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { ExternalIntegrationService } from "../services/externalIntegrationService.js";
 
 export const integrationTools = [
   {
@@ -207,50 +208,24 @@ export const integrationHandlers: Record<string, (merchantId: string, args: any)
   },
 
   send_sms_fallback: async (merchantId: string, args: any) => {
-    try {
-      const { customerId, message } = args;
-      const africastalking = (await import("africastalking")).default;
-      const at = africastalking({
-        apiKey: process.env.AFRICAS_TALKING_API_KEY || "",
-        username: process.env.AFRICAS_TALKING_USERNAME || "sandbox"
-      });
-      const sms = at.SMS;
-      const formattedPhone = customerId.startsWith("+") ? customerId : `+${customerId}`;
-      
-      const response = await sms.send({
-        to: [formattedPhone],
-        message: message,
-        enqueue: true
-      });
-      
-      await logger.log(`SMS fallback sent via AT`, { response });
-      
-      return { ok: true, provider: 'africas_talking', to: customerId };
-    } catch (error: any) {
-      logger.error("send_sms_fallback error", error);
-      return { ok: false, error: error.message };
-    }
+    return await ExternalIntegrationService.sendSmsFallback({
+      merchantId,
+      phone: args.customerId || args.phone,
+      messageText: args.message
+    });
   },
 
   register_webhook: async (merchantId: string, args: any) => {
-    try {
-      const secret = `whsec_${crypto.randomBytes(24).toString('hex')}`;
-      const events = Array.isArray(args.event) ? args.event : [args.event || 'order.created'];
-      const rows = await sql<{ id: string; url: string; secret: string; events: string[] }[]>`
-        INSERT INTO tenant_webhooks (tenant_id, url, secret, events, is_active, created_at, updated_at)
-        VALUES (${merchantId}::uuid, ${args.url}, ${secret}, ${events}, true, NOW(), NOW())
-        RETURNING id, url, secret, events
-      `;
-      const row = rows[0];
-      return `Webhook registered successfully!
-• Webhook ID: ${row.id}
-• Endpoint: ${row.url}
-• Subscribed Events: ${row.events.join(', ')}
-• HMAC Secret: ${row.secret} (Store securely to verify signatures).`;
-    } catch (e: any) {
-      logger.error("[register_webhook error]", e);
-      return `Failed to register webhook: ${e.message}`;
-    }
+    const res = await ExternalIntegrationService.registerWebhook({
+      merchantId,
+      targetUrl: args.url,
+      events: Array.isArray(args.event) ? args.event : [args.event || 'order.created']
+    });
+    return `Webhook registered successfully!
+• Webhook ID: ${res.id}
+• Endpoint: ${res.targetUrl}
+• Subscribed Events: ${res.events.join(', ')}
+• HMAC Secret: ${res.secretKey} (Store securely to verify signatures).`;
   },
 
   remove_webhook: async (merchantId: string, args: any) => {

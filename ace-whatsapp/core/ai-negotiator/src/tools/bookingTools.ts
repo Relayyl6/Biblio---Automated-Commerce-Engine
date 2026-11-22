@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { AppointmentBookingService } from "../services/appointmentBookingService.js";
 
 export const bookingTools = [
   {
@@ -194,72 +195,20 @@ export const bookingHandlers: Record<string, (merchantId: string, args: any) => 
   },
 
   book_appointment: async (merchantId: string, args: any) => {
-    if (!args.time || !args.serviceId) return "Time and Service ID are required.";
-
-    const parsedTime = new Date(args.time);
-    if (isNaN(parsedTime.getTime())) {
-      return "Invalid appointment time format. Please provide a valid date/time string (e.g. '2026-08-26T10:00:00Z').";
-    }
-    const startTimeIso = parsedTime.toISOString();
-
-    try {
-      const serviceRes = await sql<{ id: string; name: string; duration_minutes: number; price: number }[]>`
-        SELECT id, name, duration_minutes, price FROM services 
-        WHERE merchant_id = ${merchantId}::uuid 
-          AND (id::text = ${args.serviceId} OR name ILIKE ${args.serviceId})
-        LIMIT 1
-      `.catch(() => []);
-
-      if (serviceRes.length === 0) {
-        return `Service '${args.serviceId}' not found. Please verify available services with check_services.`;
-      }
-
-      const matchedService = serviceRes[0];
-      const serviceId = matchedService.id;
-      const serviceName = matchedService.name;
-      const durationMs = (matchedService.duration_minutes || 30) * 60000;
-      const endTimeIso = new Date(parsedTime.getTime() + durationMs).toISOString();
-
-      const overlap = await sql`
-        SELECT id FROM appointments 
-        WHERE merchant_id = ${merchantId}::uuid 
-          AND status != 'cancelled'
-          AND (start_time < ${endTimeIso}::timestamp AND end_time > ${startTimeIso}::timestamp)
-      `.catch(() => []);
-
-      if (overlap.length > 0) return "Time slot is already booked! Please suggest another time.";
-      
-      const aptId = crypto.randomUUID();
-      const title = `Booking for ${serviceName}`;
-
-      await sql`
-        INSERT INTO appointments (id, merchant_id, service_id, title, start_time, end_time, customer_id, status)
-        VALUES (${aptId}::uuid, ${merchantId}::uuid, ${serviceId}::uuid, ${title}, ${startTimeIso}::timestamp, ${endTimeIso}::timestamp, ${args.customerId || 'guest'}, 'confirmed')
-      `;
-      
-      let merchantPhone = "";
-      const mRes = await sql<{ contact_phone: string; support_phone: string; phone_number_id: string }[]>`
-        SELECT contact_phone, support_phone, phone_number_id FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1
-      `.catch(() => []);
-      if (mRes.length > 0) merchantPhone = mRes[0].contact_phone || mRes[0].support_phone || mRes[0].phone_number_id || "";
-      if (!merchantPhone) {
-        const merchRes = await sql<{ personal_number: string }[]>`SELECT personal_number FROM vendors WHERE merchant_id = ${merchantId} LIMIT 1`.catch(() => []);
-        if (merchRes.length > 0) merchantPhone = merchRes[0].personal_number || "";
-      }
-
-      if (merchantPhone) {
-        const { sendCustomerMessage } = await import("../../../comms-router/src/outbound.js");
-        await sendCustomerMessage({
-          toPhone: merchantPhone,
-          text: `📅 *New Booking Alert!*\nA customer just booked ${serviceName} for ${startTimeIso}.`
-        }, undefined, merchantId).catch(() => {});
-      }
-      
-      return `Appointment booked for ${startTimeIso} (${serviceName})! Reference: ${aptId.slice(0, 8)}.`;
-    } catch(e: any) {
-      logger.error("Failed to book appointment", e);
-      return `Failed to book appointment: ${e.message}`;
-    }
+    const parsedDate = new Date(args.time || Date.now());
+    const dateStr = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const timeStr = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString().slice(11, 16) : '10:00';
+    const res = await AppointmentBookingService.bookAppointment({
+      merchantId,
+      customerId: args.customerId || 'guest',
+      customerName: args.customerName || 'Customer',
+      customerPhone: args.customerPhone || args.customerId || '+2348000000000',
+      serviceId: args.serviceId,
+      date: dateStr,
+      startTime: timeStr,
+      notes: args.notes
+    });
+    return res.message;
   },
 
   check_calendar_availability: async (merchantId: string, args: any) => {

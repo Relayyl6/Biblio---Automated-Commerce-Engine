@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { MarketingBroadcastService } from "../services/marketingBroadcastService.js";
 
 export const marketingTools = [
   {
@@ -293,24 +294,13 @@ export const marketingHandlers: Record<string, (merchantId: string, args: any) =
   },
 
   schedule_whatsapp_status: async (merchantId: string, args: any) => {
-    try {
-      const { mediaPath, caption, scheduleAt } = args;
-      const { Queue } = await import("bullmq");
-      const statusQueue = new Queue("status-posts", {
-        connection: { ...redis.options, maxRetriesPerRequest: null }
-      });
-      
-      const scheduleTime = new Date(scheduleAt).getTime();
-      let delay = scheduleTime - Date.now();
-      if (delay < 0) delay = 0;
-
-      await statusQueue.add("status-post", { merchantId, mediaPath, caption, scheduleAt }, { delay });
-
-      return { ok: true, queued: true, scheduledAt: scheduleAt };
-    } catch (e: any) {
-      logger.error('schedule_whatsapp_status error', e);
-      return { ok: false, error: e.message };
-    }
+    const res = await MarketingBroadcastService.scheduleWhatsAppStatus({
+      merchantId,
+      mediaUrl: args.mediaPath || args.mediaUrl,
+      caption: args.caption,
+      scheduledTime: args.scheduleAt || args.scheduledTime
+    });
+    return res.message;
   },
 
   send_bulk_whatsapp: async (merchantId: string, args: any) => {

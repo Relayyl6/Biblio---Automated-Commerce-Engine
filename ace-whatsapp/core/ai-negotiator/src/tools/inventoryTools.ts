@@ -3,6 +3,7 @@ import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
 import Groq from "groq-sdk";
 import { loadNegotiatorEnv } from "@ace/shared/env.js";
+import { InventoryManagementService } from "../services/inventoryManagementService.js";
 
 const env = loadNegotiatorEnv();
 const groq = new Groq({ apiKey: env.GROQ_API_KEY || process.env.GROQ_API_KEY || "" });
@@ -631,208 +632,81 @@ Extract structured JSON strictly with these fields:
   },
 
   predict_stockouts: async (merchantId: string, args: any) => {
-    try {
-      const { StockoutPredictor } = await import('../../../supplier-integration/src/predictor.js');
-      const predictor = new StockoutPredictor();
-      const lowStock = await predictor.getLowStockItems(merchantId);
-      if (lowStock.length === 0) return "All catalog inventory is currently healthy above reorder thresholds.";
-      const items = lowStock.map(it => `- ${it.name} (SKU: ${it.sku}): ${it.stockQuantity} remaining (Reorder point: ${it.reorderThreshold})`).join('\n');
-      return `Stockout Warning: Found ${lowStock.length} low-stock item(s):\n${items}\n\nWould you like me to draft a restock PO to the supplier?`;
-    } catch (e) {
-      return "Stockout predictor unavailable.";
-    }
+    const res = await InventoryManagementService.predictStockouts(merchantId, args.days_threshold);
+    if (res.predictions.length === 0) return "All catalog inventory is currently healthy above reorder thresholds.";
+    const items = res.predictions.map(it => `- ${it.name} (SKU: ${it.sku}): ${it.currentStock} remaining (${it.daysRemaining} days remaining)`).join('\n');
+    return `Stockout Warning: Found ${res.predictions.length} item(s) running low (${res.criticalCount} critical):\n${items}`;
   },
   contact_supplier: async (merchantId: string, args: any) => {
-    try {
-      const { SupplierPinger } = await import('../../../supplier-integration/src/pinger.js');
-      const pinger = new SupplierPinger();
-      const productRows = await sql`
-        SELECT id, name, sku, supplier_id, COALESCE(quantity, stock, 0) as stock_quantity, low_stock_threshold
-        FROM products WHERE (sku = ${args.sku} OR name ILIKE ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid) LIMIT 1
-      `.catch(() => []);
-      if (productRows.length === 0) return `Product ${args.sku} not found in catalog.`;
-      const p = productRows[0];
-      const draft = await pinger.draftRestockOrder({
-        id: p.id,
-        merchantId,
-        sku: p.sku,
-        name: p.name,
-        stockQuantity: Number(p.stock_quantity || 0),
-        reorderThreshold: Number(p.low_stock_threshold || 5),
-        reorderBatchSize: Number(args.quantity || 25),
-        supplierId: p.supplier_id
-      });
-      if (!draft) return `Supplier contact info not linked for ${p.name}.`;
-      return `Restock purchase order drafted (ID: r_${draft.id}) for ${draft.proposedQuantity} units. Say 'Approve r_${draft.id}' to dispatch to supplier.`;
-    } catch (e: any) {
-      return "Failed to contact supplier: " + e.message;
-    }
+    const res = await InventoryManagementService.contactSupplier({
+      merchantId,
+      sku: args.sku,
+      quantity: Number(args.quantity || 25),
+      supplierId: args.supplierId
+    });
+    return res.message;
   },
   calculate_restock_margin: async (merchantId: string, args: any) => {
-    try {
-      const productRows = await sql`
-        SELECT price, metadata FROM products WHERE (sku = ${args.sku} OR name ILIKE ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid) LIMIT 1
-      `.catch(() => []);
-      if (productRows.length === 0) return "Product not found.";
-      const retailPrice = Number(productRows[0].price || 0);
-      const costPrice = Number(productRows[0].metadata?.cost_price || (retailPrice * 0.65));
-      const margin = retailPrice > 0 ? (((retailPrice - costPrice) / retailPrice) * 100).toFixed(1) : "0";
-      return `Restock Margin Analysis for ${args.sku}:\n- Retail Price: ₦${retailPrice.toLocaleString()}\n- Estimated Wholesale Cost: ₦${costPrice.toLocaleString()}\n- Gross Margin: ${margin}% (Healthy)`;
-    } catch (e) {
-      return "Margin calculation failed.";
-    }
+    const res = await InventoryManagementService.calculateRestockMargin({
+      merchantId,
+      sku: args.sku,
+      supplierQuoteTotal: Number(args.supplierQuoteTotal || 0),
+      quantity: Number(args.quantity || 1)
+    });
+    return `Restock Margin Analysis for ${res.name} (${res.sku}):\n- Retail Price: ₦${res.currentRetailPrice.toLocaleString()}\n- Unit Wholesale Cost: ₦${res.supplierQuotePerUnit.toLocaleString()}\n- Gross Margin: ${res.grossMarginPercent}% (${res.meetsMerchantRule ? 'Meets store rule' : 'Below target margin'})`;
   },
 
   add_inventory: async (merchantId: string, args: any) => {
-    let count = 0;
-    try {
-      // Support both single item (from tool schema: { name, price, stock }) and batch ({ items: [...] })
-      const rawItems = Array.isArray(args.items) && args.items.length > 0
-        ? args.items
-        : (args.name ? [{ name: args.name, price: args.price, stock: args.stock, image_url: args.image_url }] : []);
-
-      if (rawItems.length === 0) {
-        return "Product name and price are required to add inventory.";
-      }
-
-      for (const item of rawItems) {
-        if (!item.name) continue;
-        const price = Math.max(0, Number(item.price || 0));
-        const stock = Math.max(0, Number(item.stock || 0));
-        const sku = "PROD-" + crypto.randomBytes(4).toString('hex').toUpperCase();
-        
-        // 1. Check if similar product exists
-        const existing = await sql`
-          SELECT id FROM products 
-          WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid) 
-            AND name ILIKE ${item.name}
-            AND deleted_at IS NULL
-          LIMIT 1
-        `.catch(() => []);
-        
-        if (existing.length === 0) {
-          // 2. Insert product
-          const inserted = await sql`
-            INSERT INTO products (merchant_id, sku, name, price, regular_price, stock, quantity, image_url, active, last_posted_at, created_at, updated_at) 
-            VALUES (
-              ${merchantId}::uuid, ${sku}, ${item.name}, ${price}, ${price}, ${stock}, ${stock}, 
-              ${item.image_url || null}, true, ${item.post_to_status ? sql`now()` : null}, now(), now()
-            )
-            RETURNING id
-          `;
-          
-          // 3. Trigger smart categorization job via Redis
-          if (inserted.length > 0) {
-            await redis.lpush('jobs:categorize_product', JSON.stringify({ productId: inserted[0].id, name: item.name })).catch(() => {});
-            count++;
-          }
-        } else {
-          // Update stock of existing product
-          await sql`
-            UPDATE products 
-            SET stock = stock + ${stock}, quantity = quantity + ${stock}, price = ${price > 0 ? price : sql`price`}, updated_at = now()
-            WHERE id = ${existing[0].id}
-          `.catch(() => {});
-          count++;
-        }
-      }
-      
-      // Trigger background sync
-      await redis.lpush('jobs:inventory-sync', JSON.stringify({ merchantId })).catch(() => {});
-      
-      return `Processed ${rawItems.length} item(s). Catalog updated with ${count} product(s).`;
-    } catch(e: any) {
-      await logger.error("[add_inventory error]", e);
-      return { ok: false, error: String(e?.message || e) };
-    }
+    const res = await InventoryManagementService.addInventory({
+      merchantId,
+      name: args.name || 'New Item',
+      price: Number(args.price || 0),
+      stock: Number(args.stock || 0),
+      category: args.category,
+      description: args.description,
+      imageUrl: args.image_url
+    });
+    return `Product added successfully: ${res.name} (SKU: ${res.sku}) at ₦${Number(res.price).toLocaleString()} with ${res.stock} units.`;
   },
   update_inventory: async (merchantId: string, args: any) => {
-    try {
-      const { sku, price, stock, name } = args;
-      if (!sku) return "SKU is required to update inventory.";
-      if (price !== undefined) {
-        const numPrice = Number(price);
-        if (!Number.isFinite(numPrice) || numPrice < 0) return "Invalid price. Price must be a non-negative number.";
-        await sql`UPDATE products SET price = ${numPrice}, regular_price = ${numPrice}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
-      }
-      if (stock !== undefined) {
-        const numStock = Number(stock);
-        if (!Number.isFinite(numStock) || numStock < 0) return "Invalid stock. Stock must be a non-negative integer.";
-        const intStock = Math.round(numStock);
-        await sql`UPDATE products SET stock = ${intStock}, quantity = ${intStock}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
-      }
-      if (name) {
-        await sql`UPDATE products SET name = ${name}, updated_at = NOW() WHERE (sku = ${sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)`;
-      }
-      return `Inventory updated for SKU ${sku}.`;
-    } catch (e: any) {
-      logger.error("[update_inventory error]", e);
-      return `Failed to update inventory: ${e.message}`;
-    }
+    const res = await InventoryManagementService.updateInventory({
+      merchantId,
+      sku: args.sku,
+      name: args.name,
+      price: args.price !== undefined ? Number(args.price) : undefined,
+      stock: args.stock !== undefined ? Number(args.stock) : undefined
+    });
+    return `Inventory updated for ${res.name} (SKU: ${res.sku}). New price: ₦${Number(res.price).toLocaleString()}, Stock: ${res.stock} units.`;
   },
   delete_inventory: async (merchantId: string, args: any) => {
-    try {
-      if (!args.sku) return "SKU is required to delete inventory.";
-      await sql`
-        UPDATE products SET active = false, deleted_at = NOW()
-        WHERE (sku = ${args.sku} OR id::text = ${args.sku}) AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-      `;
-      return `Product ${args.sku} removed from active catalog.`;
-    } catch (e) {
-      return "Failed to delete product.";
-    }
+    const res = await InventoryManagementService.deleteInventory(merchantId, args.sku);
+    return res.message;
   },
   search_inventory: async (merchantId: string, args: any) => {
-    try {
-      const q = `%${(args.query || '').trim()}%`;
-      const results = await sql`
-        SELECT id, name, sku, price, COALESCE(quantity, stock, 0) as stock, category
-        FROM products 
-        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-          AND deleted_at IS NULL
-          AND (name ILIKE ${q} OR sku ILIKE ${q} OR category ILIKE ${q})
-        LIMIT 10
-      `.catch(() => []);
-      return { ok: true, count: results.length, results };
-    } catch (e: any) {
-      return { ok: false, error: e.message };
-    }
+    return await InventoryManagementService.searchInventory({
+      merchantId,
+      query: args.query,
+      category: args.category,
+      minPrice: args.minPrice,
+      maxPrice: args.maxPrice
+    });
   },
   auto_restock_alert_config: async (merchantId: string, args: any) => {
     const thresh = Math.max(1, Math.round(Number(args.threshold) || 5));
     return `Auto-restock notifications configured: threshold set to ${thresh} units.`;
   },
   bulk_price_update: async (merchantId: string, args: any) => {
-    try {
-      const pct = Number(args.percentage !== undefined ? args.percentage : args.percentChange || 0);
-      if (!Number.isFinite(pct) || pct === 0) return "No price change percentage specified.";
-      const multiplier = 1 + (pct / 100);
-      const categoryFilter = args.category ? String(args.category).trim() : null;
-
-      if (categoryFilter) {
-        await sql`
-          UPDATE products 
-          SET price = ROUND((price * ${multiplier})::numeric, 0), updated_at = NOW()
-          WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-            AND deleted_at IS NULL
-            AND category ILIKE ${'%' + categoryFilter + '%'}
-        `;
-        return `Prices in category '${categoryFilter}' updated by ${pct > 0 ? '+' : ''}${pct}%`;
-      }
-
-      await sql`
-        UPDATE products 
-        SET price = ROUND((price * ${multiplier})::numeric, 0), updated_at = NOW()
-        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-          AND deleted_at IS NULL
-      `;
-      return `Catalog prices updated by ${pct > 0 ? '+' : ''}${pct}%`;
-    } catch (e) {
-      return "Bulk price update failed.";
-    }
+    const pct = Number(args.percentage !== undefined ? args.percentage : args.percentChange || 0);
+    const res = await InventoryManagementService.bulkPriceUpdate({
+      merchantId,
+      percentageDelta: pct,
+      category: args.category
+    });
+    return res.message;
   },
   generate_product_description: async (merchantId: string, args: any) => {
-    return `✨ Premium Nigerian quality, crafted with care. Perfect for everyday elegance and durability.`;
+    const res = await InventoryManagementService.enrichCatalogWithAI(merchantId, args.sku || '', args.name || '', args.category || '');
+    return res.description;
   },
   categorize_product: async (merchantId: string, args: any) => {
     try {
@@ -854,26 +728,14 @@ Extract structured JSON strictly with these fields:
     }
   },
   sync_shopify_inventory: async (merchantId: string, args: any) => {
-    return { ok: true, message: "Shopify catalog synchronized." };
+    return await InventoryManagementService.syncShopifyInventory(merchantId);
   },
   push_to_woocommerce: async (merchantId: string, args: any) => {
     return `Product pushed to WooCommerce storefront.`;
   },
   list_out_of_stock: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT id, name, sku, price
-        FROM products
-        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-          AND COALESCE(quantity, stock, 0) = 0
-        LIMIT 10
-      `.catch(() => []);
-      if (rows.length === 0) return "No products are currently out of stock!";
-      const list = rows.map(r => `- ${r.name} (SKU: ${r.sku}) — ₦${Number(r.price).toLocaleString()}`).join('\n');
-      return `Out of Stock Items (${rows.length}):\n${list}`;
-    } catch (e) {
-      return "Unable to list out of stock items.";
-    }
+    const res = await InventoryManagementService.listOutOfStock(merchantId, args.limit);
+    return res.message;
   },
   archive_product: async (merchantId: string, args: any) => {
     try {
@@ -908,50 +770,12 @@ Extract structured JSON strictly with these fields:
     return `Minimum order quantity for ${args.sku} set to ${moq}.`;
   },
   reserve_inventory: async (merchantId: string, args: { sku: string; quantity: number; orderId?: string }) => {
-    const qty = Math.round(Number(args.quantity));
-    if (!Number.isFinite(qty) || qty <= 0) {
-      return { ok: false, error: "Invalid reservation quantity. Quantity must be a positive integer." };
-    }
-    if (!args.sku) return { ok: false, error: "Product SKU is required to reserve inventory." };
-
-    try {
-      const res = await sql<{ id: string; stock: number; name: string }[]>`
-        UPDATE products
-        SET stock = stock - ${qty}, quantity = GREATEST(quantity - ${qty}, 0), updated_at = NOW()
-        WHERE (sku = ${args.sku} OR id::text = ${args.sku})
-          AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-          AND COALESCE(stock, quantity, 0) >= ${qty}
-        RETURNING id, stock, name
-      `.catch(() => []);
-
-      if (res.length === 0) {
-        const current = await sql<{ stock: number }[]>`
-          SELECT COALESCE(stock, quantity, 0) as stock FROM products
-          WHERE (sku = ${args.sku} OR id::text = ${args.sku})
-            AND (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-          LIMIT 1
-        `.catch(() => []);
-        const avail = current[0]?.stock ?? 0;
-        return { ok: false, error: `Insufficient stock for SKU '${args.sku}'. Requested: ${qty}, Available: ${avail}.` };
-      }
-
-      // Record reservation in inventory_reservations if table exists
-      if (res[0]?.id) {
-        await sql`
-          INSERT INTO inventory_reservations (id, product_id, quantity, reserved_until, status)
-          VALUES (gen_random_uuid(), ${res[0].id}::uuid, ${qty}, NOW() + INTERVAL '30 minutes', 'active')
-        `.catch(() => {});
-      }
-
-      return {
-        ok: true,
-        reserved: qty,
-        remainingStock: res[0].stock,
-        message: `Successfully reserved ${qty} unit(s) of ${res[0].name}. Remaining stock: ${res[0].stock}.`
-      };
-    } catch (e: any) {
-      logger.error("[reserve_inventory error]", e);
-      return { ok: false, error: "Reservation failed: " + e.message };
-    }
+    const res = await InventoryManagementService.reserveInventory({
+      merchantId,
+      sku: args.sku,
+      quantity: Number(args.quantity || 1),
+      customerId: args.orderId || 'customer'
+    });
+    return `Successfully reserved ${args.quantity} unit(s) of ${args.sku}. Reservation Ref: ${res.reservationId}. Expires at: ${res.expiresAt}.`;
   }
 };

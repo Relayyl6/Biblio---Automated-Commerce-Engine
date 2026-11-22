@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { FinanceSettlementService } from "../services/financeSettlementService.js";
 
 export const financeTools = [
   {
@@ -305,78 +306,23 @@ export const financeTools = [
 
 export const financeHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   view_daily_revenue: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT COALESCE(SUM(amount), 0) as total, COUNT(id) as count
-        FROM transactions
-        WHERE merchant_id = ${merchantId}::uuid
-          AND status = 'confirmed'
-          AND created_at >= CURRENT_DATE
-      `.catch(() => [{ total: 0, count: 0 }]);
-      const total = Number(rows[0]?.total || 0);
-      const count = Number(rows[0]?.count || 0);
-      return `Today's Revenue: ₦${total.toLocaleString()} across ${count} confirmed payment(s).`;
-    } catch (e) {
-      return "Unable to fetch today's revenue.";
-    }
+    const res = await FinanceSettlementService.getRevenueSummary(merchantId, 'daily');
+    return `Today's Revenue: ₦${res.totalRevenue.toLocaleString()} across ${res.orderCount} confirmed order(s). Net: ₦${res.netRevenue.toLocaleString()} (AOV: ₦${res.averageOrderValue.toLocaleString()}).`;
   },
   view_weekly_revenue: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT COALESCE(SUM(amount), 0) as total, COUNT(id) as count
-        FROM transactions
-        WHERE merchant_id = ${merchantId}::uuid
-          AND status = 'confirmed'
-          AND created_at >= NOW() - INTERVAL '7 days'
-      `.catch(() => [{ total: 0, count: 0 }]);
-      const total = Number(rows[0]?.total || 0);
-      const count = Number(rows[0]?.count || 0);
-      return `Past 7 Days Revenue: ₦${total.toLocaleString()} across ${count} confirmed payment(s).`;
-    } catch (e) {
-      return "Unable to fetch weekly revenue.";
-    }
+    const res = await FinanceSettlementService.getRevenueSummary(merchantId, 'weekly');
+    return `Past 7 Days Revenue: ₦${res.totalRevenue.toLocaleString()} across ${res.orderCount} confirmed order(s). Net: ₦${res.netRevenue.toLocaleString()} (AOV: ₦${res.averageOrderValue.toLocaleString()}).`;
   },
   check_escrow_balance: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT COALESCE(SUM(amount), 0) as escrow_held
-        FROM transactions
-        WHERE merchant_id = ${merchantId}::uuid
-          AND status IN ('confirmed', 'held')
-          AND created_at >= NOW() - INTERVAL '14 days'
-      `.catch(() => [{ escrow_held: 0 }]);
-      const balance = Number(rows[0]?.escrow_held || 0);
-      return `Current Escrow Balance: ₦${balance.toLocaleString()} securely held. Funds release upon confirmed order delivery.`;
-    } catch (e) {
-      return "Escrow balance unavailable.";
-    }
+    const res = await FinanceSettlementService.checkEscrowBalance(merchantId);
+    return `Current Escrow Balance: ₦${res.totalEscrowLocked.toLocaleString()} held across ${res.ordersInEscrow} order(s). Cleared & Available for Payout: ₦${res.availableForPayout.toLocaleString()}.`;
   },
   request_payout: async (merchantId: string, args: any) => {
     try {
-      if (args.amount !== undefined) {
-        const numAmt = Number(args.amount);
-        if (!Number.isFinite(numAmt) || numAmt <= 0) {
-          return "Invalid payout amount. Please specify a positive number.";
-        }
-      }
-      const requestedAmount = Number(args.amount);
-      const mRows = await sql`SELECT bank_details, bank_account_number, paystack_recipient_code FROM merchants WHERE id = ${merchantId}::uuid LIMIT 1`.catch(() => []);
-      const m = mRows[0];
-      let bankObj: any = {};
-      if (typeof m?.bank_details === "string") {
-        try { bankObj = JSON.parse(m.bank_details); } catch { bankObj = {}; }
-      } else if (m?.bank_details && typeof m.bank_details === "object") {
-        bankObj = m.bank_details;
-      }
-      const acct = bankObj.accountNumber || bankObj.account_number || m?.bank_account_number;
-      if (!acct) {
-        return "No settlement bank account configured. Please configure your bank account details first using set_settlement_account before requesting a payout.";
-      }
-      const bank = bankObj.bankName || bankObj.bank_name || 'Registered Bank';
-      const amountStr = Number.isFinite(requestedAmount) && requestedAmount > 0 ? ` of ₦${requestedAmount.toLocaleString()}` : '';
-      return `Payout request${amountStr} submitted. Funds will transfer to ${bank} (${acct}) on the next settlement cycle.`;
-    } catch (e) {
-      return "Payout request processing failed.";
+      const res = await FinanceSettlementService.requestPayout({ merchantId, amount: args.amount ? Number(args.amount) : undefined });
+      return `Payout Request #${res.payoutId} submitted for ₦${res.amount.toLocaleString()}. Destination: ${res.recipientBank} (${res.recipientAccount}). Estimated arrival: ${res.estimatedArrival}.`;
+    } catch (err: any) {
+      return `Payout request failed: ${err.message}`;
     }
   },
   verify_bank_transfer: async (merchantId: string, args: any) => {

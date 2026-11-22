@@ -1,6 +1,7 @@
 import { sql, redis } from "@ace/shared/clients";
 import { logger } from "@ace/shared/logger.js";
 import crypto from "crypto";
+import { BusinessAnalyticsService } from "../services/businessAnalyticsService.js";
 
 export const analyticsTools = [
   {
@@ -130,67 +131,27 @@ export const analyticsHandlers: Record<string, (merchantId: string, args: any) =
   },
 
   generate_sales_forecast: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT 
-          COALESCE(SUM(amount), 0) as recent_revenue,
-          COUNT(id) as recent_orders
-        FROM transactions
-        WHERE merchant_id = ${merchantId}::uuid 
-          AND status = 'confirmed' 
-          AND created_at >= NOW() - INTERVAL '30 days'
-      `.catch(() => [{ recent_revenue: 0, recent_orders: 0 }]);
-      
-      const rev = Number(rows[0]?.recent_revenue || 0);
-      const orders = Number(rows[0]?.recent_orders || 0);
-      const projected = Math.round(rev * 1.12); // 12% projected monthly expansion
-
-      return `Sales Forecast:\n- Past 30-Day Confirmed Revenue: ₦${rev.toLocaleString()} across ${orders} order(s).\n- Projected Next 30-Day Revenue: ~₦${projected.toLocaleString()} (+12% estimated growth).\n- Recommended Focus: Re-stock top moving inventory and re-engage lapsed customers via win-back offers.`;
-    } catch (e: any) {
-      logger.error("[generate_sales_forecast error]", e);
-      return "Unable to calculate sales forecast.";
-    }
+    const res = await BusinessAnalyticsService.generateSalesForecast(merchantId, args.days || 30);
+    return `Sales Forecast (Next 30 Days):
+- Projected Revenue: ₦${res.projectedRevenue.toLocaleString()}
+- Projected Orders: ${res.projectedOrders}
+- Daily Average: ~₦${Math.round(res.projectedRevenue / (args.days || 30)).toLocaleString()}/day`;
   },
 
   analyze_peak_hours: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT 
-          EXTRACT(HOUR FROM created_at) as hour,
-          COUNT(*) as msg_count
-        FROM conversation_messages
-        WHERE merchant_id = ${merchantId}::uuid
-        GROUP BY hour
-        ORDER BY msg_count DESC
-        LIMIT 3
-      `.catch(() => []);
+    const res = await BusinessAnalyticsService.analyzePeakHours(merchantId);
+    const peakText = res.peakHours.slice(0, 3).map(h => `• ${h.timeLabel}: ${h.orderCount} orders (₦${h.totalVolume.toLocaleString()})`).join('\n');
+    return `Peak Customer Hours (Top: ${res.topPeakHour}):
+${peakText}
 
-      if (rows.length === 0) return "Not enough conversation history yet to determine peak customer messaging hours.";
-      const peakText = rows.map(r => `• ${String(r.hour).padStart(2, '0')}:00 WAT (${r.msg_count} messages)`).join('\n');
-      return `Peak Customer Hours:\n${peakText}\n\nTip: Biblio autonomously handles inquiries during these surges so no lead waits.`;
-    } catch (e: any) {
-      logger.error("[analyze_peak_hours error]", e);
-      return "Peak hours analysis unavailable.";
-    }
+Tip: Biblio autonomously handles inquiries during these surges so no lead waits.`;
   },
 
   analyze_popular_products: async (merchantId: string, args: any) => {
-    try {
-      const rows = await sql`
-        SELECT name, price, COALESCE(total_sales, 0) as sales, COALESCE(quantity, stock, 0) as stock
-        FROM products
-        WHERE (merchant_id = ${merchantId}::uuid OR tenant_id = ${merchantId}::uuid)
-        ORDER BY sales DESC, price DESC
-        LIMIT 5
-      `.catch(() => []);
-
-      if (rows.length === 0) return "No products found in catalog.";
-      const items = rows.map((r, i) => `${i + 1}. ${r.name} — ₦${Number(r.price || 0).toLocaleString()} (${r.sales} sold, ${r.stock} in stock)`).join('\n');
-      return `Top Products:\n${items}`;
-    } catch (e: any) {
-      logger.error("[analyze_popular_products error]", e);
-      return "Unable to analyze popular products.";
-    }
+    const res = await BusinessAnalyticsService.analyzePopularProducts(merchantId, args.limit || 5);
+    const items = res.map((r, i) => `${i + 1}. ${r.name} (SKU: ${r.sku}) — ₦${r.totalRevenue.toLocaleString()} (${r.unitsSold} sold)`).join('\n');
+    return `Top Products:
+${items}`;
   },
 
   get_competitor_pricing: async (merchantId: string, args: any) => {
@@ -238,25 +199,12 @@ export const analyticsHandlers: Record<string, (merchantId: string, args: any) =
   },
 
   generate_business_health_score: async (merchantId: string, args: any) => {
-    try {
-      const [txRows, disputes] = await Promise.all([
-        sql`SELECT COUNT(id) as total, COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed FROM transactions WHERE merchant_id = ${merchantId}::uuid`.catch(() => [{ total: 0, confirmed: 0 }]),
-        sql`SELECT COUNT(id) as dispute_count FROM order_disputes WHERE merchant_id = ${merchantId}::uuid`.catch(() => [{ dispute_count: 0 }])
-      ]);
-
-      const total = Number(txRows[0]?.total || 0);
-      const confirmed = Number(txRows[0]?.confirmed || 0);
-      const disputeCount = Number(disputes[0]?.dispute_count || 0);
-
-      const conversionRate = total > 0 ? (confirmed / total) * 100 : 85;
-      const disputePenalty = disputeCount * 5;
-      const score = Math.max(20, Math.min(98, Math.round(conversionRate - disputePenalty)));
-
-      return `Business Health Score: ${score}/100\n- Payment Conversion: ${conversionRate.toFixed(1)}%\n- Active Disputes: ${disputeCount}\n- Operational Status: ${score >= 80 ? 'Excellent' : score >= 60 ? 'Healthy' : 'Needs Attention'}`;
-    } catch (e: any) {
-      logger.error("[generate_business_health_score error]", e);
-      return "Business health score calculation unavailable.";
-    }
+    const res = await BusinessAnalyticsService.generateBusinessHealthScore(merchantId);
+    return `Business Health Score: ${res.overallScore}/100 (Grade: ${res.grade})
+- Fulfillment Rate Score: ${res.fulfillmentRateScore}%
+- Retention Score: ${res.customerRetentionScore}%
+- Dispute Score: ${res.disputeRateScore}%
+- Key Insights: ${res.actionableInsights.join('; ')}`;
   },
 
   customer_sentiment_analysis: async (merchantId: string, args: any) => {
