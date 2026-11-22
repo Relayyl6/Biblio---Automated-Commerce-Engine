@@ -10,6 +10,7 @@ export { integrationTools } from "./integrationTools.js";
 export { bookingTools } from "./bookingTools.js";
 export { adminTools } from "./adminTools.js";
 export { autonomousTaskToolDefinitions, executeAutonomousTaskTool } from "./autonomousTaskTools.js";
+export { watchTaskToolDefinitions, handleWatchTaskTool } from "./watchTaskTools.js";
 
 import { inventoryTools } from "./inventoryTools.js";
 import { orderTools } from "./orderTools.js";
@@ -23,6 +24,7 @@ import { integrationTools } from "./integrationTools.js";
 import { bookingTools } from "./bookingTools.js";
 import { adminTools } from "./adminTools.js";
 import { autonomousTaskToolDefinitions } from "./autonomousTaskTools.js";
+import { watchTaskToolDefinitions } from "./watchTaskTools.js";
 
 export const allBiblioTools = [
   ...inventoryTools,
@@ -37,4 +39,5 @@ export const allBiblioTools = [
   ...bookingTools,
   ...adminTools,
   ...autonomousTaskToolDefinitions,
+  ...watchTaskToolDefinitions,
 ];

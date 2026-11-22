@@ -12,6 +12,16 @@ import { orderHandlers } from "./tools/orderTools.js";
 import { settingsHandlers } from "./tools/settingsTools.js";
 import { adminHandlers } from "./tools/adminTools.js";
 import { executeAutonomousTaskTool } from "./tools/autonomousTaskTools.js";
+import { handleWatchTaskTool } from "./tools/watchTaskTools.js";
+
+const watchTaskHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
+  create_watch_task: async (merchantId, args) => handleWatchTaskTool('create_watch_task', args, { merchantId, customerId: args.customer_id || 'merchant_inquiry' }),
+  list_watch_tasks: async (merchantId, args) => handleWatchTaskTool('list_watch_tasks', args, { merchantId, customerId: args.customer_id || '' }),
+  update_watch_task: async (merchantId, args) => handleWatchTaskTool('update_watch_task', args, { merchantId, customerId: args.customer_id || '' }),
+  cancel_watch_task: async (merchantId, args) => handleWatchTaskTool('cancel_watch_task', args, { merchantId, customerId: args.customer_id || '' }),
+  match_inventory: async (merchantId, args) => handleWatchTaskTool('match_inventory', args, { merchantId, customerId: '' }),
+  notify_customer: async (merchantId, args) => handleWatchTaskTool('notify_customer', args, { merchantId, customerId: args.customer_id || '' }),
+};
 
 const autonomousTaskHandlers: Record<string, (merchantId: string, args: any) => Promise<any>> = {
   schedule_background_monitoring_task: async (merchantId, args) => {
@@ -50,4 +60,5 @@ export const toolHandlers: Record<string, (merchantId: string, args: any) => Pro
   ...settingsHandlers,
   ...adminHandlers,
   ...autonomousTaskHandlers,
+  ...watchTaskHandlers,
 };

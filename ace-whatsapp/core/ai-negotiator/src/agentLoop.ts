@@ -585,6 +585,16 @@ ${arc.urgencyWindowExpiresAt ? `Urgency window active — expires: ${new Date(ar
     call search_web to get real-time market context before answering.
 16. If the customer provides an image or a vague visual description (e.g. "that blue dress"),
     call search_visual_catalog to find the visually matching SKU before negotiating.
+17. UNFULFILLED REQUESTS & PERSISTENT WATCH TASKS:
+    - When a customer asks for a product, ALWAYS call check_inventory first.
+    - If check_inventory genuinely returns NO suitable in-stock item:
+      * Never say just "not available" or end the conversation abruptly.
+      * If the request is too vague to match on, confirm criteria with the customer first.
+      * Call create_watch_task with the parsed criteria (item, color, size, budget, etc.).
+      * Do not duplicate tasks: if an equivalent active task already exists, tell the customer it is already being watched.
+      * Reply in 1 or 2 natural, human sentences: explain that nothing matches right now, that you'll keep watching and message them right here the moment a match arrives, and that they can change or cancel anytime.
+      * NEVER dump feature lists, bullets, or explain "how it works behind the scenes" unless the customer explicitly asks.
+    - If the customer asks to check, alter, or cancel their alerts, use list_watch_tasks, update_watch_task, or cancel_watch_task.
 
 ══ ARC PLAYBOOK ══
 → Fresh session: check_inventory → get_customer_profile → anchor with full price

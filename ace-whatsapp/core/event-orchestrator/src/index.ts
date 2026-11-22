@@ -8,6 +8,7 @@ import { handleOrderPaidForRestock } from "./flows/inventoryRestockFlow.js";
 import { handleReviewRequest } from "./flows/postServiceReviewFlow.js";
 import { handleLoyaltyCheck } from "./flows/loyaltyMilestoneFlow.js";
 import { setupNightlyRetentionFlow } from "./flows/nightlyRetentionFlow.js";
+import { setupWatchTaskSchedulerFlow } from "./flows/watchTaskSchedulerFlow.js";
 import { handleWebhookFanning } from "./flows/webhookDispatcher.js";
 import { setupLogisticsWorker, handleDispatchOrderJob } from "../../logistics-coordination/src/index.js";
 import { sendEscalationSms, sendCustomerMessage, setupOutboundWorker } from "../../comms-router/src/index.js";
@@ -68,8 +69,9 @@ async function main() {
   // Initialize other background flows that are purely cron-based
   const retentionWorker = await setupNightlyRetentionFlow();
   const logisticsWorker = await setupLogisticsWorker();
+  const watchTaskWorker = await setupWatchTaskSchedulerFlow();
   const outboundWorkers = setupOutboundWorker();
-  const allWorkers = [domainWorker, retentionWorker, logisticsWorker, ...outboundWorkers];
+  const allWorkers = [domainWorker, retentionWorker, logisticsWorker, watchTaskWorker, ...outboundWorkers];
   await setupOutboxRelay();
 
   logger.log("[EventOrchestrator] All flows initialized and listening.");

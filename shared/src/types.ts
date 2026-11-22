@@ -339,3 +339,58 @@ export type PlatformFeature =
   | "cross_channel_instagram"
   | "unlimited_catalog"
   | "custom_fee_padding";
+
+// ─── Automated Customer Watch Task Types ─────────────────────────────────────
+
+export type WatchTaskStatus = 'active' | 'fulfilled' | 'cancelled' | 'expired';
+export type WatchTaskChannel = 'whatsapp' | 'in_app' | 'sms';
+
+export interface WatchTaskCriteria {
+  item: string;
+  color?: string;
+  size?: string;
+  brand?: string;
+  max_price?: number;
+  min_price?: number;
+  attributes?: Record<string, unknown>;
+  raw_query?: string;
+  ongoing?: boolean;
+}
+
+export interface CustomerWatchTask {
+  id: string;
+  customer_id: string;
+  merchant_id: string;
+  criteria: WatchTaskCriteria;
+  status: WatchTaskStatus;
+  expiry: string;
+  notify_channel: WatchTaskChannel;
+  last_checked_at: string | null;
+  matched_items: Array<{
+    sku: string;
+    name: string;
+    price: number;
+    stock: number;
+    description?: string | null;
+    image_url?: string | null;
+    match_score: number;
+    is_exact_match: boolean;
+  }> | null;
+  notification_sent: boolean;
+  notification_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryMatchResult {
+  sku: string;
+  name: string;
+  price: number;
+  stock: number;
+  description: string | null;
+  image_url: string | null;
+  match_score: number;
+  is_exact_match: boolean;
+  matched_attributes: Record<string, string>;
+}
+

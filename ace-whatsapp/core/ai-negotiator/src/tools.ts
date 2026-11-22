@@ -31,6 +31,7 @@ import { vendorCommunique } from "../../comms-router/src/vendorCommunique.js";
 import { sendCustomerMessage } from "../../comms-router/src/outbound.js";
 import Groq from "groq-sdk";
 import { AutonomousTaskService } from "./services/autonomousTaskService.js";
+import { watchTaskToolDefinitions, handleWatchTaskTool } from "./tools/watchTaskTools.js";
 
 
 import {
@@ -341,7 +342,8 @@ export const toolDefinitions = [
       required: ["action"],
     },
   },
-] as const;
+  ...watchTaskToolDefinitions,
+];
 
 // ─── Execution Context ────────────────────────────────────────────────────────
 
@@ -467,6 +469,18 @@ export async function executeTool(
     case "source_price": {
       const { productQuery } = input as { productQuery: string };
       return await sourcePrice(productQuery, ctx);
+    }
+    case "create_watch_task":
+    case "list_watch_tasks":
+    case "update_watch_task":
+    case "cancel_watch_task":
+    case "match_inventory":
+    case "notify_customer": {
+      const output = await handleWatchTaskTool(name, input, {
+        merchantId: ctx.merchantId,
+        customerId: ctx.customerId,
+      });
+      return { output };
     }
     default:
       return { output: { error: `Unknown tool: ${name}` } };
